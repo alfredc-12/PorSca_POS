@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, ViewStyle } from 'react-native';
+import { Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 type Props = {
@@ -7,7 +7,7 @@ type Props = {
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'danger';
   disabled?: boolean;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
 };
 
 export function AppButton({ label, onPress, variant = 'primary', disabled, style }: Props) {
@@ -25,7 +25,13 @@ export function AppButton({ label, onPress, variant = 'primary', disabled, style
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
-        { backgroundColor: palette.bg, borderColor: palette.border, opacity: disabled ? 0.45 : pressed ? 0.82 : 1 },
+        {
+          backgroundColor: palette.bg,
+          borderColor: palette.border,
+          opacity: disabled ? 0.42 : pressed ? 0.84 : 1,
+          transform: [{ scale: pressed && !disabled ? 0.99 : 1 }],
+        },
+        variant === 'primary' && styles.primaryShadow,
         style,
       ]}
     >
@@ -36,15 +42,22 @@ export function AppButton({ label, onPress, variant = 'primary', disabled, style
 
 const styles = StyleSheet.create({
   button: {
-    minHeight: 52,
+    minHeight: 56,
     borderRadius: radius.md,
     borderWidth: 1,
     paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  primaryShadow: {
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
   label: {
     fontSize: typography.body,
-    fontWeight: '700',
+    fontWeight: '800',
   },
 });
