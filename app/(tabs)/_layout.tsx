@@ -3,6 +3,7 @@ import { Pressable, StyleSheet } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius } from '@/src/theme/tokens';
+import { useResponsive } from '@/src/hooks/useResponsive';
 
 function TabButton({ children, accessibilityState, style, ...props }: any) {
   const selected = accessibilityState?.selected;
@@ -18,6 +19,9 @@ function TabButton({ children, accessibilityState, style, ...props }: any) {
 }
 
 export default function TabsLayout() {
+  const responsive = useResponsive();
+  const iconSize = responsive.s(responsive.short ? 21 : 23);
+
   return (
     <Tabs
       screenOptions={{
@@ -26,30 +30,38 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.textMuted,
         tabBarHideOnKeyboard: true,
         tabBarButton: (props) => <TabButton {...props} />,
-        tabBarStyle: styles.tabBar,
-        tabBarItemStyle: styles.tabItem,
-        tabBarLabelStyle: styles.tabLabel,
+        tabBarStyle: [
+          styles.tabBar,
+          {
+            height: responsive.tabBarHeight,
+            paddingHorizontal: responsive.horizontalPadding,
+            paddingTop: responsive.short ? 5 : 8,
+            paddingBottom: responsive.short ? 5 : 8,
+          },
+        ],
+        tabBarItemStyle: [styles.tabItem, { marginHorizontal: responsive.narrow ? 2 : 5 }],
+        tabBarLabelStyle: [styles.tabLabel, { fontSize: responsive.font(responsive.narrow ? 10.5 : 12) }],
       }}
     >
       <Tabs.Screen
         name="pos"
         options={{
           title: 'POS',
-          tabBarIcon: ({ color, size }) => <Ionicons name="cart-outline" color={color} size={size + 2} />,
+          tabBarIcon: ({ color }) => <Ionicons name="cart-outline" color={color} size={iconSize} />,
         }}
       />
       <Tabs.Screen
         name="inventory"
         options={{
           title: 'Inventory',
-          tabBarIcon: ({ color, size }) => <Ionicons name="cube-outline" color={color} size={size + 2} />,
+          tabBarIcon: ({ color }) => <Ionicons name="cube-outline" color={color} size={iconSize} />,
         }}
       />
       <Tabs.Screen
         name="transactions"
         options={{
           title: 'Transactions',
-          tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" color={color} size={size + 2} />,
+          tabBarIcon: ({ color }) => <Ionicons name="receipt-outline" color={color} size={iconSize} />,
         }}
       />
     </Tabs>
@@ -60,24 +72,20 @@ const styles = StyleSheet.create({
   tabBar: {
     backgroundColor: colors.surface,
     borderTopWidth: 0,
-    height: 82,
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 8,
     shadowColor: colors.shadow,
     shadowOpacity: 0.1,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: -5 },
     elevation: 12,
   },
-  tabItem: { marginHorizontal: 5 },
+  tabItem: {},
   tabButton: {
     flex: 1,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 7,
+    paddingVertical: 5,
   },
   tabButtonActive: { backgroundColor: colors.primarySoft },
-  tabLabel: { fontSize: 12, fontWeight: '700', marginTop: 2 },
+  tabLabel: { fontWeight: '700', marginTop: 2 },
 });
