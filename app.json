@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "PorSca POS",
+    "slug": "porsca-pos",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "porsca",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow PorSca POS to use the camera to scan product barcodes.",
+          "barcodeScannerEnabled": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "android": {
+      "package": "com.porsca.pos",
+      "edgeToEdgeEnabled": true
+    },
+    "ios": {
+      "bundleIdentifier": "com.porsca.pos",
+      "supportsTablet": false
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
