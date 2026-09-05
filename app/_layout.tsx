@@ -8,20 +8,19 @@ import { colors } from '@/src/theme/tokens';
 export default function RootLayout() {
   return (
     <PosProvider>
-      <StatusBar style="dark" />
+      <StatusBar style="dark" backgroundColor={colors.background} />
       <Stack
         screenOptions={{
-          headerShadowVisible: false,
-          headerStyle: { backgroundColor: colors.background },
-          headerTintColor: colors.text,
+          headerShown: false,
           contentStyle: { backgroundColor: colors.background },
+          animation: 'slide_from_right',
         }}
       >
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="scanner" options={{ title: 'Scan product', presentation: 'modal' }} />
-        <Stack.Screen name="checkout" options={{ title: 'Checkout' }} />
-        <Stack.Screen name="product-form" options={{ title: 'Product' }} />
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="scanner" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="checkout" />
+        <Stack.Screen name="product-form" />
       </Stack>
     </PosProvider>
   );
