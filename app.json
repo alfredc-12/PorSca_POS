@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "scheme": "porsca",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "plugins": [
       "expo-router",
       [
@@ -21,8 +20,7 @@
       "typedRoutes": true
     },
     "android": {
-      "package": "com.porsca.pos",
-      "edgeToEdgeEnabled": true
+      "package": "com.porsca.pos"
     },
     "ios": {
       "bundleIdentifier": "com.porsca.pos",
