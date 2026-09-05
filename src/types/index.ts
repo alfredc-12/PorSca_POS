@@ -1,5 +1,6 @@
 export type PaymentMethod = 'cash' | 'qrph';
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired';
+export type ProductCategory = 'Beverages' | 'Noodles' | 'Milk' | 'Snacks' | 'Personal Care' | 'Household' | 'General';
 
 export type Product = {
   id: string;
@@ -7,6 +8,7 @@ export type Product = {
   name: string;
   price: number;
   stock: number;
+  category?: ProductCategory;
 };
 
 export type CartLine = {
