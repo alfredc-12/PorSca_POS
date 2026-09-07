@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } f
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { colors, radius, spacing, typography } from '@/src/theme/tokens';
+import { colors, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 type Props = {
@@ -100,34 +100,6 @@ function BrandHeader({ back }: { back: boolean }) {
           </Text>
         ) : null}
       </View>
-
-      {!back ? (
-        <View style={[styles.headerActions, { gap: responsive.narrow ? 5 : 8 }]}>
-          <Pressable
-            accessibilityRole="button"
-            style={[
-              styles.storePill,
-              {
-                minHeight: actionSize,
-                maxWidth: responsive.widthValue(responsive.narrow ? 0.27 : 0.31, 88, 132),
-                paddingHorizontal: responsive.narrow ? 8 : 11,
-                borderRadius: responsive.s(15),
-              },
-            ]}
-          >
-            <Ionicons name="storefront-outline" size={responsive.s(responsive.narrow ? 16 : 18)} color={colors.text} />
-            <Text numberOfLines={1} style={[styles.storeText, { fontSize: responsive.font(responsive.narrow ? 11.5 : 13) }]}>
-              Main Store
-            </Text>
-            {!responsive.veryNarrow ? <Ionicons name="chevron-down" size={responsive.s(15)} color={colors.textMuted} /> : null}
-          </Pressable>
-
-          <View style={[styles.avatar, { width: actionSize, height: actionSize }]}>
-            <Text style={[styles.avatarText, { fontSize: responsive.font(responsive.narrow ? 12 : 14) }]}>AC</Text>
-            <View style={styles.onlineDot} />
-          </View>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -154,12 +126,6 @@ const styles = StyleSheet.create({
   brandCopy: { flex: 1, minWidth: 0 },
   brandName: { color: colors.text, fontWeight: '900', letterSpacing: -0.5 },
   tagline: { color: colors.textMuted, marginTop: 2, fontWeight: '500' },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  storePill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outline, shadowColor: colors.shadow, shadowOpacity: 0.08, shadowRadius: 9, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
-  storeText: { color: colors.text, fontWeight: '700', flexShrink: 1 },
-  avatar: { borderRadius: radius.pill, backgroundColor: '#758299', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: colors.white, fontWeight: '800' },
-  onlineDot: { position: 'absolute', right: -1, bottom: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.success, borderWidth: 2, borderColor: colors.background },
   localHeader: { gap: 4 },
   title: { color: colors.text, fontWeight: '900', letterSpacing: -0.8 },
   subtitle: { color: colors.textMuted, lineHeight: 22 },
