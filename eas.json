@@ -9,7 +9,7 @@
       "channel": "development",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "development",
-        "EXPO_PUBLIC_API_URL": "http://192.168.1.100:4000"
+        "EXPO_PUBLIC_API_URL": "http://192.168.1.100:8000/api/v1"
       }
     },
     "preview": {
@@ -17,7 +17,7 @@
       "channel": "preview",
       "env": {
         "EXPO_PUBLIC_APP_ENV": "staging",
-        "EXPO_PUBLIC_API_URL": "https://staging-api.porsca.example"
+        "EXPO_PUBLIC_API_URL": "https://staging-api.porsca.example/api/v1"
       }
     },
     "production": {

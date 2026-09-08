@@ -1,6 +1,6 @@
 # Development, staging, and SQA workflow
 
-This is the mobile half of the PorSca release unit. The Expo app is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole staging/release backend; this repository's `server/` is a deprecated local scaffold and is not a release backend.
+This is the mobile half of the PorSca release unit. The Expo app is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release.
 
 ## Branching
 

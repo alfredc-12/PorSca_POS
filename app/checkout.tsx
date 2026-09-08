@@ -1,24 +1,40 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
+import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
-import { ApiClientError } from '@/src/api/client';
 import { cashChange, paymentError } from '@/src/domain/pos';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
+type QrViewStatus = PaymentStatus | 'idle' | 'creating' | 'verification';
+
 export default function CheckoutScreen() {
   const { method } = useLocalSearchParams<{ method?: string }>();
-  const { total, cart, completeSale, completeCashSale } = usePos();
+  const {
+    total,
+    cart,
+    clearCart,
+    completeCashSale,
+    startQrPhPayment,
+    refreshQrPhPayment,
+    cancelQrPhPayment,
+    confirmQrPhPayment,
+  } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
-  const [qrStatus, setQrStatus] = useState<PaymentStatus | 'idle'>('idle');
+  const [qrStatus, setQrStatus] = useState<QrViewStatus>('idle');
+  const [qrPayment, setQrPayment] = useState<Payment>();
+  const [qrError, setQrError] = useState<string>();
   const [cashError, setCashError] = useState<string>();
   const [cashSubmitting, setCashSubmitting] = useState(false);
+  const [qrBusy, setQrBusy] = useState(false);
+  const qrBusyRef = useRef(false);
+  const handledPaidPayment = useRef<string | undefined>(undefined);
 
   const received = Number(cash) || 0;
   const cashResult = useMemo(() => cashChange(total, received), [received, total]);
@@ -60,25 +76,88 @@ export default function CheckoutScreen() {
     }
   };
 
-  const finishQrDemo = () => {
-    setQrStatus('pending');
-    Alert.alert(
-      'QR Ph sandbox mode',
-      'PayMongo secret keys stay on the backend. Until the sandbox adapter is connected, this button simulates provider results used by the POS.',
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => setQrStatus('cancelled') },
-        { text: 'Simulate failed', onPress: () => setQrStatus('failed') },
-        {
-          text: 'Simulate paid',
-          onPress: () => {
-            const sale = completeSale('qrph');
-            if (sale) router.replace('/(tabs)/transactions');
-            else setQrStatus('failed');
-          },
-        },
-      ],
-    );
-  };
+  const showQrPayment = useCallback(async (payment: Payment) => {
+    setQrPayment(payment);
+    setQrStatus(payment.status);
+    setQrError(undefined);
+
+    if (payment.status !== 'paid') return;
+
+    try {
+      await confirmQrPhPayment(payment);
+      setQrStatus('paid');
+      if (handledPaidPayment.current !== payment.id) {
+        handledPaidPayment.current = payment.id;
+        clearCart();
+        Alert.alert(
+          'Payment recorded',
+          `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by Laravel.`,
+          [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }],
+        );
+      }
+    } catch (error) {
+      setQrStatus('verification');
+      setQrError(verificationMessage(error));
+    }
+  }, [clearCart, confirmQrPhPayment]);
+
+  const startQrPayment = useCallback(async (forceNew = false) => {
+    if (qrBusyRef.current) return;
+    qrBusyRef.current = true;
+    setQrBusy(true);
+    setQrStatus('creating');
+    setQrError(undefined);
+    try {
+      const payment = await startQrPhPayment(forceNew);
+      await showQrPayment(payment);
+    } catch (error) {
+      setQrStatus('verification');
+      setQrError(verificationMessage(error));
+    } finally {
+      qrBusyRef.current = false;
+      setQrBusy(false);
+    }
+  }, [showQrPayment, startQrPhPayment]);
+
+  const checkQrPayment = useCallback(async () => {
+    if (!qrPayment || qrBusyRef.current) return;
+    qrBusyRef.current = true;
+    setQrBusy(true);
+    try {
+      const payment = await refreshQrPhPayment(qrPayment.id);
+      await showQrPayment(payment);
+    } catch (error) {
+      setQrStatus('verification');
+      setQrError(verificationMessage(error));
+    } finally {
+      qrBusyRef.current = false;
+      setQrBusy(false);
+    }
+  }, [qrPayment, refreshQrPhPayment, showQrPayment]);
+
+  const cancelQrPayment = useCallback(async () => {
+    if (!qrPayment || qrBusyRef.current) return;
+    qrBusyRef.current = true;
+    setQrBusy(true);
+    try {
+      const payment = await cancelQrPhPayment(qrPayment.id);
+      await showQrPayment(payment);
+    } catch (error) {
+      setQrStatus('verification');
+      setQrError(verificationMessage(error));
+    } finally {
+      qrBusyRef.current = false;
+      setQrBusy(false);
+    }
+  }, [cancelQrPhPayment, qrPayment, showQrPayment]);
+
+  useEffect(() => {
+    if (mode !== 'qrph' || qrStatus !== 'pending' || !qrPayment) return;
+    const timer = setInterval(() => {
+      void checkQrPayment();
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [checkQrPayment, mode, qrPayment, qrStatus]);
 
   if (cart.length === 0) {
     return (
@@ -92,6 +171,9 @@ export default function CheckoutScreen() {
       </Screen>
     );
   }
+
+  const qrTerminal = qrStatus === 'failed' || qrStatus === 'cancelled' || qrStatus === 'expired';
+  const qrHasPayment = Boolean(qrPayment);
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -125,12 +207,12 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Choose one</Text>
           </View>
           <View style={styles.segmentRow}>
-            <Pressable onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-cash" onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
               <Ionicons name="cash-outline" size={22} color={mode === 'cash' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>Cash</Text>
               <Ionicons name={mode === 'cash' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'cash' ? colors.primary : colors.outline} />
             </Pressable>
-            <Pressable onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-qrph" onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
               <Ionicons name="qr-code-outline" size={22} color={mode === 'qrph' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>QR Ph</Text>
               <Ionicons name={mode === 'qrph' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'qrph' ? colors.primary : colors.outline} />
@@ -168,28 +250,84 @@ export default function CheckoutScreen() {
             </View>
           ) : (
             <View style={styles.qrPanel}>
-              <View style={styles.qrPlaceholder}>
-                <Ionicons name="qr-code" size={112} color={colors.text} />
-              </View>
-              <Text style={styles.qrTitle}>Dynamic QR Ph payment</Text>
-              <Text style={styles.qrBody}>The backend will create a transaction-specific QR and wait for PayMongo confirmation before the sale is recorded.</Text>
+              {qrPayment?.qrPayload ? <QrPayload payload={qrPayment.qrPayload} /> : (
+                <View style={styles.qrPlaceholder}>
+                  <Ionicons name="qr-code" size={112} color={colors.text} />
+                </View>
+              )}
+              <Text style={styles.qrTitle}>Laravel QR Ph payment</Text>
+              <Text style={styles.qrBody}>Laravel creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged.</Text>
               {qrStatus !== 'idle' ? (
-                <Text testID="qr-payment-status" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : styles.qrStatusError]}>
-                  {qrStatus === 'pending' ? 'Payment pending…' : qrStatus === 'paid' ? 'Payment confirmed.' : paymentError(qrStatus)}
+                <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
+                  {qrStatusText(qrStatus)}
                 </Text>
               ) : null}
-              <AppButton testID="start-qrph-payment" label={qrStatus === 'pending' ? 'Waiting for QR Ph Result' : 'Start QR Ph Sandbox Flow'} onPress={finishQrDemo} disabled={qrStatus === 'pending'} style={styles.fullButton} />
+              {qrError ? <Text testID="qr-payment-error" accessibilityRole="alert" style={styles.qrError}>{qrError}</Text> : null}
+              {qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment ? (
+                <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy} style={styles.fullButton} />
+              ) : null}
+              {qrStatus === 'creating' ? (
+                <AppButton testID="start-qrph-payment" label="Creating QR Ph Payment…" onPress={() => undefined} disabled style={styles.fullButton} />
+              ) : null}
+              {qrStatus === 'pending' && qrPayment ? (
+                <View style={styles.qrActions}>
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="cancel-qr-payment" label="Cancel QR Payment" onPress={() => void cancelQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                </View>
+              ) : null}
+              {qrStatus === 'verification' && qrPayment ? (
+                <View style={styles.qrActions}>
+                  <AppButton testID="retry-qr-verification" label="Retry Payment Verification" onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="cancel-qr-payment" label="Cancel QR Payment" onPress={() => void cancelQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                </View>
+              ) : null}
+              {qrTerminal ? (
+                <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy} style={styles.fullButton} />
+              ) : null}
             </View>
           )}
 
           <View style={styles.secureRow}>
             <Ionicons name="shield-checkmark" size={16} color={colors.primary} />
-            <Text style={styles.secureText}>Payment status must be confirmed before stock changes.</Text>
+            <Text style={styles.secureText}>Only a Laravel-confirmed payment can update stock or transaction history.</Text>
           </View>
         </View>
       </Screen>
     </KeyboardAvoidingView>
   );
+}
+
+function QrPayload({ payload }: { payload: string }) {
+  const imagePayload = payload.startsWith('data:image/') || /^https?:\/\//i.test(payload);
+  if (imagePayload) {
+    return <Image testID="qr-payment-image" accessibilityLabel="QR Ph payment code" source={{ uri: payload }} style={styles.qrImage} resizeMode="contain" />;
+  }
+
+  return (
+    <View testID="qr-payment-payload" style={styles.qrPayloadCard}>
+      <Ionicons name="qr-code" size={64} color={colors.text} />
+      <Text style={styles.qrPayloadLabel}>Scan this QR Ph payload</Text>
+      <Text selectable style={styles.qrPayloadText}>{payload}</Text>
+    </View>
+  );
+}
+
+function qrStatusText(status: QrViewStatus) {
+  switch (status) {
+    case 'creating': return 'Creating a Laravel payment…';
+    case 'pending': return 'Payment pending…';
+    case 'paid': return 'Payment confirmed by Laravel. Inventory and history refreshed.';
+    case 'failed':
+    case 'cancelled':
+    case 'expired': return paymentError(status);
+    case 'verification': return 'Payment verification needs attention. No local completion was recorded.';
+    case 'idle': return '';
+  }
+}
+
+function verificationMessage(error: unknown) {
+  const detail = error instanceof ApiClientError ? error.message : 'Laravel could not be reached.';
+  return `Payment status could not be verified. ${detail} Retry verification; do not treat this payment as complete yet.`;
 }
 
 const styles = StyleSheet.create({
@@ -226,11 +364,18 @@ const styles = StyleSheet.create({
   cashError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.label, lineHeight: 20, fontWeight: '700' },
   qrPanel: { gap: spacing.md, alignItems: 'center', paddingTop: spacing.sm },
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
+  qrImage: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white },
+  qrPayloadCard: { width: '100%', minHeight: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', padding: spacing.md, gap: spacing.sm },
+  qrPayloadLabel: { color: colors.text, fontSize: typography.caption, fontWeight: '800' },
+  qrPayloadText: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
   qrTitle: { color: colors.text, textAlign: 'center', fontSize: typography.title, fontWeight: '900' },
   qrBody: { color: colors.textMuted, textAlign: 'center', fontSize: typography.label, lineHeight: 20, maxWidth: 390 },
   qrStatus: { textAlign: 'center', fontSize: typography.label, fontWeight: '800', lineHeight: 20 },
   qrStatusPaid: { color: colors.primary },
   qrStatusError: { color: colors.danger },
+  qrStatusVerification: { color: colors.warning },
+  qrError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.caption, lineHeight: 18, textAlign: 'center' },
+  qrActions: { alignSelf: 'stretch', gap: spacing.sm },
   fullButton: { alignSelf: 'stretch' },
   secureRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   secureText: { color: colors.textMuted, fontSize: 11, textAlign: 'center', flexShrink: 1 },

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button, Text, View } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { ApiClient, ApiClientError } from '@/src/api/client';
+import { ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Sale } from '@/src/types';
 
@@ -36,6 +36,25 @@ function Harness() {
   );
 }
 
+function QrHarness() {
+  const { products, addProductChecked, startQrPhPayment } = usePos();
+  const [result, setResult] = useState('');
+
+  return (
+    <View>
+      <Button testID="add-qr-product" title="Add QR product" onPress={() => addProductChecked(products[0])} />
+      <Button
+        testID="start-qr"
+        title="Start QR"
+        onPress={() => {
+          void startQrPhPayment().then(() => setResult('created')).catch((error: Error) => setResult(error.message));
+        }}
+      />
+      <Text>{`qr-result:${result}`}</Text>
+    </View>
+  );
+}
+
 function makeClient(createSale: jest.Mock) {
   return {
     isConfigured: true,
@@ -60,6 +79,15 @@ function makeClient(createSale: jest.Mock) {
     listSales: jest.fn().mockResolvedValue([sale]),
   } as unknown as ApiClient;
 }
+
+function makeQrClient(createQrPhPayment: jest.Mock) {
+  return {
+    isConfigured: true,
+    createQrPhPayment,
+  } as unknown as ApiClient;
+}
+
+const pendingPayment: Payment = { id: 'payment-1', status: 'pending', amount: 2500 };
 
 describe('PosProvider Laravel cash checkout', () => {
   it('uses one idempotent request for concurrent retries and refreshes backend history/inventory', async () => {
@@ -109,5 +137,50 @@ describe('PosProvider Laravel cash checkout', () => {
 
     expect(createSale).toHaveBeenCalledTimes(2);
     expect(createSale.mock.calls[0][0].idempotencyKey).toBe(createSale.mock.calls[1][0].idempotencyKey);
+  });
+});
+
+describe('PosProvider Laravel QR Ph checkout', () => {
+  it('uses one Laravel payment request for concurrent starts and preserves its key', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const { getByTestId, getByText } = render(
+      <PosProvider client={makeQrClient(createQrPhPayment)}><QrHarness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-qr-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('start-qr'));
+      fireEvent.press(getByTestId('start-qr'));
+    });
+
+    await waitFor(() => expect(getByText('qr-result:created')).toBeTruthy());
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+    expect(createQrPhPayment.mock.calls[0][0]).toMatchObject({
+      items: [{ productId: 'prd-001', quantity: 1 }],
+    });
+    expect(createQrPhPayment.mock.calls[0][0].idempotencyKey).toMatch(/^mobile-qr-/);
+  });
+
+  it('retries a transport failure with the same idempotency key rather than creating a new completion', async () => {
+    const createQrPhPayment = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
+      .mockResolvedValueOnce(pendingPayment);
+    const { getByTestId, getByText } = render(
+      <PosProvider client={makeQrClient(createQrPhPayment)}><QrHarness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-qr-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('start-qr'));
+    });
+    await waitFor(() => expect(getByText(/qr-result:Unable to reach PorSca API: timeout/)).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('start-qr'));
+    });
+    await waitFor(() => expect(getByText('qr-result:created')).toBeTruthy());
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(2);
+    expect(createQrPhPayment.mock.calls[0][0].idempotencyKey).toBe(createQrPhPayment.mock.calls[1][0].idempotencyKey);
   });
 });

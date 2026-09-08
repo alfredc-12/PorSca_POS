@@ -120,12 +120,33 @@ export type PaymentRequest = {
   items: { productId: string; quantity: number }[];
 };
 
+type ApiPayment = {
+  id: string | number;
+  status?: string;
+  amount?: number | string;
+  currency?: string;
+  qr_payload?: string | null;
+  qrCode?: string | null;
+  checkout_url?: string | null;
+  checkoutUrl?: string | null;
+  sale_id?: string | number | null;
+  saleId?: string | number | null;
+  failure_reason?: string | null;
+  failureReason?: string | null;
+};
+
 export type Payment = {
   id: string;
   status: PaymentStatus;
+  /** Amount as returned by Laravel (integer PHP centavos). */
   amount: number;
+  currency?: string;
+  qrPayload?: string;
+  /** Legacy alias kept for callers that render a QR code directly. */
   qrCode?: string;
-  expiresAt?: string;
+  checkoutUrl?: string;
+  saleId?: string;
+  failureReason?: string;
 };
 
 export type ApiErrorBody = {
@@ -266,19 +287,19 @@ export class ApiClient {
   }
 
   createQrPhPayment(payment: PaymentRequest) {
-    return this.request<Payment>(this.versionedPath('/payments'), {
+    return this.request<ApiPayment>(this.versionedPath('/payments'), {
       method: 'POST',
       headers: { 'Idempotency-Key': payment.idempotencyKey },
       body: payment,
-    });
+    }).then(normalizePayment);
   }
 
   getPaymentStatus(paymentId: string) {
-    return this.request<Payment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}`));
+    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}`)).then(normalizePayment);
   }
 
   cancelPayment(paymentId: string) {
-    return this.request<Payment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/status`), { method: 'POST' });
+    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/status`), { method: 'POST' }).then(normalizePayment);
   }
 
   private versionedPath(path: string) {
@@ -401,10 +422,28 @@ function normalizeSale(sale: ApiSale): Sale {
   };
 }
 
+function normalizePayment(payment: ApiPayment): Payment {
+  const qrPayload = payment.qr_payload ?? payment.qrCode ?? undefined;
+  const checkoutUrl = payment.checkout_url ?? payment.checkoutUrl ?? undefined;
+  const saleId = payment.sale_id ?? payment.saleId;
+  const failureReason = payment.failure_reason ?? payment.failureReason ?? undefined;
+
+  return {
+    id: String(payment.id),
+    status: normalizePaymentStatus(payment.status ?? 'pending'),
+    amount: Number(payment.amount ?? 0),
+    ...(payment.currency ? { currency: payment.currency } : {}),
+    ...(qrPayload ? { qrPayload, qrCode: qrPayload } : {}),
+    ...(checkoutUrl ? { checkoutUrl } : {}),
+    ...(saleId === null || saleId === undefined ? {} : { saleId: String(saleId) }),
+    ...(failureReason ? { failureReason } : {}),
+  };
+}
+
 function normalizePaymentStatus(status: string): PaymentStatus {
   return status === 'pending' || status === 'paid' || status === 'failed' || status === 'cancelled' || status === 'expired'
     ? status
-    : 'paid';
+    : 'pending';
 }
 
 function normalizeInventoryItem(item: ApiInventoryItem): InventoryItem {

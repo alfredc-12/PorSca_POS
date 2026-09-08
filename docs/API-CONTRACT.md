@@ -1,6 +1,6 @@
 # Mobile/API contract
 
-**Contract version for this round: `porsca-mobile-api-v1`.** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for staging and release; the Express directory in this repository is only a deprecated local scaffold until Laravel parity is accepted.
+**Contract version for this round: `porsca-mobile-api-v1`.** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release. The embedded Express scaffold has been retired after Laravel payment parity was verified.
 
 ## Configuration
 
