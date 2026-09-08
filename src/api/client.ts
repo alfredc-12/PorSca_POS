@@ -5,6 +5,8 @@ export const API_CONTRACT_VERSION = 'porsca-mobile-api-v1';
 
 export type ApiClientOptions = {
   baseUrl?: string;
+  /** Staging/local API bearer token. Production credentials must not be bundled. */
+  apiToken?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -51,10 +53,12 @@ type ApiInventoryItem = {
   status?: StockStatus;
 };
 
+/** Product prices are pesos in the mobile UI and centavos on the API wire. */
 export type ProductInput = Omit<Product, 'id'>;
 
 export type InventoryUpdate = {
   stock: number;
+  reorder_level?: number;
 };
 
 export type SaleRequest = {
@@ -105,6 +109,11 @@ function configuredBaseUrl() {
   return value ? value.replace(/\/+$/, '') : undefined;
 }
 
+function configuredApiToken() {
+  const value = process.env.EXPO_PUBLIC_API_TOKEN?.trim();
+  return value || undefined;
+}
+
 export function isDeviceSafeApiUrl(value: string | undefined) {
   if (!value) return false;
   try {
@@ -128,10 +137,12 @@ function unwrapData<T>(payload: T | { data: T }) {
  */
 export class ApiClient {
   readonly baseUrl?: string;
+  private readonly apiToken?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? configuredBaseUrl())?.replace(/\/+$/, '');
+    this.apiToken = options.apiToken?.trim() || configuredApiToken();
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
@@ -166,11 +177,11 @@ export class ApiClient {
   }
 
   createProduct(product: ProductInput) {
-    return this.request<Product>(this.versionedPath('/products'), { method: 'POST', body: product });
+    return this.request<ApiProduct>(this.versionedPath('/products'), { method: 'POST', body: serializeProductInput(product) }).then(normalizeProduct);
   }
 
   updateProduct(productId: string, product: Partial<ProductInput>) {
-    return this.request<Product>(this.versionedPath(`/products/${encodeURIComponent(productId)}`), { method: 'PATCH', body: product });
+    return this.request<ApiProduct>(this.versionedPath(`/products/${encodeURIComponent(productId)}`), { method: 'PATCH', body: serializeProductPatch(product) }).then(normalizeProduct);
   }
 
   listInventory() {
@@ -181,11 +192,11 @@ export class ApiClient {
   }
 
   updateInventory(productId: string, update: InventoryUpdate) {
-    return this.request<Product>(this.versionedPath(`/inventory/${encodeURIComponent(productId)}`), { method: 'PATCH', body: update });
+    return this.request<ApiProduct>(this.versionedPath(`/products/${encodeURIComponent(productId)}/stock`), { method: 'PATCH', body: update }).then(normalizeProduct);
   }
 
   createSale(sale: SaleRequest) {
-    return this.request<Sale>('/api/sales', {
+    return this.request<Sale>(this.versionedPath('/sales/checkout'), {
       method: 'POST',
       headers: { 'Idempotency-Key': sale.idempotencyKey },
       body: sale,
@@ -193,15 +204,15 @@ export class ApiClient {
   }
 
   listTransactions() {
-    return this.request<Sale[]>('/api/transactions');
+    return this.request<Sale[]>(this.versionedPath('/transactions'));
   }
 
   getTransaction(transactionId: string) {
-    return this.request<Sale>(`/api/transactions/${encodeURIComponent(transactionId)}`);
+    return this.request<Sale>(this.versionedPath(`/transactions/${encodeURIComponent(transactionId)}`));
   }
 
   createQrPhPayment(payment: PaymentRequest) {
-    return this.request<Payment>('/api/payments/qrph', {
+    return this.request<Payment>(this.versionedPath('/payments'), {
       method: 'POST',
       headers: { 'Idempotency-Key': payment.idempotencyKey },
       body: payment,
@@ -209,11 +220,11 @@ export class ApiClient {
   }
 
   getPaymentStatus(paymentId: string) {
-    return this.request<Payment>(`/api/payments/${encodeURIComponent(paymentId)}`);
+    return this.request<Payment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}`));
   }
 
   cancelPayment(paymentId: string) {
-    return this.request<Payment>(`/api/payments/${encodeURIComponent(paymentId)}/cancel`, { method: 'POST' });
+    return this.request<Payment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/status`), { method: 'POST' });
   }
 
   private versionedPath(path: string) {
@@ -233,10 +244,11 @@ export class ApiClient {
         headers: {
           Accept: 'application/json',
           'X-PorSca-Contract-Version': API_CONTRACT_VERSION,
-          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(this.apiToken ? { Authorization: `Bearer ${this.apiToken}` } : {}),
+          ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers,
         },
-        body: options.body ? JSON.stringify(options.body) : undefined,
+        body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Network request failed.';
@@ -253,6 +265,34 @@ export class ApiClient {
 
     return unwrapData(payload as T);
   }
+}
+
+function serializeProductInput(product: ProductInput) {
+  return {
+    ...(product.sku ? { sku: product.sku } : {}),
+    barcode: product.barcode,
+    name: product.name,
+    ...(product.category ? { category: product.category } : {}),
+    price: toApiPrice(product.price),
+    stock: product.stock,
+    ...(product.reorderLevel === undefined ? {} : { reorder_level: product.reorderLevel }),
+  };
+}
+
+function serializeProductPatch(product: Partial<ProductInput>) {
+  return {
+    ...(product.sku === undefined ? {} : { sku: product.sku }),
+    ...(product.barcode === undefined ? {} : { barcode: product.barcode }),
+    ...(product.name === undefined ? {} : { name: product.name }),
+    ...(product.category === undefined ? {} : { category: product.category }),
+    ...(product.price === undefined ? {} : { price: toApiPrice(product.price) }),
+    ...(product.stock === undefined ? {} : { stock: product.stock }),
+    ...(product.reorderLevel === undefined ? {} : { reorder_level: product.reorderLevel }),
+  };
+}
+
+function toApiPrice(price: number) {
+  return Math.round(price * 100);
 }
 
 function normalizeProduct(product: ApiProduct): Product {
