@@ -19,8 +19,8 @@ Use these exact commits. Do not test a different commit without starting a new c
 
 | Side | Branch | Full commit SHA | Commit link |
 | --- | --- | --- | --- |
-| Mobile | `staging` | `fb6edf395456f3803c75f2dbcfbcda1afa563bf1` | [mobile commit](https://github.com/alfredc-12/PorSca_POS/commit/fb6edf395456f3803c75f2dbcfbcda1afa563bf1) |
-| API | `staging` | `13d294b3650d50d0ad703321d75f0372bb40df20` | [API commit](https://github.com/niks0501/PorSca_POS_API/commit/13d294b3650d50d0ad703321d75f0372bb40df20) |
+| Mobile | `staging` | `cb5bc0f71ee0209fc4819a4206d5dcf0969bf351` | [mobile commit](https://github.com/alfredc-12/PorSca_POS/commit/cb5bc0f71ee0209fc4819a4206d5dcf0969bf351) |
+| API | `staging` | `6d6abc9bc6be8845fa33ed64b6e01831024ef9f1` | [API commit](https://github.com/niks0501/PorSca_POS_API/commit/6d6abc9bc6be8845fa33ed64b6e01831024ef9f1) |
 
 The mobile staging branch was missing. It was created at the live mobile `main` tip above. The API staging branch already pointed to the API commit above.
 
@@ -31,13 +31,13 @@ npx -y gh-axi api /repos/alfredc-12/PorSca_POS/branches/staging --jq '.commit.sh
 npx -y gh-axi api /repos/niks0501/PorSca_POS_API/branches/staging --jq '.commit.sha'
 ```
 
-Success looks like the mobile command prints `fb6edf395456f3803c75f2dbcfbcda1afa563bf1` and the API command prints `13d294b3650d50d0ad703321d75f0372bb40df20`.
+Success looks like the mobile command prints `cb5bc0f71ee0209fc4819a4206d5dcf0969bf351` and the API command prints `6d6abc9bc6be8845fa33ed64b6e01831024ef9f1`.
 
 ## Seed and data baseline
 
-- **Mobile baseline:** `mobile-fallback-seed@fb6edf395456f3803c75f2dbcfbcda1afa563bf1`. This is the `seedProducts` data in [`src/data/mockProducts.ts`](https://github.com/alfredc-12/PorSca_POS/blob/fb6edf395456f3803c75f2dbcfbcda1afa563bf1/src/data/mockProducts.ts). The mobile repository has no separate seed tag.
-- **API baseline:** `qa-baseline-2026-01`. Run the API reset command once before the cycle and record its printed version. The API seed code is [`DatabaseSeeder.php`](https://github.com/niks0501/PorSca_POS_API/blob/13d294b3650d50d0ad703321d75f0372bb40df20/database/seeders/DatabaseSeeder.php).
-- **API migrations:** The migration set at API SHA `13d294b3650d50d0ad703321d75f0372bb40df20`.
+- **Mobile baseline:** `mobile-fallback-seed@cb5bc0f71ee0209fc4819a4206d5dcf0969bf351`. This is the `seedProducts` data in [`src/data/mockProducts.ts`](https://github.com/alfredc-12/PorSca_POS/blob/cb5bc0f71ee0209fc4819a4206d5dcf0969bf351/src/data/mockProducts.ts). The mobile repository has no separate seed tag.
+- **API baseline:** `qa-baseline-2026-02`. Run the API reset command once before the cycle and record its printed version. The API seed code is [`DatabaseSeeder.php`](https://github.com/niks0501/PorSca_POS_API/blob/6d6abc9bc6be8845fa33ed64b6e01831024ef9f1/database/seeders/DatabaseSeeder.php).
+- **API migrations:** The migration set at API SHA `6d6abc9bc6be8845fa33ed64b6e01831024ef9f1`.
 - **Data rule:** Do not reset, reseed, or patch the staging data during the cycle. If a test needs a fresh fixture, the release owner must plan that before the run.
 
 The release owner prepares the API baseline. Run this in the API checkout, not in this mobile checkout:
@@ -46,7 +46,7 @@ The release owner prepares the API baseline. Run this in the API checkout, not i
 php artisan qa:reset --force
 ```
 
-Success looks like the API reports `qa-baseline-2026-01` and the staging data is ready. If the command is not available, stop the setup and ask the API owner. Do not invent a new baseline in this record.
+Success looks like the API reports `qa-baseline-2026-02` and the staging data is ready. If the command is not available, stop the setup and ask the API owner. Do not invent a new baseline in this record.
 
 ## Payment context
 
@@ -80,7 +80,7 @@ Use the API owner's staging checkout. Set the stable staging address in the test
 
 Run the `php artisan qa:reset --force` command in [Seed and data baseline](#seed-and-data-baseline) once.
 
-**Success:** the API reports `qa-baseline-2026-01`. The tester records the output with the cycle evidence.
+**Success:** the API reports `qa-baseline-2026-02`. The tester records the output with the cycle evidence.
 
 ### 4. Build or install the candidate
 
@@ -107,7 +107,7 @@ Reset to the recorded baseline before the cycle. Follow the same order for every
 | 7 | History shows success | Open **Transactions** after check 1 or check 5. Find the completed sale. | History shows the successful payment, amount, item, and completed status. |
 | 8 | Inventory deducted exactly once | Record stock before a sale. Repeat the same payment request or retry with the same idempotency key. Check the sale and stock in the API and app. | There is one sale. Stock falls by the cart quantity once, not twice. The retry returns the original result. |
 
-The exact API safety rules are in [`docs/API-CONTRACT.md`](https://github.com/alfredc-12/PorSca_POS/blob/fb6edf395456f3803c75f2dbcfbcda1afa563bf1/docs/API-CONTRACT.md). Failed, cancelled, expired, and pending payments must not create a sale or change stock.
+The exact API safety rules are in [`docs/API-CONTRACT.md`](https://github.com/alfredc-12/PorSca_POS/blob/cb5bc0f71ee0209fc4819a4206d5dcf0969bf351/docs/API-CONTRACT.md). Failed, cancelled, expired, and pending payments must not create a sale or change stock.
 
 ## Evidence checklist
 
@@ -115,12 +115,12 @@ Mark each item only after its result and link are saved with this cycle record. 
 
 | Evidence | Command or action | Success looks like | Evidence link or file |
 | --- | --- | --- | --- |
-| Native automation | From the mobile checkout: `cd automation/appium && npm install && APPIUM_RUN=true APPIUM_DEVICE_NAME="<device>" APPIUM_APP_PACKAGE=com.porsca.pos npm run smoke` | All eight required smoke behaviors pass on a fresh preview install. The barcode fixture is available. | Add Appium report, screenshots, video, and logs. Keep large files in the cycle artifact store. See the [Appium guide](https://github.com/alfredc-12/PorSca_POS/blob/fb6edf395456f3803c75f2dbcfbcda1afa563bf1/automation/appium/README.md). |
-| API automation | Run the API Postman/Newman collection from [`PorSca-API.postman_collection.json`](https://github.com/niks0501/PorSca_POS_API/blob/13d294b3650d50d0ad703321d75f0372bb40df20/postman/PorSca-API.postman_collection.json) against the stable staging address. | The collection completes with all requests and assertions passing. | Add the Newman report and exact collection/API revision. |
+| Native automation | From the mobile checkout: `cd automation/appium && npm install && APPIUM_RUN=true APPIUM_DEVICE_NAME="<device>" APPIUM_APP_PACKAGE=com.porsca.pos npm run smoke` | All eight required smoke behaviors pass on a fresh preview install. The barcode fixture is available. | Add Appium report, screenshots, video, and logs. Keep large files in the cycle artifact store. See the [Appium guide](https://github.com/alfredc-12/PorSca_POS/blob/cb5bc0f71ee0209fc4819a4206d5dcf0969bf351/automation/appium/README.md). |
+| API automation | Run the API Postman/Newman collection from [`PorSca-API.postman_collection.json`](https://github.com/niks0501/PorSca_POS_API/blob/6d6abc9bc6be8845fa33ed64b6e01831024ef9f1/postman/PorSca-API.postman_collection.json) against the stable staging address. | The collection completes with all requests and assertions passing. | Add the Newman report and exact collection/API revision. |
 | Fast suites | From the mobile checkout: `npm ci && npm run verify` | Lint, TypeScript checks, and the Jest/React Native Testing Library tests all pass. | Add the CI link and command output. The [mobile CI run](https://github.com/alfredc-12/PorSca_POS/actions/runs/34228978707) for the pinned commit is currently red because of the account billing lock. It is not evidence of a code defect. |
 | Backend suite | From the API checkout: `composer verify` | Laravel tests, Pint, and the API checks pass. | Add the API CI link and output. The [API CI run](https://github.com/niks0501/PorSca_POS_API/actions/runs/34224573891) for the pinned API commit passed. |
 
-The mobile workflow is [`mobile-ci.yml`](https://github.com/alfredc-12/PorSca_POS/blob/fb6edf395456f3803c75f2dbcfbcda1afa563bf1/.github/workflows/mobile-ci.yml). The API workflow is [`api.yml`](https://github.com/niks0501/PorSca_POS_API/blob/13d294b3650d50d0ad703321d75f0372bb40df20/.github/workflows/api.yml).
+The mobile workflow is [`mobile-ci.yml`](https://github.com/alfredc-12/PorSca_POS/blob/cb5bc0f71ee0209fc4819a4206d5dcf0969bf351/.github/workflows/mobile-ci.yml). The API workflow is [`api.yml`](https://github.com/niks0501/PorSca_POS_API/blob/6d6abc9bc6be8845fa33ed64b6e01831024ef9f1/.github/workflows/api.yml).
 
 Do not try to fix the billing lock as part of QA. A repository owner must handle that separately. Do not spend an EAS build while the mobile gate is red.
 
@@ -160,7 +160,7 @@ The designated human, not this worker, must make the approval decision.
 - [ ] The stable staging API address is supplied and checked.
 - [ ] The human tester has a phone or approved device and the preview candidate.
 - [ ] The payment context is recorded. Secrets are not in this repository.
-- [ ] The API data baseline is recorded as `qa-baseline-2026-01`.
+- [ ] The API data baseline is recorded as `qa-baseline-2026-02`.
 - [ ] The mobile and API SHAs still match the pins in this record.
 - [ ] Mobile CI is green, or the repository owner has separately resolved the billing lock and rerun it.
 - [ ] API CI and the backend suite are green.
