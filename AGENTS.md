@@ -40,3 +40,10 @@
 When a PR changes setup, the contract, or the workflow, update this file in the same PR. Keep it short and point to the owning document instead of copying its detail.
 
 Keep this file useful to every agent session. Do not add supervisor-specific mechanics, machine paths, private nicknames, or harness-specific instructions.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

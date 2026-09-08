@@ -1,6 +1,7 @@
 export type PaymentMethod = 'cash' | 'qrph';
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'cancelled' | 'expired';
 export type ProductCategory = 'Beverages' | 'Noodles' | 'Milk' | 'Snacks' | 'Personal Care' | 'Household' | 'General';
+export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
 
 export type Product = {
   id: string;
@@ -8,6 +9,10 @@ export type Product = {
   name: string;
   price: number;
   stock: number;
+  /** Laravel's authoritative stock state, when this product came from the API. */
+  stockStatus?: StockStatus;
+  reorderLevel?: number;
+  sku?: string;
   category?: ProductCategory;
 };
 

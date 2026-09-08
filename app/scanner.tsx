@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -14,7 +14,8 @@ export default function ScannerScreen() {
   const inventoryMode = mode === 'inventory';
   const [permission, requestPermission] = useCameraPermissions();
   const [locked, setLocked] = useState(false);
-  const { addByBarcode, products } = usePos();
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const { addByBarcode, lookupProductByBarcode } = usePos();
 
   if (!permission) return <View style={styles.root} />;
 
@@ -31,27 +32,49 @@ export default function ScannerScreen() {
     );
   }
 
-  const handleBarcode = (data: string) => {
+  const handleBarcode = async (data: string) => {
     setLocked(true);
+    setLookupBusy(true);
 
     if (inventoryMode) {
-      const product = products.find((item) => item.barcode === data);
-      if (product) {
-        router.replace({ pathname: '/product-form', params: { id: product.id } });
+      const result = await lookupProductByBarcode(data);
+      setLookupBusy(false);
+      if (result.ok && result.product) {
+        const productId = result.product.id;
+        if (result.usingFallback) {
+          Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [
+            { text: 'Continue', onPress: () => router.replace({ pathname: '/product-form', params: { id: productId } }) },
+          ]);
+        } else {
+          router.replace({ pathname: '/product-form', params: { id: result.product.id } });
+        }
         return;
       }
-      Alert.alert('Barcode not in inventory', 'This barcode does not belong to an existing product. Would you like to create it?', [
+      if (result.status === 'unavailable') {
+        Alert.alert('API unavailable', result.message, [
+          { text: 'Try again', onPress: () => setLocked(false) },
+          { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
+        ]);
+        return;
+      }
+      Alert.alert('Barcode not in inventory', 'This barcode was not found in Laravel inventory. You can scan again or add it as a new product.', [
         { text: 'Scan again', onPress: () => setLocked(false) },
         { text: 'Add product', onPress: () => router.replace({ pathname: '/product-form', params: { barcode: data } }) },
       ]);
       return;
     }
 
-    const result = addByBarcode(data);
+    const result = await addByBarcode(data);
+    setLookupBusy(false);
     if (result.ok) {
-      router.back();
+      if (result.usingFallback) {
+        Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [{ text: 'Continue', onPress: () => router.back() }]);
+      } else {
+        router.back();
+      }
     } else {
-      Alert.alert('Unable to add product', result.message, [
+      const title = result.status === 'unavailable' ? 'API unavailable' : result.status === 'not-found' ? 'Product not found' : 'Unable to add product';
+      Alert.alert(title, result.message, [
         { text: 'Try again', onPress: () => setLocked(false) },
         { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
       ]);
@@ -87,8 +110,9 @@ export default function ScannerScreen() {
             <View style={[styles.corner, styles.bottomRight]} />
             <View style={styles.scanLine} />
           </View>
-          <Text style={styles.title}>Place the barcode inside the frame</Text>
-          <Text style={styles.caption}>{inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+          <Text style={styles.title}>{lookupBusy ? 'Looking up barcode…' : 'Place the barcode inside the frame'}</Text>
+          <Text style={styles.caption}>{lookupBusy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+          {lookupBusy ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
         </View>
 
         <View style={styles.bottomCard} pointerEvents="none">
@@ -119,6 +143,7 @@ const styles = StyleSheet.create({
   scanLine: { position: 'absolute', left: 24, right: 24, top: '50%', height: 2, borderRadius: 1, backgroundColor: '#63E5A4' },
   title: { color: colors.white, fontSize: typography.title, fontWeight: '900', textAlign: 'center' },
   caption: { color: '#E8ECE9', fontSize: typography.label, textAlign: 'center', marginTop: spacing.sm, lineHeight: 20, maxWidth: 380 },
+  lookupIndicator: { marginTop: spacing.md },
   bottomCard: { minHeight: 52, marginBottom: spacing.md, borderRadius: radius.md, backgroundColor: 'rgba(255,252,248,0.94)', paddingHorizontal: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   bottomText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
   permissionCard: { minHeight: 330, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, padding: spacing.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.md },

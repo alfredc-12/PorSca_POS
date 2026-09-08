@@ -1,32 +1,37 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
+import { DataState } from '@/src/components/DataState';
 import { usePos } from '@/src/context/PosContext';
 import { Product } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 export default function InventoryScreen() {
-  const { products } = usePos();
+  const { inventoryProducts, inventoryState, inventoryError, refreshInventory } = usePos();
   const [query, setQuery] = useState('');
   const responsive = useResponsive();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter((product) =>
+    if (!q) return inventoryProducts;
+    return inventoryProducts.filter((product) =>
       product.name.toLowerCase().includes(q) ||
       product.barcode.includes(q) ||
       (product.category ?? '').toLowerCase().includes(q),
     );
-  }, [products, query]);
+  }, [inventoryProducts, query]);
 
-  const lowStock = products.filter((product) => product.stock > 0 && product.stock <= 10).length;
-  const outOfStock = products.filter((product) => product.stock === 0).length;
-  const healthy = products.filter((product) => product.stock > 10).length;
+  const lowStock = inventoryProducts.filter((product) => product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10)).length;
+  const outOfStock = inventoryProducts.filter((product) => product.stockStatus === 'out_of_stock' || product.stock === 0).length;
+  const healthy = inventoryProducts.filter((product) => (product.stockStatus ?? (product.stock > 10 ? 'in_stock' : 'low_stock')) === 'in_stock').length;
+
+  useEffect(() => {
+    void refreshInventory();
+  }, [refreshInventory]);
 
   return (
     <Screen>
@@ -64,11 +69,25 @@ export default function InventoryScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>Online • Ready</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryState === 'unavailable' ? 'Offline • Demo fallback' : inventoryState === 'loading' ? 'Checking Laravel…' : 'Laravel inventory'}</Text>
         </View>
       </View>
 
-      <View style={[styles.inventoryCard, { padding: responsive.narrow ? 10 : spacing.md, gap: responsive.short ? 10 : spacing.md }]}>
+      {inventoryState === 'loading' ? (
+        <DataState kind="loading" title="Loading inventory from Laravel" message="Fetching authoritative product and stock information." />
+      ) : null}
+
+      {inventoryState === 'unavailable' ? (
+        <DataState
+          kind="unavailable"
+          title="Laravel inventory unavailable"
+          message={inventoryError ?? 'The API could not be reached. The offline demo inventory is shown below.'}
+          actionLabel="Retry inventory"
+          onAction={() => void refreshInventory()}
+        />
+      ) : null}
+
+      {inventoryState !== 'loading' ? <View style={[styles.inventoryCard, { padding: responsive.narrow ? 10 : spacing.md, gap: responsive.short ? 10 : spacing.md }]}>
         <View style={styles.cardHeading}>
           <View style={styles.headingRow}>
             <Ionicons name="cube-outline" size={responsive.s(28)} color={colors.primary} />
@@ -83,24 +102,24 @@ export default function InventoryScreen() {
         </View>
 
         <View style={[styles.metrics, responsive.narrow && styles.metricsWrap]}>
-          <Metric icon="cube-outline" value={products.length} label="Total Products" tone="green" />
+          <Metric icon="cube-outline" value={inventoryProducts.length} label="Total Products" tone="green" />
           <Metric icon="checkmark-circle" value={healthy} label="In Stock" tone="green" />
           <Metric icon="alert-circle" value={lowStock} label="Low Stock" tone="yellow" />
           <Metric icon="close-circle" value={outOfStock} label="Out of Stock" tone="red" />
         </View>
-      </View>
+      </View> : null}
 
-      <View style={styles.listCard}>
+      {inventoryState !== 'loading' ? <View style={styles.listCard}>
         {filtered.length ? filtered.map((product, index) => (
           <ProductRow key={product.id} product={product} first={index === 0} />
         )) : (
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.26, 190, 250) }]}>
             <Ionicons name="search-outline" size={responsive.s(34)} color={colors.textMuted} />
-            <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>No products match your search</Text>
-            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>Try a product name, barcode, or category.</Text>
+            <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>{inventoryProducts.length ? 'No products match your search' : 'No inventory products returned'}</Text>
+            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>{inventoryProducts.length ? 'Try a product name, barcode, or category.' : 'Laravel has no active inventory records yet.'}</Text>
           </View>
         )}
-      </View>
+      </View> : null}
 
       <View style={styles.addWrap}>
         <Pressable
@@ -147,8 +166,8 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
 
 function ProductRow({ product, first }: { product: Product; first: boolean }) {
   const responsive = useResponsive();
-  const low = product.stock > 0 && product.stock <= 10;
-  const out = product.stock === 0;
+  const low = product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10);
+  const out = product.stockStatus === 'out_of_stock' || product.stock === 0;
   const badgeBackground = out ? colors.dangerSoft : low ? colors.warningSoft : colors.primarySoft;
   const badgeColor = out ? colors.danger : low ? colors.warning : colors.primary;
   const badgeText = out ? 'Out of Stock' : low ? 'Low Stock' : 'In Stock';
@@ -186,7 +205,7 @@ function ProductRow({ product, first }: { product: Product; first: boolean }) {
             <Text style={[styles.badgeText, { color: badgeColor, fontSize: responsive.font(10.5) }]}>{badgeText}</Text>
           </View>
         ) : null}
-        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>₱{product.price.toFixed(2)}</Text>
+        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{product.price > 0 ? `₱${product.price.toFixed(2)}` : 'Price unavailable'}</Text>
       </View>
       <Ionicons name="ellipsis-vertical" size={responsive.s(20)} color={colors.textMuted} />
     </Pressable>
