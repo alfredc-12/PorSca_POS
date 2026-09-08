@@ -37,6 +37,8 @@ The mobile app has one network boundary: `src/api/client.ts`. Set the Laravel `/
 ```env
 EXPO_PUBLIC_APP_ENV=development
 EXPO_PUBLIC_API_URL=http://192.168.1.100:8000/api/v1
+# Only for a local/staging API configured with bearer auth.
+EXPO_PUBLIC_API_TOKEN=local-api-token
 ```
 
 For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Expo public variables are included in the client bundle, so they must contain configuration only and never secrets.

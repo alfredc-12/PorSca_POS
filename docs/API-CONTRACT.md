@@ -6,6 +6,8 @@
 
 `EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the stable staging API base.
 
+Protected local/staging requests use `EXPO_PUBLIC_API_TOKEN` when the environment provides one; `src/api/client.ts` sends it as a Bearer token. Never commit a real staging or production token, and never put PayMongo credentials in any mobile environment variable.
+
 ## Resource boundary
 
 The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Error responses should be `{ "error": "...", "details": ... }` or `{ "message": "..." }` with an appropriate HTTP status.
@@ -13,9 +15,10 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 | Capability | Method | Path | Client method |
 | --- | --- | --- | --- |
 | Health | GET | `/health` | `health()` |
-| Products | GET | `/products` | `listProducts()` (`?search=` or `?barcode=`) |
-| Product | GET | `/products/:id` | `getProduct()` |
+| Products | GET/POST | `/products` | `listProducts()` / `createProduct()` |
+| Product | GET/PATCH | `/products/:id` | `getProduct()` / `updateProduct()` |
 | Barcode lookup | GET | `/products/barcode/:barcode` | `getProductByBarcode()` (404 when unknown) |
+| Product stock | PATCH | `/products/:id/stock` | `updateInventory()` (the `/inventory/:id` alias is also supported) |
 | Inventory | GET | `/inventory` | `listInventory()` |
 | Sale | POST | `/sales/checkout` | `createSale()` |
 | Transactions | GET | `/transactions` | `listTransactions()` |
@@ -24,7 +27,11 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 | Payment status | GET | `/payments/:id` | `getPaymentStatus()` |
 | Cancel payment | POST | `/payments/:id/status` | `cancelPayment()` |
 
-Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
+Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `category`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI and converts them back to centavos for product writes. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
+
+Product create requests contain `name`, `barcode` (8–64 digits), `category`, `price` (non-negative integer centavos), `stock` (non-negative integer), and optional `sku`/`reorder_level`. Product edits use PATCH with any supported subset of those fields. Product stock updates use `stock` and optional `reorder_level`. Duplicate barcodes, invalid price/stock values, and other validation failures return HTTP 422 as `{ error: { code: "validation_error", message, details } }`; the mobile form keeps the entered values so the cashier can correct and retry.
+
+Protected catalog, inventory, product-management, sales, transaction, and payment routes require `Authorization: Bearer <API_TOKEN>`. Local/staging clients may provide that token through their environment; real provider secrets remain server-side and must never be bundled.
 
 Sale requests contain `idempotencyKey`, line items (`productId`, `quantity`, `unitPrice`), `total`, `paymentMethod`, and optional `paymentId`.
 

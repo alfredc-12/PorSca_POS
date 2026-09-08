@@ -14,6 +14,16 @@ export type BarcodeLookupResult = {
   usingFallback?: boolean;
 };
 
+export type ProductField = 'name' | 'barcode' | 'price' | 'stock';
+
+export type ProductMutationResult = {
+  ok: boolean;
+  product?: Product;
+  status: 'created' | 'updated' | 'validation' | 'unavailable' | 'error' | 'refresh-failed';
+  message: string;
+  fieldErrors?: Partial<Record<ProductField, string>>;
+};
+
 type PosContextValue = {
   products: Product[];
   inventoryProducts: Product[];
@@ -33,8 +43,8 @@ type PosContextValue = {
   addProductChecked: (product: Product) => CartChange;
   decrementProduct: (productId: string) => void;
   clearCart: () => void;
-  updateProduct: (product: Product) => void;
-  createProduct: (product: Omit<Product, 'id'>) => void;
+  updateProduct: (product: Product) => Promise<ProductMutationResult>;
+  createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
   completeSale: (method: PaymentMethod) => Sale | null;
   apiConfigured: boolean;
   searchProducts: (query: string) => Promise<void>;
@@ -67,6 +77,12 @@ export function PosProvider({ children, client = apiClient }: { children: React.
 
   const rememberProducts = useCallback((remoteProducts: Product[]) => {
     setProducts((current) => mergeProducts(current, remoteProducts));
+  }, []);
+
+  const rememberProductEverywhere = useCallback((product: Product) => {
+    setProducts((current) => mergeProducts(current, [product]));
+    setInventoryProducts((current) => mergeProducts(current, [product]));
+    setSearchResults((current) => mergeProducts(current, [product]));
   }, []);
 
   const addProduct = (product: Product) => {
@@ -130,18 +146,6 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   };
 
   const clearCart = () => setCart([]);
-
-  const updateProduct = (updated: Product) => {
-    setProducts((current) => replaceProduct(current, updated));
-    setInventoryProducts((current) => replaceProduct(current, updated));
-    setSearchResults((current) => replaceProduct(current, updated));
-  };
-
-  const createProduct = (input: Omit<Product, 'id'>) => {
-    const product = { ...input, id: `prd-${Date.now()}` };
-    setProducts((current) => [...current, product]);
-    setInventoryProducts((current) => [...current, product]);
-  };
 
   const completeSale = (paymentMethod: PaymentMethod) => {
     if (cart.length === 0) return null;
@@ -261,13 +265,58 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       setInventoryState('ready');
       return true;
     } catch {
-      setInventoryProducts(seedProducts);
+      setInventoryProducts((current) => current.length ? current : seedProducts);
       setInventoryState('unavailable');
       setInventoryError('Laravel API is unavailable. Showing the offline demo inventory.');
       setInventoryUsingFallback(true);
       return false;
     }
   }, [client]);
+
+  const saveRemoteProduct = useCallback(async (
+    operation: () => Promise<Product>,
+    status: 'created' | 'updated',
+  ): Promise<ProductMutationResult> => {
+    if (!client.isConfigured) {
+      return {
+        ok: false,
+        status: 'unavailable',
+        message: 'The Laravel API is not configured. Connect to the API and try again; no local product was saved.',
+      };
+    }
+
+    try {
+      const saved = await operation();
+      rememberProductEverywhere(saved);
+      const refreshed = await refreshInventory();
+      if (!refreshed) {
+        return {
+          ok: false,
+          status: 'refresh-failed',
+          product: saved,
+          message: 'Product saved, but the authoritative inventory could not be refreshed. Retry the inventory refresh before leaving this screen.',
+        };
+      }
+      return {
+        ok: true,
+        status,
+        product: saved,
+        message: status === 'created' ? 'Product created and inventory refreshed.' : 'Product updated and inventory refreshed.',
+      };
+    } catch (error) {
+      return productMutationFailure(error);
+    }
+  }, [client, refreshInventory, rememberProductEverywhere]);
+
+  const updateProduct = useCallback((updated: Product) => saveRemoteProduct(
+    () => client.updateProduct(updated.id, updated),
+    'updated',
+  ), [client, saveRemoteProduct]);
+
+  const createProduct = useCallback((input: Omit<Product, 'id'>) => saveRemoteProduct(
+    () => client.createProduct(input),
+    'created',
+  ), [client, saveRemoteProduct]);
 
   return (
     <PosContext.Provider
@@ -304,14 +353,73 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   );
 }
 
+function productMutationFailure(error: unknown): ProductMutationResult {
+  if (!(error instanceof ApiClientError)) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      message: 'Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.',
+    };
+  }
+
+  const fieldErrors = extractFieldErrors(error.details);
+  const barcodeError = fieldErrors.barcode?.toLowerCase() ?? '';
+  if (error.status === 422) {
+    if (barcodeError.includes('taken') || barcodeError.includes('already') || barcodeError.includes('unique')) {
+      return {
+        ok: false,
+        status: 'validation',
+        fieldErrors: { ...fieldErrors, barcode: 'Barcode already exists. Use a different barcode.' },
+        message: 'Barcode already exists. Use a different barcode, then try again.',
+      };
+    }
+    return {
+      ok: false,
+      status: 'validation',
+      fieldErrors,
+      message: error.message || 'The API rejected these product details. Check the highlighted fields and try again.',
+    };
+  }
+
+  if (error.status === undefined) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      message: 'Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.',
+    };
+  }
+
+  if (error.status >= 500) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      message: 'Could not save the product because the Laravel API is unavailable. Check the connection and try again.',
+    };
+  }
+
+  return {
+    ok: false,
+    status: 'error',
+    fieldErrors,
+    message: error.message || 'The Laravel API rejected the product. Check the details and try again.',
+  };
+}
+
+function extractFieldErrors(details: unknown): Partial<Record<ProductField, string>> {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return {};
+  const result: Partial<Record<ProductField, string>> = {};
+  for (const field of ['name', 'barcode', 'price', 'stock'] as ProductField[]) {
+    const value = (details as Record<string, unknown>)[field];
+    if (Array.isArray(value) && typeof value[0] === 'string') result[field] = value[0];
+    else if (typeof value === 'string') result[field] = value;
+  }
+  return result;
+}
+
 function mergeProducts(current: Product[], incoming: Product[]) {
   const merged = new Map(current.map((product) => [product.id, product]));
   incoming.forEach((product) => merged.set(product.id, { ...merged.get(product.id), ...product }));
   return [...merged.values()];
-}
-
-function replaceProduct(products: Product[], updated: Product) {
-  return products.map((product) => product.id === updated.id ? updated : product);
 }
 
 export function usePos() {
