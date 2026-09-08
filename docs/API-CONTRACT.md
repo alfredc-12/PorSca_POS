@@ -4,7 +4,7 @@
 
 ## Configuration
 
-`EXPO_PUBLIC_API_URL` is the API origin, without a trailing slash. It is public configuration and is bundled into the app. It must never contain a PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:4000`) and never `localhost` on a phone. The preview profile uses the stable staging API origin.
+`EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the stable staging API base.
 
 ## Resource boundary
 
@@ -13,18 +13,20 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 | Capability | Method | Path | Client method |
 | --- | --- | --- | --- |
 | Health | GET | `/health` | `health()` |
-| Products | GET/POST | `/api/products` | `listProducts()` / `createProduct()` |
-| Product | GET/PATCH | `/api/products/:id` | `getProduct()` / `updateProduct()` |
-| Inventory | GET | `/api/inventory` | `listInventory()` |
-| Inventory stock | PATCH | `/api/inventory/:productId` | `updateInventory()` |
-| Sale | POST | `/api/sales` | `createSale()` |
-| Transactions | GET | `/api/transactions` | `listTransactions()` |
-| Transaction | GET | `/api/transactions/:id` | `getTransaction()` |
-| QR Ph payment | POST | `/api/payments/qrph` | `createQrPhPayment()` |
-| Payment status | GET | `/api/payments/:id` | `getPaymentStatus()` |
-| Cancel payment | POST | `/api/payments/:id/cancel` | `cancelPayment()` |
+| Products | GET | `/products` | `listProducts()` (`?search=` or `?barcode=`) |
+| Product | GET | `/products/:id` | `getProduct()` |
+| Barcode lookup | GET | `/products/barcode/:barcode` | `getProductByBarcode()` (404 when unknown) |
+| Inventory | GET | `/inventory` | `listInventory()` |
+| Sale | POST | `/sales/checkout` | `createSale()` |
+| Transactions | GET | `/transactions` | `listTransactions()` |
+| Transaction | GET | `/transactions/:id` | `getTransaction()` |
+| QR Ph payment | POST | `/payments` | `createQrPhPayment()` |
+| Payment status | GET | `/payments/:id` | `getPaymentStatus()` |
+| Cancel payment | POST | `/payments/:id/status` | `cancelPayment()` |
 
-Product fields are `id`, `barcode`, `name`, `price`, `stock`, and optional `category`. Sale requests contain `idempotencyKey`, line items (`productId`, `quantity`, `unitPrice`), `total`, `paymentMethod`, and optional `paymentId`.
+Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
+
+Sale requests contain `idempotencyKey`, line items (`productId`, `quantity`, `unitPrice`), `total`, `paymentMethod`, and optional `paymentId`.
 
 QR Ph requests contain `transactionId`, `amount`, and `idempotencyKey`. Payment responses contain `id`, `status` (`pending`, `paid`, `failed`, `cancelled`, or `expired`), `amount`, and optional `qrCode`/`expiresAt`.
 

@@ -32,16 +32,16 @@ npm run verify
 
 ## API URL
 
-The mobile app has one network boundary: `src/api/client.ts`. Set its origin in the repository-root `.env`:
+The mobile app has one network boundary: `src/api/client.ts`. Set the Laravel `/api/v1` base in the repository-root `.env`:
 
 ```env
 EXPO_PUBLIC_APP_ENV=development
-EXPO_PUBLIC_API_URL=http://192.168.1.100:4000
+EXPO_PUBLIC_API_URL=http://192.168.1.100:8000/api/v1
 ```
 
 For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Expo public variables are included in the client bundle, so they must contain configuration only and never secrets.
 
-The release backend is Laravel from `niks0501/PorSca_POS_API`. API paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). The `server/` directory in this repository is a deprecated local Express scaffold. It remains only so existing checkout demonstrations do not break before Laravel parity is accepted.
+The release backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). The `server/` directory in this repository is a deprecated local Express scaffold. It remains only so existing checkout demonstrations do not break before Laravel parity is accepted.
 
 ## Run the local Express scaffold (optional)
 

@@ -1,30 +1,31 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
+import { DataState } from '@/src/components/DataState';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 export default function PosScreen() {
-  const { cart, total, addProduct, addProductChecked, decrementProduct, products, clearCart } = usePos();
+  const { cart, total, addProduct, addProductChecked, decrementProduct, searchResults, catalogState, catalogError, searchProducts, clearCart } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const responsive = useResponsive();
 
   const totalItems = cart.reduce((sum, line) => sum + line.quantity, 0);
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return products.filter((product) =>
-      product.name.toLowerCase().includes(q) ||
-      product.barcode.includes(q) ||
-      (product.category ?? '').toLowerCase().includes(q),
-    ).slice(0, 5);
-  }, [products, query]);
+  const matches = searchResults.slice(0, 5);
+
+  useEffect(() => {
+    void searchProducts(query);
+  }, [query, searchProducts]);
+
+  const retrySearch = () => {
+    void searchProducts(query);
+  };
 
   const proceed = () => {
     if (!cart.length) return;
@@ -74,36 +75,58 @@ export default function PosScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>Online • Ready</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? 'Offline • Demo fallback' : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
         </View>
       </View>
 
-      {query.trim() ? (
+      {query.trim() && catalogState === 'loading' ? (
+        <DataState kind="loading" title="Searching the Laravel catalog" message="Checking current product and stock information." />
+      ) : null}
+
+      {query.trim() && catalogState === 'unavailable' ? (
+        <DataState
+          kind="unavailable"
+          title="Laravel catalog unavailable"
+          message={catalogError ?? 'The API could not be reached. The offline demo catalog is shown below.'}
+          actionLabel="Retry search"
+          onAction={retrySearch}
+        />
+      ) : null}
+
+      {query.trim() && catalogState === 'ready' && matches.length === 0 ? (
+        <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => setQuery('')} />
+      ) : null}
+
+      {query.trim() && matches.length > 0 && catalogState !== 'loading' ? (
         <View style={[styles.resultsCard, { padding: responsive.narrow ? 10 : spacing.md }]}>
           <Text style={[styles.resultsTitle, { fontSize: responsive.font(typography.label) }]}>Search results</Text>
-          {matches.length ? matches.map((product) => (
-            <Pressable
-              key={product.id}
-              testID={`search-result-${product.id}`}
-              accessibilityLabel={`Add ${product.name}`}
-              disabled={product.stock === 0}
-              onPress={() => {
-                const result = addProductChecked(product);
-                if (result.ok) setQuery('');
-                else Alert.alert('Unable to add product', result.message);
-              }}
-              style={({ pressed }) => [styles.resultRow, { minHeight: responsive.s(58) }, pressed && { opacity: 0.72 }]}
-            >
-              <ProductThumbnail product={product} size={responsive.s(responsive.narrow ? 40 : 44)} />
-              <View style={styles.resultCopy}>
-                <Text style={[styles.productName, { fontSize: responsive.font(responsive.narrow ? 13.5 : 15.5) }]}>{product.name}</Text>
-                <Text style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>{product.stock} in stock • ₱{product.price.toFixed(2)}</Text>
-              </View>
-              <View style={[styles.addCircle, product.stock === 0 && styles.addCircleDisabled, { width: responsive.s(34), height: responsive.s(34) }]}>
-                <Ionicons name="add" size={responsive.s(20)} color={product.stock === 0 ? colors.textMuted : colors.white} />
-              </View>
-            </Pressable>
-          )) : <Text style={styles.noResult}>No matching product was found.</Text>}
+          {matches.map((product) => {
+            const outOfStock = product.stockStatus === 'out_of_stock' || product.stock === 0;
+            const stockLabel = outOfStock ? 'Out of stock' : product.stockStatus === 'low_stock' ? 'Low stock' : 'In stock';
+            return (
+              <Pressable
+                key={product.id}
+                testID={`search-result-${product.id}`}
+                accessibilityLabel={`Add ${product.name}`}
+                disabled={outOfStock}
+                onPress={() => {
+                  const result = addProductChecked(product);
+                  if (result.ok) setQuery('');
+                  else Alert.alert('Unable to add product', result.message);
+                }}
+                style={({ pressed }) => [styles.resultRow, { minHeight: responsive.s(58) }, pressed && { opacity: 0.72 }]}
+              >
+                <ProductThumbnail product={product} size={responsive.s(responsive.narrow ? 40 : 44)} />
+                <View style={styles.resultCopy}>
+                  <Text style={[styles.productName, { fontSize: responsive.font(responsive.narrow ? 13.5 : 15.5) }]}>{product.name}</Text>
+                  <Text style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>{stockLabel} ({product.stock}) • ₱{product.price.toFixed(2)}</Text>
+                </View>
+                <View style={[styles.addCircle, outOfStock && styles.addCircleDisabled, { width: responsive.s(34), height: responsive.s(34) }]}>
+                  <Ionicons name="add" size={responsive.s(20)} color={outOfStock ? colors.textMuted : colors.white} />
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
       ) : null}
 
@@ -245,7 +268,6 @@ const styles = StyleSheet.create({
   resultCopy: { flex: 1 },
   addCircle: { borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   addCircleDisabled: { backgroundColor: colors.surfaceMuted },
-  noResult: { color: colors.textMuted, paddingVertical: spacing.md, textAlign: 'center' },
   cartCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, shadowColor: colors.shadow, shadowOpacity: 0.06, shadowRadius: 15, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, paddingHorizontal: 3 },
   headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
