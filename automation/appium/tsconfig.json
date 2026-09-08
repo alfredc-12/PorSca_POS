@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node", "mocha"],
+    "skipLibCheck": true
+  },
+  "include": ["wdio.conf.ts", "test/**/*.ts"]
+}

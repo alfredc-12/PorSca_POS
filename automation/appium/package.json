@@ -1,0 +1,23 @@
+{
+  "name": "porsca-pos-appium",
+  "private": true,
+  "scripts": {
+    "smoke": "wdio run wdio.conf.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@wdio/appium-service": "9.20.0",
+    "@wdio/cli": "9.20.0",
+    "@wdio/globals": "9.17.0",
+    "@wdio/local-runner": "9.20.0",
+    "@wdio/mocha-framework": "9.20.0",
+    "@wdio/spec-reporter": "9.20.0",
+    "@wdio/types": "9.20.0",
+    "appium": "2.19.0",
+    "appium-uiautomator2-driver": "4.2.3",
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.3.0",
+    "tsx": "4.20.5",
+    "typescript": "6.0.3"
+  }
+}

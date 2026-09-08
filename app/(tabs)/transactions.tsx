@@ -153,6 +153,7 @@ function TransactionRow({ sale }: { sale: Sale }) {
 
   return (
     <View
+      testID={`transaction-${sale.id}`}
       style={[
         styles.sale,
         {
