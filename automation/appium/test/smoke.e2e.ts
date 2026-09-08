@@ -18,6 +18,7 @@ const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000010';
 const cashReceived = process.env.APPIUM_CASH_AMOUNT ?? '400';
 const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);
+const qrExpectedStatus = process.env.APPIUM_QR_EXPECTED_STATUS ?? 'pending';
 
 function byId(id: string) {
   return $(`~${id}`);
@@ -106,24 +107,26 @@ describe('PorSca required cashier smoke flows', () => {
     await byText('confirm again').waitForDisplayed();
   });
 
-  smoke('records QR Ph sandbox success and shows it in history', async () => {
+  smoke('starts the QR Ph staging flow through Laravel', async () => {
     await searchAndSelect(productSearch);
     await tap('payment-qrph');
     await tap('proceed-to-payment');
     await tap('start-qrph-payment');
-    await byText('Simulate paid').click();
-    await byText('Transactions').click();
-    await byText('Completed').waitForDisplayed();
-  });
-
-  smoke('keeps the cart and stock unchanged after QR Ph cancel/failure', async () => {
-    await searchAndSelect(productSearch);
-    await tap('payment-qrph');
-    await tap('proceed-to-payment');
-    await tap('start-qrph-payment');
-    await byText('Simulate failed').click();
     await byId('qr-payment-status').waitForDisplayed();
-    await byText('No sale was recorded and stock was not changed.').waitForDisplayed();
+    await expect(byId('qr-payment-status')).toHaveText(qrExpectedStatus === 'paid'
+      ? 'Payment confirmed by Laravel. Inventory and history refreshed.'
+      : qrExpectedStatus === 'failed'
+        ? 'Payment failed. No sale was recorded and stock was not changed.'
+        : qrExpectedStatus === 'cancelled'
+          ? 'Payment was cancelled. No sale was recorded and stock was not changed.'
+          : qrExpectedStatus === 'expired'
+            ? 'Payment expired. Start a new QR Ph payment; stock was not changed.'
+            : 'Payment pending…');
+    if (qrExpectedStatus === 'paid') {
+      await byText('Payment recorded').waitForDisplayed();
+      await byText('Done').click();
+      await byText('Completed').waitForDisplayed();
+    }
   });
 
   smoke('shows a successful cash sale in transaction history', async () => {

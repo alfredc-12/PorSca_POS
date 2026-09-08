@@ -18,6 +18,7 @@ APPIUM_BARCODE_FIXTURE=4800000000010 \
 APPIUM_CASH_AMOUNT=400 \
 APPIUM_STOCK_SEARCH="Sinandomeng Rice" \
 APPIUM_STOCK_ATTEMPTS=25 \
+APPIUM_QR_EXPECTED_STATUS=pending \
 npm run smoke
 ```
 
@@ -25,16 +26,17 @@ npm run smoke
 
 For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. Appium cannot synthesize a camera image. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
-The eight specs in `test/smoke.e2e.ts` cover:
+The staging specs in `test/smoke.e2e.ts` cover:
 
 - search → cash checkout;
 - barcode scan → cash checkout;
 - insufficient-stock rejection;
 - insufficient-cash rejection;
-- QR Ph sandbox success;
-- QR Ph failure/cancel with no sale;
+- QR Ph creation and status verification through Laravel;
 - history showing a successful sale; and
 - exactly-once inventory deduction when a payment is retried/duplicated.
+
+Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. The test never simulates a provider result in the mobile app.
 
 The last assertion is backed by the API `Idempotency-Key` contract and must compare the inventory delta with the cart quantity. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
 

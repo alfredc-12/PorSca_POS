@@ -24,6 +24,27 @@ describe('ApiClient', () => {
     );
   });
 
+  it('normalizes Laravel QR payload fields and never treats an unknown status as paid', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: {
+      id: 17,
+      status: 'provider_verification_required',
+      amount: '2500',
+      currency: 'PHP',
+      qr_payload: 'data:image/png;base64,qr',
+      sale_id: null,
+    } }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.getPaymentStatus('17')).resolves.toEqual({
+      id: '17',
+      status: 'pending',
+      amount: 2500,
+      currency: 'PHP',
+      qrPayload: 'data:image/png;base64,qr',
+      qrCode: 'data:image/png;base64,qr',
+    });
+  });
+
   it('surfaces server errors without exposing or accepting provider secrets', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ error: 'Payment failed.' }, false, 422));
     const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });

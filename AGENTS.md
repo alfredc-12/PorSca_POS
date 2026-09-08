@@ -6,7 +6,7 @@
 - A cashier can search or scan products, build a cart, and take cash or QR Ph payments.
 - The app records sales and keeps stock accurate after payment succeeds.
 - The Expo/React Native app is the user-facing client; Laravel is the staging and release backend.
-- QR Ph is practice-labeled in the app, and provider secrets stay on the server.
+- QR Ph checkout is practice-labeled when appropriate, uses Laravel for every payment operation, and provider secrets stay on the API server.
 
 ## Start here
 
@@ -34,7 +34,7 @@
 - Never merge or approve a QA round.
 - Keep secrets server-side; never put them in the mobile bundle or public client settings.
 - Treat `staging` as the workbench and `main` as the shop window.
-- Payments without provider keys must remain clearly practice-labeled.
+- Payments without provider keys must remain clearly practice-labeled; QR Ph never completes through a mobile-only fallback.
 
 ## Keeping this map fresh
 

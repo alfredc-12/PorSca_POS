@@ -44,7 +44,7 @@ EXPO_PUBLIC_API_TOKEN=local-api-token
 
 For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Authenticated local/staging API runs also need the matching non-production bearer token in `EXPO_PUBLIC_API_TOKEN`; keep it out of commits and never put PayMongo/provider secrets in Expo variables. Expo public variables are included in the client bundle.
 
-The release backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). The `server/` directory in this repository is a deprecated local Express scaffold. It remains only so existing checkout demonstrations do not break before Laravel parity is accepted.
+The backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). Laravel is the only backend authority; the former embedded Express scaffold has been removed.
 
 ## Run Laravel locally for mobile development
 
@@ -64,22 +64,11 @@ php artisan serve --host=0.0.0.0 --port=8000
 
 Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel staging revision and its synthetic seed; do not reset the shared staging database from this procedure.
 
-## Run the local Express scaffold (optional)
+## QR Ph local and staging flow
 
-This is not the staging or release backend. Use it only for local health checks and the existing payment-boundary demonstration:
+The checkout screen creates QR Ph payments only through Laravel. Laravel returns the transaction-specific QR payload and the mobile app polls the documented payment status endpoint. Pending, failed, cancelled, expired, and verification-uncertain states keep the cart and stock unchanged; only a Laravel-confirmed paid response triggers the inventory/history refresh.
 
-```bash
-cd server
-npm install
-cp .env.example .env
-npm run dev
-```
-
-Success looks like `PorSca POS API listening` in the terminal. The PayMongo secret is optional. If you do use a sandbox key, keep it in `server/.env` only. Never put it in an `EXPO_PUBLIC_*` variable.
-
-## QR Ph practice mode
-
-The checkout screen labels the current QR flow as sandbox/practice mode. `Simulate paid`, `Simulate failed`, and cancel keep provider secrets out of the app and let a new contributor exercise the success and no-sale paths without credentials. The real QR adapter, webhook verification, and final sale authority belong to Laravel.
+A local API without provider credentials can create a synthetic pending payment. Do not add provider credentials to this repository or to any `EXPO_PUBLIC_*` variable. Paid sandbox results and webhook verification belong in the isolated Laravel checkout or the approved staging environment.
 
 ## Build profiles
 

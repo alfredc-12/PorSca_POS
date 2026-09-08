@@ -8,7 +8,7 @@ adaptive
 
 ## Stack
 
-Expo SDK 57, React Native, TypeScript, Expo Router. A small Node/Express backend is included for secret-bearing integrations such as PayMongo QR Ph.
+Expo SDK 57, React Native, TypeScript, Expo Router. Laravel is the sole backend for catalog, checkout, inventory, history, and PayMongo QR Ph integration.
 
 ## Users
 
@@ -34,7 +34,7 @@ The cashier uses one phone during normal in-person retail transactions. Product 
 - Record completed transactions.
 - Avoid duplicate inventory deduction for the same paid transaction.
 - Keep PayMongo secret keys out of the mobile application.
-- Current scaffold uses in-memory mock data so the Expo UI can run before persistent storage is connected.
+- Offline in-memory data supports catalog/cash UI demonstration; QR Ph completion always requires Laravel confirmation.
 
 ## Brand Commitments
 

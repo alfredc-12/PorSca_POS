@@ -1,8 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { apiClient, ApiClient, ApiClientError } from '@/src/api/client';
+import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { addProductToCart, calculateCartTotal, CartChange, deductStock, decrementCartLine, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
-import { CartLine, PaymentMethod, Product, Sale } from '@/src/types';
+import { CartLine, Product, Sale } from '@/src/types';
 
 export type ReadState = 'idle' | 'loading' | 'ready' | 'unavailable';
 
@@ -47,13 +47,16 @@ type PosContextValue = {
   clearCart: () => void;
   updateProduct: (product: Product) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
-  completeSale: (method: PaymentMethod) => Sale | null;
   completeCashSale: (cashReceived: number) => Promise<Sale | null>;
   apiConfigured: boolean;
   searchProducts: (query: string) => Promise<void>;
   refreshProducts: () => Promise<boolean>;
   refreshInventory: () => Promise<boolean>;
   refreshSales: () => Promise<boolean>;
+  startQrPhPayment: (forceNew?: boolean) => Promise<Payment>;
+  refreshQrPhPayment: (paymentId: string) => Promise<Payment>;
+  cancelQrPhPayment: (paymentId: string) => Promise<Payment>;
+  confirmQrPhPayment: (payment: Payment) => Promise<void>;
 };
 
 const PosContext = createContext<PosContextValue | null>(null);
@@ -75,6 +78,10 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const requestId = useRef(0);
   const cashKeys = useRef(new Map<string, string>());
   const cashRequests = useRef(new Map<string, Promise<Sale | null>>());
+  const qrKeys = useRef(new Map<string, string>());
+  const qrPayments = useRef(new Map<string, Payment>());
+  const qrRequests = useRef(new Map<string, Promise<Payment>>());
+  const qrSettlements = useRef(new Map<string, Promise<void>>());
   const productsRef = useRef(products);
 
   useEffect(() => {
@@ -155,7 +162,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
 
   const clearCart = () => setCart([]);
 
-  const completeSale = useCallback((paymentMethod: PaymentMethod) => {
+  const completeOfflineCashSale = useCallback(() => {
     if (cart.length === 0) return null;
     const productsAfterSale = deductStock(products, cart);
     if (!productsAfterSale) return null;
@@ -164,7 +171,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       id: `TX-${Date.now().toString().slice(-8)}`,
       createdAt: new Date().toISOString(),
       total,
-      paymentMethod,
+      paymentMethod: 'cash',
       status: 'paid',
       items: cart.map((line) => ({ ...line })),
     };
@@ -307,7 +314,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     if (cart.length === 0) return null;
 
     if (!client.isConfigured) {
-      return completeSale('cash');
+      return completeOfflineCashSale();
     }
 
     const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
@@ -348,7 +355,84 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       () => cashRequests.current.delete(requestSignature),
     );
     return request;
-  }, [cart, client, completeSale, refreshInventory, refreshSales, total]);
+  }, [cart, client, completeOfflineCashSale, refreshInventory, refreshSales, total]);
+
+  const startQrPhPayment = useCallback(async (forceNew = false) => {
+    if (cart.length === 0) {
+      throw new ApiClientError('The cart is empty. Add a product before starting QR Ph payment.');
+    }
+    if (!client.isConfigured) {
+      throw new ApiClientError('Laravel API is not configured. QR Ph payment requires the backend; no sale was recorded.');
+    }
+
+    const signature = qrCartSignature(cart);
+    if (forceNew) {
+      qrKeys.current.delete(signature);
+      qrPayments.current.delete(signature);
+    } else {
+      const knownPayment = qrPayments.current.get(signature);
+      if (knownPayment) return knownPayment;
+      const existingRequest = qrRequests.current.get(signature);
+      if (existingRequest) return existingRequest;
+    }
+
+    const idempotencyKey = qrKeys.current.get(signature) ?? createIdempotencyKey('mobile-qr');
+    qrKeys.current.set(signature, idempotencyKey);
+    const requestCart = cart;
+    const request = client.createQrPhPayment({
+      idempotencyKey,
+      items: requestCart.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+    });
+    qrRequests.current.set(signature, request);
+
+    try {
+      const payment = await request;
+      qrPayments.current.set(signature, payment);
+      return payment;
+    } finally {
+      qrRequests.current.delete(signature);
+    }
+  }, [cart, client]);
+
+  const refreshQrPhPayment = useCallback(async (paymentId: string) => {
+    if (!client.isConfigured) {
+      throw new ApiClientError('Laravel API is not configured. Payment verification is unavailable.');
+    }
+    const payment = await client.getPaymentStatus(paymentId);
+    rememberQrPayment(qrPayments.current, payment);
+    return payment;
+  }, [client]);
+
+  const cancelQrPhPayment = useCallback(async (paymentId: string) => {
+    if (!client.isConfigured) {
+      throw new ApiClientError('Laravel API is not configured. Payment cancellation is unavailable.');
+    }
+    const payment = await client.cancelPayment(paymentId);
+    rememberQrPayment(qrPayments.current, payment);
+    return payment;
+  }, [client]);
+
+  const confirmQrPhPayment = useCallback(async (payment: Payment) => {
+    if (payment.status !== 'paid') return;
+    const existingSettlement = qrSettlements.current.get(payment.id);
+    if (existingSettlement) return existingSettlement;
+
+    const settlement = Promise.all([refreshInventory(), refreshSales()]).then(([inventoryRefreshed, salesRefreshed]) => {
+      if (!inventoryRefreshed || !salesRefreshed) {
+        throw new ApiClientError('Laravel confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
+      }
+      const completedSignature = [...qrPayments.current.entries()].find(([, known]) => known.id === payment.id)?.[0];
+      if (completedSignature) {
+        setCart((current) => qrCartSignature(current) === completedSignature ? [] : current);
+      }
+    });
+    qrSettlements.current.set(payment.id, settlement);
+    settlement.then(
+      () => qrSettlements.current.delete(payment.id),
+      () => qrSettlements.current.delete(payment.id),
+    );
+    return settlement;
+  }, [refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
@@ -420,13 +504,16 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         clearCart,
         updateProduct,
         createProduct,
-        completeSale,
         completeCashSale,
         apiConfigured: client.isConfigured,
         searchProducts,
         refreshProducts,
         refreshInventory,
         refreshSales,
+        startQrPhPayment,
+        refreshQrPhPayment,
+        cancelQrPhPayment,
+        confirmQrPhPayment,
       }}
     >
       {children}
@@ -515,8 +602,21 @@ function sameCart(current: CartLine[], expected: CartLine[]) {
   );
 }
 
-function createIdempotencyKey() {
-  return `mobile-cash-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+function qrCartSignature(cart: CartLine[]) {
+  return cart
+    .map((line) => `${line.product.id}:${line.quantity}`)
+    .sort()
+    .join('|');
+}
+
+function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {
+  for (const [signature, known] of payments) {
+    if (known.id === payment.id) payments.set(signature, payment);
+  }
+}
+
+function createIdempotencyKey(prefix: 'mobile-cash' | 'mobile-qr' = 'mobile-cash') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function usePos() {
