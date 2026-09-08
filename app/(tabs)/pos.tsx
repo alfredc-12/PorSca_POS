@@ -106,7 +106,7 @@ export default function PosScreen() {
             return (
               <Pressable
                 key={product.id}
-                testID={`search-result-${product.id}`}
+                testID="search-result"
                 accessibilityLabel={`Add ${product.name}`}
                 disabled={outOfStock}
                 onPress={() => {

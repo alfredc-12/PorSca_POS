@@ -64,16 +64,60 @@ export type InventoryUpdate = {
 export type SaleRequest = {
   /** Stable client-generated key used by the API to reject duplicate retries. */
   idempotencyKey: string;
+  /** Money fields are integer PHP centavos on the wire. */
   items: { productId: string; quantity: number; unitPrice: number }[];
   total: number;
   paymentMethod: PaymentMethod;
+  /** Required for cash sales; integer PHP centavos on the wire. */
+  cashReceived?: number;
   paymentId?: string;
 };
 
+export type ApiSaleItem = {
+  product_id?: string | number;
+  productId?: string | number;
+  sku?: string | null;
+  barcode?: string | null;
+  name?: string | null;
+  quantity: number;
+  unit_price?: number | string;
+  unitPrice?: number | string;
+};
+
+export type ApiSale = {
+  id: string | number;
+  idempotency_key?: string;
+  idempotencyKey?: string;
+  status: string;
+  payment_method?: PaymentMethod;
+  paymentMethod?: PaymentMethod;
+  total_amount?: number | string;
+  total?: number | string;
+  cash_received?: number | string | null;
+  cashReceived?: number | string | null;
+  change_amount?: number | string | null;
+  change?: number | string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+  items?: ApiSaleItem[];
+};
+
+export type ApiTransaction = {
+  id: string | number;
+  payment_id?: string | number | null;
+  sale_id?: string | number | null;
+  type: string;
+  status: string;
+  amount: number | string;
+  currency?: string;
+  metadata?: Record<string, unknown> | null;
+  occurred_at?: string | null;
+};
+
 export type PaymentRequest = {
-  transactionId: string;
-  amount: number;
   idempotencyKey: string;
+  items: { productId: string; quantity: number }[];
 };
 
 export type Payment = {
@@ -196,19 +240,29 @@ export class ApiClient {
   }
 
   createSale(sale: SaleRequest) {
-    return this.request<Sale>(this.versionedPath('/sales/checkout'), {
+    return this.request<ApiSale>(this.versionedPath('/sales/checkout'), {
       method: 'POST',
       headers: { 'Idempotency-Key': sale.idempotencyKey },
       body: sale,
+    }).then(normalizeSale);
+  }
+
+  listSales() {
+    return this.request<ApiSale[] | { items?: ApiSale[] }>(this.versionedPath('/sales?per_page=100')).then((payload) => {
+      const items = Array.isArray(payload) ? payload : payload.items ?? [];
+      return items.map(normalizeSale);
     });
   }
 
   listTransactions() {
-    return this.request<Sale[]>(this.versionedPath('/transactions'));
+    return this.request<ApiTransaction[] | { items?: ApiTransaction[] }>(this.versionedPath('/transactions?per_page=100')).then((payload) => {
+      const items = Array.isArray(payload) ? payload : payload.items ?? [];
+      return items;
+    });
   }
 
   getTransaction(transactionId: string) {
-    return this.request<Sale>(this.versionedPath(`/transactions/${encodeURIComponent(transactionId)}`));
+    return this.request<ApiTransaction>(this.versionedPath(`/transactions/${encodeURIComponent(transactionId)}`));
   }
 
   createQrPhPayment(payment: PaymentRequest) {
@@ -315,6 +369,42 @@ function normalizeProduct(product: ApiProduct): Product {
     ...(product.sku ? { sku: product.sku } : {}),
     ...(product.category ? { category: product.category } : {}),
   };
+}
+
+function normalizeSale(sale: ApiSale): Sale {
+  const totalCents = Number(sale.total_amount ?? sale.total ?? 0);
+  const cashReceivedCents = sale.cash_received ?? sale.cashReceived;
+  const changeCents = sale.change_amount ?? sale.change;
+
+  return {
+    id: String(sale.id),
+    createdAt: sale.completed_at ?? sale.createdAt ?? sale.created_at ?? new Date(0).toISOString(),
+    total: totalCents / 100,
+    paymentMethod: sale.payment_method ?? sale.paymentMethod ?? 'cash',
+    // Laravel calls a completed sale "completed"; the mobile payment status
+    // uses "paid" for the same externally visible state.
+    status: sale.status === 'completed' ? 'paid' : normalizePaymentStatus(sale.status),
+    ...(sale.idempotency_key || sale.idempotencyKey ? { idempotencyKey: sale.idempotency_key ?? sale.idempotencyKey } : {}),
+    ...(cashReceivedCents === null || cashReceivedCents === undefined ? {} : { cashReceived: Number(cashReceivedCents) / 100 }),
+    ...(changeCents === null || changeCents === undefined ? {} : { change: Number(changeCents) / 100 }),
+    items: (sale.items ?? []).map((item) => ({
+      product: {
+        id: String(item.product_id ?? item.productId ?? ''),
+        barcode: item.barcode ?? '',
+        name: item.name ?? 'Unnamed product',
+        price: Number(item.unit_price ?? item.unitPrice ?? 0) / 100,
+        stock: 0,
+        ...(item.sku ? { sku: item.sku } : {}),
+      },
+      quantity: Number(item.quantity),
+    })),
+  };
+}
+
+function normalizePaymentStatus(status: string): PaymentStatus {
+  return status === 'pending' || status === 'paid' || status === 'failed' || status === 'cancelled' || status === 'expired'
+    ? status
+    : 'paid';
 }
 
 function normalizeInventoryItem(item: ApiInventoryItem): InventoryItem {
