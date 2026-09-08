@@ -24,6 +24,20 @@ npm run verify
 
 It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
 
+## Merging while the check runners are down (billing lock)
+
+Checks that never started are not the same as checks that failed. Code the runners actually failed must never be merged without a fix.
+
+Merging into `staging` while runners are down is allowed when all three hold:
+
+1. The PR body shows a green local run of the canonical check command: `npm run verify`.
+2. A human has reviewed the diff.
+3. The billing lock is confirmed as the only reason the checks sat out.
+
+Promoting anything into `main` still waits for green checks or the completed human QA round with approval.
+
+Quotas reset every month, so this rule is a temporary bridge, not a permanent lowering of the bar. Narrowing check triggers to save minutes is a separate later decision, not part of this change.
+
 ## Environment profiles
 
 Profiles are in [`eas.json`](../eas.json):
