@@ -3,6 +3,10 @@ import cors from 'cors';
 import express from 'express';
 import { z } from 'zod';
 
+/**
+ * @deprecated Local demonstration scaffold only. Laravel is the staging and
+ * release backend. Keep this server until Laravel parity is accepted.
+ */
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 
@@ -10,7 +14,8 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'porsca-pos-api' });
+  res.setHeader('Deprecation', 'true');
+  res.json({ ok: true, service: 'porsca-pos-api', disposition: 'deprecated-local-scaffold' });
 });
 
 const qrRequest = z.object({

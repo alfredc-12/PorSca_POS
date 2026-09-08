@@ -102,7 +102,7 @@ export default function ScannerScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.black },
-  tint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,19,15,0.24)' },
+  tint: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(8,19,15,0.24)' },
   safeOverlay: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'space-between' },
   topBar: { minHeight: 66, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   closeButton: { width: 46, height: 46, borderRadius: 15, backgroundColor: 'rgba(10,13,11,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },

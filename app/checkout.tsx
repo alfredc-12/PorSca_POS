@@ -6,6 +6,8 @@ import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
+import { cashChange, paymentError } from '@/src/domain/pos';
+import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 export default function CheckoutScreen() {
@@ -13,13 +15,14 @@ export default function CheckoutScreen() {
   const { total, cart, completeSale } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
+  const [qrStatus, setQrStatus] = useState<PaymentStatus | 'idle'>('idle');
 
   const received = Number(cash) || 0;
-  const change = useMemo(() => Math.max(received - total, 0), [received, total]);
+  const cashResult = useMemo(() => cashChange(total, received), [received, total]);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
   const finishCash = () => {
-    if (received < total) {
+    if (!cashResult.sufficient) {
       Alert.alert('Insufficient cash', 'Enter an amount equal to or greater than the sale total.');
       return;
     }
@@ -32,16 +35,19 @@ export default function CheckoutScreen() {
   };
 
   const finishQrDemo = () => {
+    setQrStatus('pending');
     Alert.alert(
       'QR Ph sandbox mode',
-      'PayMongo secret keys stay on the backend. Until the sandbox adapter is connected, this button simulates the successful webhook result used by the POS.',
+      'PayMongo secret keys stay on the backend. Until the sandbox adapter is connected, this button simulates provider results used by the POS.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel', onPress: () => setQrStatus('cancelled') },
+        { text: 'Simulate failed', onPress: () => setQrStatus('failed') },
         {
           text: 'Simulate paid',
           onPress: () => {
             const sale = completeSale('qrph');
             if (sale) router.replace('/(tabs)/transactions');
+            else setQrStatus('failed');
           },
         },
       ],
@@ -55,7 +61,7 @@ export default function CheckoutScreen() {
           <View style={styles.emptyIcon}><Ionicons name="cart-outline" size={36} color={colors.primary} /></View>
           <Text style={styles.emptyTitle}>The cart is empty</Text>
           <Text style={styles.emptyBody}>Return to the POS and add a product before starting payment.</Text>
-          <AppButton label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
+          <AppButton testID="return-to-pos" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
       </Screen>
     );
@@ -111,6 +117,7 @@ export default function CheckoutScreen() {
               <View style={styles.moneyInputWrap}>
                 <Text style={styles.currency}>₱</Text>
                 <TextInput
+                  testID="cash-received-input"
                   value={cash}
                   onChangeText={setCash}
                   keyboardType="decimal-pad"
@@ -122,9 +129,9 @@ export default function CheckoutScreen() {
               </View>
               <View style={styles.changeBox}>
                 <Text style={styles.changeLabel}>Change to customer</Text>
-                <Text style={styles.changeValue}>₱{change.toFixed(2)}</Text>
+                <Text style={styles.changeValue}>₱{cashResult.change.toFixed(2)}</Text>
               </View>
-              <AppButton label="Confirm Cash Payment" onPress={finishCash} style={styles.fullButton} />
+              <AppButton testID="confirm-cash-payment" label="Confirm Cash Payment" onPress={finishCash} style={styles.fullButton} />
             </View>
           ) : (
             <View style={styles.qrPanel}>
@@ -133,7 +140,12 @@ export default function CheckoutScreen() {
               </View>
               <Text style={styles.qrTitle}>Dynamic QR Ph payment</Text>
               <Text style={styles.qrBody}>The backend will create a transaction-specific QR and wait for PayMongo confirmation before the sale is recorded.</Text>
-              <AppButton label="Start QR Ph Sandbox Flow" onPress={finishQrDemo} style={styles.fullButton} />
+              {qrStatus !== 'idle' ? (
+                <Text testID="qr-payment-status" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : styles.qrStatusError]}>
+                  {qrStatus === 'pending' ? 'Payment pending…' : qrStatus === 'paid' ? 'Payment confirmed.' : paymentError(qrStatus)}
+                </Text>
+              ) : null}
+              <AppButton testID="start-qrph-payment" label={qrStatus === 'pending' ? 'Waiting for QR Ph Result' : 'Start QR Ph Sandbox Flow'} onPress={finishQrDemo} disabled={qrStatus === 'pending'} style={styles.fullButton} />
             </View>
           )}
 
@@ -182,6 +194,9 @@ const styles = StyleSheet.create({
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
   qrTitle: { color: colors.text, textAlign: 'center', fontSize: typography.title, fontWeight: '900' },
   qrBody: { color: colors.textMuted, textAlign: 'center', fontSize: typography.label, lineHeight: 20, maxWidth: 390 },
+  qrStatus: { textAlign: 'center', fontSize: typography.label, fontWeight: '800', lineHeight: 20 },
+  qrStatusPaid: { color: colors.primary },
+  qrStatusError: { color: colors.danger },
   fullButton: { alignSelf: 'stretch' },
   secureRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   secureText: { color: colors.textMuted, fontSize: 11, textAlign: 'center', flexShrink: 1 },

@@ -1,5 +1,5 @@
 export type PaymentMethod = 'cash' | 'qrph';
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired';
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'cancelled' | 'expired';
 export type ProductCategory = 'Beverages' | 'Noodles' | 'Milk' | 'Snacks' | 'Personal Care' | 'Household' | 'General';
 
 export type Product = {

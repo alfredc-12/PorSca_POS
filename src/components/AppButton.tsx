@@ -7,10 +7,11 @@ type Props = {
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'danger';
   disabled?: boolean;
+  testID?: string;
   style?: StyleProp<ViewStyle>;
 };
 
-export function AppButton({ label, onPress, variant = 'primary', disabled, style }: Props) {
+export function AppButton({ label, onPress, variant = 'primary', disabled, testID, style }: Props) {
   const palette = variant === 'primary'
     ? { bg: colors.primary, text: colors.white, border: colors.primary }
     : variant === 'danger'
@@ -19,6 +20,7 @@ export function AppButton({ label, onPress, variant = 'primary', disabled, style
 
   return (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}

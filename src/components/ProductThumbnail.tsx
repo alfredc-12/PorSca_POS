@@ -11,7 +11,7 @@ type Props = {
 
 export function ProductThumbnail({ product, size = 58 }: Props) {
   let icon: React.ComponentProps<typeof Ionicons>['name'] = 'cube-outline';
-  let background = colors.primarySoft;
+  let background: string = colors.primarySoft;
 
   if (product.category === 'Beverages') {
     icon = 'water-outline';

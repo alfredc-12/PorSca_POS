@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { apiClient, ApiClient } from '@/src/api/client';
+import { addProductToCart, calculateCartTotal, CartChange, deductStock, decrementCartLine } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, PaymentMethod, Product, Sale } from '@/src/types';
 
@@ -9,37 +11,33 @@ type PosContextValue = {
   total: number;
   addByBarcode: (barcode: string) => { ok: boolean; message: string };
   addProduct: (product: Product) => void;
+  addProductChecked: (product: Product) => CartChange;
   decrementProduct: (productId: string) => void;
   clearCart: () => void;
   updateProduct: (product: Product) => void;
   createProduct: (product: Omit<Product, 'id'>) => void;
   completeSale: (method: PaymentMethod) => Sale | null;
+  apiConfigured: boolean;
+  refreshProducts: () => Promise<boolean>;
 };
 
 const PosContext = createContext<PosContextValue | null>(null);
 
-export function PosProvider({ children }: { children: React.ReactNode }) {
+export function PosProvider({ children, client = apiClient }: { children: React.ReactNode; client?: ApiClient }) {
   const [products, setProducts] = useState<Product[]>(seedProducts);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
 
-  const total = useMemo(
-    () => cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0),
-    [cart],
-  );
+  const total = useMemo(() => calculateCartTotal(cart), [cart]);
 
   const addProduct = (product: Product) => {
-    setCart((current) => {
-      const existing = current.find((line) => line.product.id === product.id);
-      const currentQty = existing?.quantity ?? 0;
-      if (currentQty >= product.stock) return current;
-      if (existing) {
-        return current.map((line) =>
-          line.product.id === product.id ? { ...line, quantity: line.quantity + 1 } : line,
-        );
-      }
-      return [...current, { product, quantity: 1 }];
-    });
+    setCart((current) => addProductToCart(current, product).cart);
+  };
+
+  const addProductChecked = (product: Product) => {
+    const result = addProductToCart(cart, product);
+    setCart(result.cart);
+    return result;
   };
 
   const addByBarcode = (barcode: string) => {
@@ -48,18 +46,12 @@ export function PosProvider({ children }: { children: React.ReactNode }) {
     if (product.stock <= 0) return { ok: false, message: `${product.name} is out of stock.` };
     const currentQty = cart.find((line) => line.product.id === product.id)?.quantity ?? 0;
     if (currentQty >= product.stock) return { ok: false, message: 'No more stock is available for this item.' };
-    addProduct(product);
+    addProductChecked(product);
     return { ok: true, message: `${product.name} added to cart.` };
   };
 
   const decrementProduct = (productId: string) => {
-    setCart((current) =>
-      current.flatMap((line) => {
-        if (line.product.id !== productId) return [line];
-        if (line.quantity <= 1) return [];
-        return [{ ...line, quantity: line.quantity - 1 }];
-      }),
-    );
+    setCart((current) => decrementCartLine(current, productId));
   };
 
   const clearCart = () => setCart([]);
@@ -77,11 +69,8 @@ export function PosProvider({ children }: { children: React.ReactNode }) {
 
   const completeSale = (paymentMethod: PaymentMethod) => {
     if (cart.length === 0) return null;
-    const valid = cart.every((line) => {
-      const live = products.find((product) => product.id === line.product.id);
-      return live && live.stock >= line.quantity;
-    });
-    if (!valid) return null;
+    const productsAfterSale = deductStock(products, cart);
+    if (!productsAfterSale) return null;
 
     const sale: Sale = {
       id: `TX-${Date.now().toString().slice(-8)}`,
@@ -92,16 +81,35 @@ export function PosProvider({ children }: { children: React.ReactNode }) {
       items: cart.map((line) => ({ ...line })),
     };
 
-    setProducts((current) =>
-      current.map((product) => {
-        const line = cart.find((item) => item.product.id === product.id);
-        return line ? { ...product, stock: product.stock - line.quantity } : product;
-      }),
-    );
+    setProducts(productsAfterSale);
     setSales((current) => [sale, ...current]);
     setCart([]);
     return sale;
   };
+
+  const refreshProducts = useCallback(async () => {
+    if (!client.isConfigured) return false;
+    try {
+      setProducts(await client.listProducts());
+      return true;
+    } catch {
+      // Keep the seeded demo data available when the configured API is offline.
+      return false;
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (!client.isConfigured) return;
+    let mounted = true;
+    void client.listProducts()
+      .then((remoteProducts) => {
+        if (mounted) setProducts(remoteProducts);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [client]);
 
   return (
     <PosContext.Provider
@@ -112,11 +120,14 @@ export function PosProvider({ children }: { children: React.ReactNode }) {
         total,
         addByBarcode,
         addProduct,
+        addProductChecked,
         decrementProduct,
         clearCart,
         updateProduct,
         createProduct,
         completeSale,
+        apiConfigured: client.isConfigured,
+        refreshProducts,
       }}
     >
       {children}

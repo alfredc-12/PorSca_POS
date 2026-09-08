@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
@@ -10,7 +10,7 @@ import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 export default function PosScreen() {
-  const { cart, total, addProduct, decrementProduct, products, clearCart } = usePos();
+  const { cart, total, addProduct, addProductChecked, decrementProduct, products, clearCart } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const responsive = useResponsive();
@@ -39,6 +39,8 @@ export default function PosScreen() {
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
           <TextInput
+            testID="pos-search-input"
+            accessibilityLabel="Search products"
             value={query}
             onChangeText={setQuery}
             placeholder="Search product or scan barcode..."
@@ -56,6 +58,8 @@ export default function PosScreen() {
               minWidth: responsive.veryNarrow ? responsive.controlHeight : undefined,
             },
           ]}
+          testID="pos-scan-button"
+          accessibilityLabel="Scan product barcode"
           onPress={() => router.push('/scanner')}
         >
           <Ionicons name="barcode-outline" size={responsive.s(25)} color={colors.white} />
@@ -80,8 +84,14 @@ export default function PosScreen() {
           {matches.length ? matches.map((product) => (
             <Pressable
               key={product.id}
+              testID={`search-result-${product.id}`}
+              accessibilityLabel={`Add ${product.name}`}
               disabled={product.stock === 0}
-              onPress={() => { addProduct(product); setQuery(''); }}
+              onPress={() => {
+                const result = addProductChecked(product);
+                if (result.ok) setQuery('');
+                else Alert.alert('Unable to add product', result.message);
+              }}
               style={({ pressed }) => [styles.resultRow, { minHeight: responsive.s(58) }, pressed && { opacity: 0.72 }]}
             >
               <ProductThumbnail product={product} size={responsive.s(responsive.narrow ? 40 : 44)} />
@@ -162,17 +172,19 @@ export default function PosScreen() {
           {!responsive.veryNarrow ? <Text style={[styles.selectText, { fontSize: responsive.font(typography.caption) }]}>Select a method</Text> : null}
         </View>
         <View style={[styles.paymentOptions, responsive.veryNarrow && styles.paymentOptionsStack]}>
-          <PaymentOption icon="cash-outline" label="Cash" selected={method === 'cash'} onPress={() => setMethod('cash')} />
-          <PaymentOption icon="qr-code-outline" label="QR Ph / PayMongo" selected={method === 'qrph'} onPress={() => setMethod('qrph')} />
+          <PaymentOption testID="payment-cash" icon="cash-outline" label="Cash" selected={method === 'cash'} onPress={() => setMethod('cash')} />
+          <PaymentOption testID="payment-qrph" icon="qr-code-outline" label="QR Ph / PayMongo" selected={method === 'qrph'} onPress={() => setMethod('qrph')} />
         </View>
         <Pressable
+          testID="proceed-to-payment"
+          accessibilityLabel="Proceed to payment"
           disabled={!cart.length}
           onPress={proceed}
           style={({ pressed }) => [
             styles.proceedButton,
             { minHeight: responsive.heightValue(0.071, 54, 62) },
             !cart.length && styles.proceedDisabled,
-            pressed && cart.length && { opacity: 0.86 },
+            pressed && cart.length > 0 && { opacity: 0.86 },
           ]}
         >
           <Ionicons name="lock-closed" size={responsive.s(20)} color={colors.white} />
@@ -190,10 +202,12 @@ export default function PosScreen() {
   );
 }
 
-function PaymentOption({ icon, label, selected, onPress }: { icon: React.ComponentProps<typeof Ionicons>['name']; label: string; selected: boolean; onPress: () => void }) {
+function PaymentOption({ testID, icon, label, selected, onPress }: { testID: string; icon: React.ComponentProps<typeof Ionicons>['name']; label: string; selected: boolean; onPress: () => void }) {
   const responsive = useResponsive();
   return (
     <Pressable
+      testID={testID}
+      accessibilityLabel={label}
       onPress={onPress}
       style={[
         styles.paymentOption,
