@@ -36,6 +36,8 @@ type PosContextValue = {
   inventoryUsingFallback: boolean;
   cart: CartLine[];
   sales: Sale[];
+  salesState: ReadState;
+  salesError?: string;
   total: number;
   addByBarcode: (barcode: string) => Promise<BarcodeLookupResult>;
   lookupProductByBarcode: (barcode: string) => Promise<BarcodeLookupResult>;
@@ -46,10 +48,12 @@ type PosContextValue = {
   updateProduct: (product: Product) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
   completeSale: (method: PaymentMethod) => Sale | null;
+  completeCashSale: (cashReceived: number) => Promise<Sale | null>;
   apiConfigured: boolean;
   searchProducts: (query: string) => Promise<void>;
   refreshProducts: () => Promise<boolean>;
   refreshInventory: () => Promise<boolean>;
+  refreshSales: () => Promise<boolean>;
 };
 
 const PosContext = createContext<PosContextValue | null>(null);
@@ -66,7 +70,11 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const [inventoryUsingFallback, setInventoryUsingFallback] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [salesState, setSalesState] = useState<ReadState>('idle');
+  const [salesError, setSalesError] = useState<string>();
   const requestId = useRef(0);
+  const cashKeys = useRef(new Map<string, string>());
+  const cashRequests = useRef(new Map<string, Promise<Sale | null>>());
   const productsRef = useRef(products);
 
   useEffect(() => {
@@ -147,7 +155,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
 
   const clearCart = () => setCart([]);
 
-  const completeSale = (paymentMethod: PaymentMethod) => {
+  const completeSale = useCallback((paymentMethod: PaymentMethod) => {
     if (cart.length === 0) return null;
     const productsAfterSale = deductStock(products, cart);
     if (!productsAfterSale) return null;
@@ -164,10 +172,10 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     setProducts(productsAfterSale);
     setInventoryProducts((current) => deductStock(current, cart) ?? current);
     setSearchResults((current) => deductStock(current, cart) ?? current);
-    setSales((current) => [sale, ...current]);
+    setSales((current) => mergeSales(current, [sale]));
     setCart([]);
     return sale;
-  };
+  }, [cart, products, total]);
 
   const searchProducts = useCallback(async (query: string) => {
     const normalizedQuery = query.trim();
@@ -273,6 +281,75 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     }
   }, [client]);
 
+  const refreshSales = useCallback(async () => {
+    setSalesState('loading');
+    setSalesError(undefined);
+
+    if (!client.isConfigured) {
+      setSalesState('unavailable');
+      setSalesError('Laravel API is unavailable. Showing locally recorded demo sales.');
+      return false;
+    }
+
+    try {
+      const remoteSales = await client.listSales();
+      setSales(remoteSales);
+      setSalesState('ready');
+      return true;
+    } catch {
+      setSalesState('unavailable');
+      setSalesError('Laravel API is unavailable. Showing the last known transaction history.');
+      return false;
+    }
+  }, [client]);
+
+  const completeCashSale = useCallback(async (cashReceived: number) => {
+    if (cart.length === 0) return null;
+
+    if (!client.isConfigured) {
+      return completeSale('cash');
+    }
+
+    const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
+    const cartSignature = cart.map((line) => `${line.product.id}:${line.quantity}`).join('|');
+    const requestSignature = `${cartSignature}|cash:${cashCents}`;
+    const pending = cashRequests.current.get(requestSignature);
+    if (pending) return pending;
+
+    const idempotencyKey = cashKeys.current.get(requestSignature) ?? createIdempotencyKey();
+    cashKeys.current.set(requestSignature, idempotencyKey);
+    const requestCart = cart;
+    const requestTotal = total;
+    const request = (async () => {
+      const sale = await client.createSale({
+        idempotencyKey,
+        items: requestCart.map((line) => ({
+          productId: line.product.id,
+          quantity: line.quantity,
+          unitPrice: Math.round(line.product.price * 100),
+        })),
+        total: Math.round(requestTotal * 100),
+        paymentMethod: 'cash',
+        cashReceived: cashCents,
+      });
+
+      setSales((current) => mergeSales(current, [sale]));
+      setCart((current) => sameCart(current, requestCart) ? [] : current);
+      cashKeys.current.delete(requestSignature);
+
+      // The sale response is authoritative for the receipt. These reads make
+      // inventory and history authoritative too, even after a retry response.
+      await Promise.allSettled([refreshInventory(), refreshSales()]);
+      return sale;
+    })();
+    cashRequests.current.set(requestSignature, request);
+    request.then(
+      () => cashRequests.current.delete(requestSignature),
+      () => cashRequests.current.delete(requestSignature),
+    );
+    return request;
+  }, [cart, client, completeSale, refreshInventory, refreshSales, total]);
+
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
     status: 'created' | 'updated',
@@ -332,6 +409,8 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         inventoryUsingFallback,
         cart,
         sales,
+        salesState,
+        salesError,
         total,
         addByBarcode,
         lookupProductByBarcode,
@@ -342,10 +421,12 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         updateProduct,
         createProduct,
         completeSale,
+        completeCashSale,
         apiConfigured: client.isConfigured,
         searchProducts,
         refreshProducts,
         refreshInventory,
+        refreshSales,
       }}
     >
       {children}
@@ -420,6 +501,22 @@ function mergeProducts(current: Product[], incoming: Product[]) {
   const merged = new Map(current.map((product) => [product.id, product]));
   incoming.forEach((product) => merged.set(product.id, { ...merged.get(product.id), ...product }));
   return [...merged.values()];
+}
+
+function mergeSales(current: Sale[], incoming: Sale[]) {
+  const merged = new Map(current.map((sale) => [sale.id, sale]));
+  incoming.forEach((sale) => merged.set(sale.id, { ...merged.get(sale.id), ...sale }));
+  return [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function sameCart(current: CartLine[], expected: CartLine[]) {
+  return current.length === expected.length && current.every((line, index) =>
+    line.product.id === expected[index]?.product.id && line.quantity === expected[index]?.quantity,
+  );
+}
+
+function createIdempotencyKey() {
+  return `mobile-cash-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function usePos() {

@@ -10,7 +10,7 @@ Protected local/staging requests use `EXPO_PUBLIC_API_TOKEN` when the environmen
 
 ## Resource boundary
 
-The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Error responses should be `{ "error": "...", "details": ... }` or `{ "message": "..." }` with an appropriate HTTP status.
+The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Authorized routes also receive `Authorization: Bearer <local-or-staging-token>` when `EXPO_PUBLIC_API_TOKEN` is configured; PayMongo/provider secrets never belong in the mobile bundle. Error responses should be `{ "error": "...", "details": ... }` or `{ "message": "..." }` with an appropriate HTTP status.
 
 | Capability | Method | Path | Client method |
 | --- | --- | --- | --- |
@@ -21,6 +21,7 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 | Product stock | PATCH | `/products/:id/stock` | `updateInventory()` (the `/inventory/:id` alias is also supported) |
 | Inventory | GET | `/inventory` | `listInventory()` |
 | Sale | POST | `/sales/checkout` | `createSale()` |
+| Completed sales | GET | `/sales` | `listSales()` |
 | Transactions | GET | `/transactions` | `listTransactions()` |
 | Transaction | GET | `/transactions/:id` | `getTransaction()` |
 | QR Ph payment | POST | `/payments` | `createQrPhPayment()` |
@@ -33,9 +34,11 @@ Product create requests contain `name`, `barcode` (8–64 digits), `category`, `
 
 Protected catalog, inventory, product-management, sales, transaction, and payment routes require `Authorization: Bearer <API_TOKEN>`. Local/staging clients may provide that token through their environment; real provider secrets remain server-side and must never be bundled.
 
-Sale requests contain `idempotencyKey`, line items (`productId`, `quantity`, `unitPrice`), `total`, `paymentMethod`, and optional `paymentId`.
+Cash sale requests contain `idempotencyKey`, `paymentMethod: "cash"`, `cashReceived`, and line items (`productId`, `quantity`). Money values sent to Laravel are integer PHP centavos (`₱100.00` is `10000`). `total` and line `unitPrice` may be sent for client compatibility, but Laravel ignores them and recomputes authoritative prices and totals. The mobile client sends `POST /sales/checkout` with an `Idempotency-Key` header. A new sale returns the completed sale with `201`; retrying the same key and identical cart/cash returns that sale with `200`. A reused key with a different request returns `409`; insufficient cash returns `422`; insufficient stock returns `409` without creating a sale or changing stock.
 
-QR Ph requests contain `transactionId`, `amount`, and `idempotencyKey`. Payment responses contain `id`, `status` (`pending`, `paid`, `failed`, `cancelled`, or `expired`), `amount`, and optional `qrCode`/`expiresAt`.
+Completed cash sales are loaded for the Transactions screen with `GET /sales?per_page=100`. Each sale includes `id`, `status: "completed"`, `payment_method`, `total_amount`, `cash_received`, `change_amount`, `completed_at`, and item price snapshots. The mobile client normalizes the wire amounts to pesos and displays the completed state, payment method, amount received, and change.
+
+QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`); Laravel recomputes the amount from current prices. Payment responses contain `id`, `status` (`pending`, `paid`, `failed`, `cancelled`, or `expired`), `amount`, and the provider QR payload when available.
 
 ## Safety rules
 

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
+import { DataState } from '@/src/components/DataState';
 import { usePos } from '@/src/context/PosContext';
 import { PaymentMethod, Sale } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
@@ -10,7 +11,7 @@ import { useResponsive } from '@/src/hooks/useResponsive';
 type Filter = 'all' | 'today' | PaymentMethod;
 
 export default function TransactionsScreen() {
-  const { sales } = usePos();
+  const { sales, salesState, salesError, refreshSales } = usePos();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [showFilters, setShowFilters] = useState(true);
@@ -34,6 +35,10 @@ export default function TransactionsScreen() {
   const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
   const cashCount = sales.filter((sale) => sale.paymentMethod === 'cash').length;
   const qrCount = sales.filter((sale) => sale.paymentMethod === 'qrph').length;
+
+  React.useEffect(() => {
+    void refreshSales();
+  }, [refreshSales]);
 
   return (
     <Screen>
@@ -90,8 +95,21 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
+      {salesState === 'loading' ? (
+        <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from Laravel." />
+      ) : null}
+      {salesState === 'unavailable' ? (
+        <DataState
+          kind="unavailable"
+          title="Laravel history unavailable"
+          message={salesError ?? 'The API could not be reached. Showing the last known transaction history.'}
+          actionLabel="Retry history"
+          onAction={() => void refreshSales()}
+        />
+      ) : null}
+
       <View style={styles.list}>
-        {filtered.length === 0 ? (
+        {salesState === 'loading' ? null : filtered.length === 0 ? (
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.31, 220, 300) }]}>
             <View style={[styles.emptyIcon, { width: responsive.s(62), height: responsive.s(62), borderRadius: responsive.s(20) }]}>
               <Ionicons name="receipt-outline" size={responsive.s(34)} color={colors.primary} />
@@ -132,6 +150,7 @@ function FilterChip({ label, icon, active, onPress }: { label: string; icon?: Re
   const responsive = useResponsive();
   return (
     <Pressable
+      testID={`transaction-filter-${label.toLowerCase().replace(/ /g, '-')}`}
       onPress={onPress}
       style={[
         styles.chip,
@@ -154,6 +173,7 @@ function TransactionRow({ sale }: { sale: Sale }) {
   return (
     <View
       testID={`transaction-${sale.id}`}
+      accessibilityLabel={`${sale.paymentMethod === 'cash' ? 'Cash' : 'QR Ph'} transaction ${sale.id}, ${sale.status === 'paid' ? 'Completed' : sale.status}, ₱${sale.total.toFixed(2)}`}
       style={[
         styles.sale,
         {
@@ -170,6 +190,9 @@ function TransactionRow({ sale }: { sale: Sale }) {
         <Text numberOfLines={1} style={[styles.saleId, { fontSize: responsive.font(responsive.narrow ? 13.5 : 15) }]}>{sale.id}</Text>
         <Text numberOfLines={1} style={[styles.saleMeta, { fontSize: responsive.font(responsive.narrow ? 10.5 : 11.5) }]}>{formatSaleDate(sale.createdAt)}</Text>
         <View style={styles.itemsLine}><Ionicons name="bag-handle-outline" size={responsive.s(14)} color={colors.textMuted} /><Text style={[styles.saleMeta, { fontSize: responsive.font(responsive.narrow ? 10.5 : 11.5) }]}>{itemCount} {itemCount === 1 ? 'item' : 'items'}</Text></View>
+        {sale.paymentMethod === 'cash' && sale.cashReceived !== undefined ? (
+          <Text numberOfLines={1} style={[styles.saleMeta, { fontSize: responsive.font(responsive.narrow ? 10 : 10.5) }]}>Received ₱{sale.cashReceived.toFixed(2)} • Change ₱{(sale.change ?? 0).toFixed(2)}</Text>
+        ) : null}
       </View>
       {!responsive.veryNarrow ? (
         <View style={[styles.saleMiddle, { maxWidth: responsive.narrow ? 88 : 116 }]}>

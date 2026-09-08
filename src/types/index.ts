@@ -27,5 +27,9 @@ export type Sale = {
   total: number;
   paymentMethod: PaymentMethod;
   status: PaymentStatus;
+  /** Present for cash sales returned by Laravel. */
+  cashReceived?: number;
+  change?: number;
+  idempotencyKey?: string;
   items: CartLine[];
 };

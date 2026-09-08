@@ -6,32 +6,58 @@ import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
+import { ApiClientError } from '@/src/api/client';
 import { cashChange, paymentError } from '@/src/domain/pos';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 export default function CheckoutScreen() {
   const { method } = useLocalSearchParams<{ method?: string }>();
-  const { total, cart, completeSale } = usePos();
+  const { total, cart, completeSale, completeCashSale } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
   const [qrStatus, setQrStatus] = useState<PaymentStatus | 'idle'>('idle');
+  const [cashError, setCashError] = useState<string>();
+  const [cashSubmitting, setCashSubmitting] = useState(false);
 
   const received = Number(cash) || 0;
   const cashResult = useMemo(() => cashChange(total, received), [received, total]);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  const finishCash = () => {
+  const finishCash = async () => {
+    setCashError(undefined);
     if (!cashResult.sufficient) {
-      Alert.alert('Insufficient cash', 'Enter an amount equal to or greater than the sale total.');
+      const message = `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`;
+      setCashError(message);
+      Alert.alert('Insufficient cash', message);
       return;
     }
-    const sale = completeSale('cash');
-    if (!sale) {
-      Alert.alert('Unable to complete sale', 'Stock changed or the cart is empty. Review the cart and try again.');
-      return;
+
+    setCashSubmitting(true);
+    try {
+      const sale = await completeCashSale(received);
+      if (!sale) {
+        const message = 'The cart is empty. Return to the POS and add a product before trying again.';
+        setCashError(message);
+        Alert.alert('Unable to complete sale', message);
+        return;
+      }
+      Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
+    } catch (error) {
+      const apiError = error instanceof ApiClientError ? error : undefined;
+      const insufficientStock = apiError?.code === 'insufficient_stock' || apiError?.status === 409;
+      const insufficientCash = apiError?.code === 'insufficient_cash';
+      const title = insufficientStock ? 'Insufficient stock' : insufficientCash ? 'Insufficient cash' : 'Unable to complete sale';
+      const message = insufficientStock
+        ? `${apiError?.message ?? 'Some items are no longer available.'} Refresh inventory and remove the unavailable item, then try again.`
+        : insufficientCash
+          ? `${apiError?.message ?? 'Cash received is below the amount due.'} Enter more cash and confirm again. Your cart is still here.`
+          : `The sale was not confirmed. ${apiError?.message ?? 'Check your connection and try again.'} Your cart is still here so you can retry safely.`;
+      setCashError(message);
+      Alert.alert(title, message);
+    } finally {
+      setCashSubmitting(false);
     }
-    Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
   };
 
   const finishQrDemo = () => {
@@ -131,7 +157,14 @@ export default function CheckoutScreen() {
                 <Text style={styles.changeLabel}>Change to customer</Text>
                 <Text style={styles.changeValue}>₱{cashResult.change.toFixed(2)}</Text>
               </View>
-              <AppButton testID="confirm-cash-payment" label="Confirm Cash Payment" onPress={finishCash} style={styles.fullButton} />
+              {cashError ? <Text testID="checkout-cash-error" accessibilityRole="alert" style={styles.cashError}>{cashError}</Text> : null}
+              <AppButton
+                testID="confirm-cash-payment"
+                label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
+                onPress={finishCash}
+                disabled={cashSubmitting}
+                style={styles.fullButton}
+              />
             </View>
           ) : (
             <View style={styles.qrPanel}>
@@ -190,6 +223,7 @@ const styles = StyleSheet.create({
   changeBox: { minHeight: 68, borderRadius: radius.md, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   changeLabel: { color: colors.textMuted, fontSize: typography.label, fontWeight: '600' },
   changeValue: { color: colors.primary, fontSize: typography.heading, fontWeight: '900' },
+  cashError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.label, lineHeight: 20, fontWeight: '700' },
   qrPanel: { gap: spacing.md, alignItems: 'center', paddingTop: spacing.sm },
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
   qrTitle: { color: colors.text, textAlign: 'center', fontSize: typography.title, fontWeight: '900' },

@@ -9,7 +9,7 @@ describe('ApiClient', () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-1', status: 'pending', amount: 63 } }));
     const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
 
-    await expect(client.createQrPhPayment({ transactionId: 'TX-1', amount: 63, idempotencyKey: 'TX-1' })).resolves.toEqual({
+    await expect(client.createQrPhPayment({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] })).resolves.toEqual({
       id: 'pay-1',
       status: 'pending',
       amount: 63,
@@ -19,7 +19,7 @@ describe('ApiClient', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ 'Idempotency-Key': 'TX-1', Authorization: 'Bearer local-api-token' }),
-        body: JSON.stringify({ transactionId: 'TX-1', amount: 63, idempotencyKey: 'TX-1' }),
+        body: JSON.stringify({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] }),
       }),
     );
   });
@@ -125,6 +125,66 @@ describe('ApiClient', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer local-api-token' }),
         body: JSON.stringify({ barcode: '4800000000012', name: 'House Blend Coffee', category: 'Beverages', price: 18500, stock: 8, reorder_level: 2 }),
       }),
+    );
+  });
+
+  it('posts a cash checkout to Laravel with centavo cash and preserves the sale response', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({
+      data: {
+        id: 42,
+        idempotency_key: 'cash-42',
+        status: 'completed',
+        payment_method: 'cash',
+        total_amount: 3700,
+        cash_received: 5000,
+        change_amount: 1300,
+        completed_at: '2026-09-08T12:00:00Z',
+        items: [{ product_id: 4, sku: 'WATER-001', name: 'Mineral Water 1L', quantity: 1, unit_price: 3700 }],
+      },
+    }, true, 201));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.createSale({
+      idempotencyKey: 'cash-42',
+      items: [{ productId: '4', quantity: 1, unitPrice: 3700 }],
+      total: 3700,
+      paymentMethod: 'cash',
+      cashReceived: 5000,
+    })).resolves.toMatchObject({
+      id: '42',
+      total: 37,
+      paymentMethod: 'cash',
+      status: 'paid',
+      cashReceived: 50,
+      change: 13,
+      items: [{ product: { id: '4', name: 'Mineral Water 1L', price: 37 }, quantity: 1 }],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://staging-api.example.test/api/v1/sales/checkout',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': 'cash-42', Authorization: 'Bearer local-api-token' }),
+        body: JSON.stringify({
+          idempotencyKey: 'cash-42',
+          items: [{ productId: '4', quantity: 1, unitPrice: 3700 }],
+          total: 3700,
+          paymentMethod: 'cash',
+          cashReceived: 5000,
+        }),
+      }),
+    );
+  });
+
+  it('loads completed sales for the transaction history without duplicating API envelopes', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({
+      data: { items: [{ id: 7, status: 'completed', payment_method: 'cash', total_amount: 18500, cash_received: 20000, change_amount: 1500, completed_at: '2026-09-08T12:00:00Z', items: [] }] },
+    }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.listSales()).resolves.toMatchObject([{ id: '7', total: 185, paymentMethod: 'cash', status: 'paid', cashReceived: 200, change: 15 }]);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://staging-api.example.test/api/v1/sales?per_page=100',
+      expect.objectContaining({ method: 'GET' }),
     );
   });
 

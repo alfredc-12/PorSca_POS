@@ -37,13 +37,32 @@ The mobile app has one network boundary: `src/api/client.ts`. Set the Laravel `/
 ```env
 EXPO_PUBLIC_APP_ENV=development
 EXPO_PUBLIC_API_URL=http://192.168.1.100:8000/api/v1
+# EXPO_PUBLIC_API_TOKEN=local-api-token
 # Only for a local/staging API configured with bearer auth.
 EXPO_PUBLIC_API_TOKEN=local-api-token
 ```
 
-For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Expo public variables are included in the client bundle, so they must contain configuration only and never secrets.
+For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Authenticated local/staging API runs also need the matching non-production bearer token in `EXPO_PUBLIC_API_TOKEN`; keep it out of commits and never put PayMongo/provider secrets in Expo variables. Expo public variables are included in the client bundle.
 
 The release backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). The `server/` directory in this repository is a deprecated local Express scaffold. It remains only so existing checkout demonstrations do not break before Laravel parity is accepted.
+
+## Run Laravel locally for mobile development
+
+Use a separate API checkout on the staging branch under `/tmp`, never the release owner's staging checkout or this mobile worktree:
+
+```bash
+cd /tmp/porsca-pos-api-staging
+git fetch origin
+git checkout staging
+git reset --hard origin/staging
+composer install
+cp .env.example .env # configure a local API_TOKEN; keep it out of commits
+php artisan key:generate
+php artisan migrate:fresh --seed --force
+php artisan serve --host=0.0.0.0 --port=8000
+```
+
+Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel staging revision and its synthetic seed; do not reset the shared staging database from this procedure.
 
 ## Run the local Express scaffold (optional)
 
