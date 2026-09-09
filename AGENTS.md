@@ -20,7 +20,19 @@
 - Workflow, including the billing-outage merge rule: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 - Mobile/API contract: [docs/API-CONTRACT.md](docs/API-CONTRACT.md).
 - QA cycle procedure and record template: [docs/QA-CYCLE-TEMPLATE.md](docs/QA-CYCLE-TEMPLATE.md) and [docs/WORKFLOW.md](docs/WORKFLOW.md).
+- AI-assisted development rules: [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md).
 - Product taste and cashier flow: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
+
+## AI-assisted development
+
+- Read [docs/AI-WORKFLOW.md](docs/AI-WORKFLOW.md) before AI-assisted coding.
+- Start from the GitHub issue and inspect the existing implementation, tests, and contract before editing.
+- Use feature or fix branches and never commit directly to `main` or `staging`.
+- Do not invent API routes, response shapes, payment states, or error behavior.
+- Treat mobile/API contract changes as paired changes and update both repositories, tests, and documentation.
+- Run `npm run verify` before review and report every failure or external blocker.
+- Keep credentials and authorization material out of source, public Expo variables, logs, fixtures, screenshots, and pull requests.
+- Do not create a QA cycle or claim QA approval during ordinary implementation.
 
 ## Mobile/API handshake
 
