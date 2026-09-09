@@ -6,10 +6,10 @@ labels: ""
 assignees: ""
 ---
 
-Cycle: 
-Environment / staging URL: 
+Cycle:
+Environment / staging URL:
 Severity: Critical | High | Medium | Low
-Requirement: 
+Requirement:
 
 ## Steps to reproduce
 
@@ -27,7 +27,7 @@ Link screenshots, video, logs, API responses, or reports. Redact secrets and aut
 
 ## Fix and retest
 
-Fix commit / PR: 
-Retest owner and date: 
-Retest result and exact paired SHAs: 
-Retest evidence: 
+Fix commit / PR:
+Retest owner and date:
+Retest result and exact paired SHAs:
+Retest evidence:
