@@ -19,13 +19,13 @@
 - Structure and boundaries: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - Workflow, including the billing-outage merge rule: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 - Mobile/API contract: [docs/API-CONTRACT.md](docs/API-CONTRACT.md).
-- QA cycle and evidence: [docs/QA-CYCLE-01.md](docs/QA-CYCLE-01.md).
+- QA cycle procedure and record template: [docs/QA-CYCLE-TEMPLATE.md](docs/QA-CYCLE-TEMPLATE.md) and [docs/WORKFLOW.md](docs/WORKFLOW.md).
 - Product taste and cashier flow: [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
 
 ## Mobile/API handshake
 
 - The live contract name is `porsca-mobile-api-v1`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md).
-- To check the pair, compare the exact mobile and API `staging` revisions with the pair recorded in [docs/QA-CYCLE-01.md](docs/QA-CYCLE-01.md).
+- Before formal QA, compare the exact mobile and API `staging` revisions with the human-created cycle record; repository setup does not create that record.
 - Cash checkout/history wire fields and authoritative Laravel routes are defined in [docs/API-CONTRACT.md](docs/API-CONTRACT.md); local API pairing uses the isolated `/tmp` procedure in [docs/SETUP.md](docs/SETUP.md).
 - Promote matching mobile and API revisions together only after human QA approval; never promote one side alone.
 
