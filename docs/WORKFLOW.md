@@ -14,6 +14,8 @@ Keep permanent tester staging checkouts separate from worker worktrees. For exam
 
 A release owner should create the remote `staging` branch from `main` when bootstrapping a repository, then apply branch protection. This worker branch includes the local branch and the executable procedure but does not push a new remote branch or modify `main`.
 
+Bootstrapping the repositories does not create or start a formal QA cycle. The reusable record is [QA-CYCLE-TEMPLATE.md](QA-CYCLE-TEMPLATE.md); the designated human release owner creates a dated or numbered copy only after selecting a paired staging candidate and deciding to begin formal testing.
+
 ## Canonical developer gate
 
 Run this before requesting review and in CI:
@@ -71,7 +73,11 @@ A failed gate blocks the build; do not spend an EAS build to discover a staging/
 
 ## Formal QA cycle record
 
-Keep one shared record per cycle (issue, release note, or approved QA artifact) with:
+A formal QA cycle is an operational release activity, not an implementation prerequisite. Create one shared record per cycle (issue, release note, or approved QA artifact) only after a human release owner selects the paired candidate and before the first formal reset or test. Repository setup, feature PRs, and routine verification must not create a cycle record.
+
+The release owner chooses the cycle ID and QA owner. FirstMate and coding agents may prepare the record and evidence, but they do not start, approve, or promote a cycle. If the candidate mobile/API commit, staging URL, seed/data version, or PayMongo context changes, create or update the record for the new candidate before testing continues.
+
+Keep the record with:
 
 - cycle ID and owner;
 - exact mobile commit SHA and exact Laravel API commit SHA;
