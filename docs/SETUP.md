@@ -46,6 +46,17 @@ For a physical phone, replace the example address with the computer's LAN IP. Ke
 
 The backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). Laravel is the only backend authority; the former embedded Express scaffold has been removed.
 
+## Offline demo catalog
+
+The app does not substitute fake backend data by default. The seeded demo catalog is opt-in:
+
+```env
+# Off unless this is exactly 1.
+EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1
+```
+
+While it is off, an unreachable or unconfigured API produces an explicit offline state, no seeded products, and no locally recorded sale; the cart stays editable so the cashier can reconnect. While it is on, the seeded catalog behaves as it did before for local practice. See [CART-SCANNER-EVIDENCE.md](CART-SCANNER-EVIDENCE.md) for the offline test cases.
+
 ## Run Laravel locally for mobile development
 
 Use a separate API checkout on the staging branch under `/tmp`, never the release owner's staging checkout or this mobile worktree:

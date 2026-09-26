@@ -25,15 +25,34 @@ app/
 src/
   api/client.ts       # the single configurable network boundary
   components/         # shared visual controls
-  context/            # POS session state and local fallback
-  data/               # seeded local demonstration data
-  domain/pos.ts       # behavior rules and money/stock calculations
-  hooks/
+  config/             # offline policy and its environment flag
+  context/            # POS session state and the cart reducer host
+  data/               # seeded local demonstration data and barcode fixtures
+  domain/             # behavior rules: money/stock, cart, barcode, revalidation
+  hooks/              # scan session, debounce, responsive metrics
   theme/
   types/
 ```
 
-`PosProvider` currently owns a functional in-memory fallback so a cashier can demonstrate the approved flow without a backend. It applies the same cart, stock, cash, payment-state, and exactly-once deduction rules used by the fast suite. When an API URL is configured it can refresh products through `ApiClient`; an unavailable API leaves the seeded fallback in place. The Laravel promotion replaces this fallback only after parity and formal QA evidence.
+`PosProvider` owns the session. Cart state is a single pure reducer
+(`src/domain/cart.ts`); every add, quantity change, clear, undo and
+reconciliation goes through it, so no screen can reach an unchecked add.
+
+Scanning decisions live in `src/hooks/useBarcodeScan.ts` on top of the pure
+barcode helpers in `src/domain/barcode.ts`, and the camera binding stays in
+`app/scanner.tsx`. That seam is what makes the camera path fixture-testable.
+
+Before a cart is handed to checkout, `revalidateCart` re-reads every line from
+`GET /products/:id` and `src/domain/revalidation.ts` reports price and stock
+drift, so the amount on the screen cannot silently differ from the amount Laravel
+will charge.
+
+The seeded demo catalog is **opt-in** (`EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1`) and
+off by default: an unreachable API produces an explicit offline state, no
+substituted products, and no locally recorded sale. See
+[SETUP.md](SETUP.md#offline-demo-catalog) and
+[CART-SCANNER-EVIDENCE.md](CART-SCANNER-EVIDENCE.md). Laravel remains the only
+pricing and sale authority.
 
 ## Intended flow
 

@@ -58,18 +58,26 @@ Tab navigation lives in `app/(tabs)/_layout.tsx` and must remain visually consis
 
 - Primary touch targets are at least ~48 dp high.
 - System back navigation remains functional on Android and iOS.
-- Scanning from POS adds a recognized product to the cart.
+- Scanning from POS adds a recognized product to the cart and confirms it in place before returning.
 - Scanning from Inventory opens the existing product editor or prepares a new product with the scanned barcode.
 - Inventory is deducted only after a successful cash confirmation or QR Ph payment confirmation.
 - Search controls provide real filtering rather than decorative fields.
 - Payment-method controls communicate selection with icon, text, border/state, and a check indicator — never color alone.
 - Error messages name both the problem and the recovery action.
+- A rejected cart add, a stock limit, and a resolved scan all report in place, in the surface the cashier is already looking at, instead of in a dialog that has to be dismissed while a customer waits.
 
 ## Screen details
 
 ### POS
 
 The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. The cart provides quantity controls, stock visibility, subtotal/discount/total, and a secure payment handoff.
+
+Cart states added in week 6:
+
+- **Stock limit** — a rejected "+" raises an amber notice inside the cart card naming the product, the available stock, and the quantity already in the cart. No dialog.
+- **Clear with undo** — Clear All clears immediately and shows a dark snackbar in the cart card naming the line count with an **Undo** action, valid for five seconds. There is no confirmation dialog.
+- **Pre-checkout review** — Proceed first re-reads the cart. If anything changed, a sheet lists each price change, stock change, or removed product with the previous and current values, and applies the reconciliation only when the cashier accepts it. A blocked cart cannot reach checkout.
+- **Offline** — when Laravel is not configured, the payment card states that a sale cannot be completed, the Proceed action is unavailable, and the cart stays editable.
 
 ### Inventory
 
@@ -90,6 +98,17 @@ Product create/edit uses the same surface and form system and includes product c
 ### Scanner
 
 Scanner is the intentional dark exception because the live camera image is the primary surface. A clear white scan frame, green scan line, mode label, and concise privacy copy keep it recognizably PorSca without obscuring the camera.
+
+Scanner states added in week 6. Each is a light card on the dark surface with an icon, a headline, and text, so no state depends on color alone:
+
+- **Added confirmation** — the product name, unit price, cart quantity, and stock, with a **Done** action. The scanner returns to the cart on its own after ~1.2 s.
+- **Out of stock** — its own headline with **Scan again** and **Back to cart**.
+- **Stock limit reached** — the cart already holds all available stock, with the same recovery actions.
+- **Product not found** — names the code, notes that both the UPC-A and EAN-13 forms were tried, and flags a failing check digit as a possible misread.
+- **Not a product barcode** — a non-numeric, too short, or over-long code, answered without a request, pointing the cashier at Search.
+- **API unavailable** — the lookup could not reach Laravel, with **Scan again** and **Back to cart**.
+- **Inventory: not in inventory** — **Scan again** or **Add product** with the scanned barcode pre-filled.
+- **Starting the camera** — scanning stays disarmed until the camera reports ready.
 
 ## Accessibility and resilience
 
