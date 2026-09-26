@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
-import { ApiClient } from '@/src/api/client';
+import { ApiClient, ApiClientError } from '@/src/api/client';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Product } from '@/src/types';
@@ -31,28 +31,19 @@ function SeedButton({ product, label }: { product: Product; label: string }) {
 
 const client = { isConfigured: true } as unknown as ApiClient;
 
-/** A catalog client whose reads drive the pre-checkout revalidation. */
-function catalogClient({
-  products,
-  inventory,
-}: {
-  products: Product[];
-  inventory?: { productId: string; quantity: number; status?: Product['stockStatus'] }[];
-}) {
+/** A catalog client whose per-product reads drive the pre-checkout revalidation. */
+function catalogClient({ products }: { products: Product[] }) {
+  const byId = new Map(products.map((product) => [product.id, product]));
   return {
     isConfigured: true,
-    listProducts: jest.fn().mockResolvedValue(products),
-    listInventory: jest.fn().mockResolvedValue(
-      inventory ?? products.map((product) => ({
-        productId: product.id,
-        sku: product.sku,
-        barcode: product.barcode,
-        productName: product.name,
-        quantity: product.stock,
-        reorderLevel: product.reorderLevel ?? 0,
-        status: product.stockStatus ?? 'in_stock',
-      })),
-    ),
+    getProduct: jest.fn(async (productId: string) => {
+      const product = byId.get(productId);
+      if (!product) {
+        // Laravel answers an unknown product on `GET /products/:id` with a structured 404.
+        throw new ApiClientError(`No product matches ${productId}.`, 404, 'not_found');
+      }
+      return product;
+    }),
   } as unknown as ApiClient;
 }
 
@@ -284,8 +275,7 @@ describe('POS pre-checkout revalidation', () => {
   it('keeps the cart and explains itself when prices cannot be confirmed', async () => {
     const unreachable = {
       isConfigured: true,
-      listProducts: jest.fn().mockRejectedValue(new Error('offline')),
-      listInventory: jest.fn().mockRejectedValue(new Error('offline')),
+      getProduct: jest.fn().mockRejectedValue(new ApiClientError('Unable to reach PorSca API: timeout')),
     } as unknown as ApiClient;
     const view = renderPos(unreachable);
 

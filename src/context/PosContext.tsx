@@ -273,15 +273,26 @@ export function PosProvider({
     }
 
     try {
-      const [remoteProducts, remoteInventory] = await Promise.all([client.listProducts(), client.listInventory()]);
-      const inventoryById = new Map(remoteInventory.map((item) => [item.productId, item]));
-      // Inventory is the authoritative stock source; the catalog carries price.
-      const authoritative = remoteProducts.map((product) => {
-        const stockItem = inventoryById.get(product.id);
-        return stockItem
-          ? { ...product, stock: stockItem.quantity, stockStatus: stockItem.status }
-          : product;
+      // One read per cart line: `GET /products/:id` carries the authoritative
+      // price and stock block, and a 404 means the product is gone. Reading the
+      // whole catalog instead would silently miss lines past the first page.
+      const settled = await Promise.allSettled(lines.map((line) => client.getProduct(line.product.id)));
+      const authoritative: Product[] = [];
+      let unreachable = false;
+
+      settled.forEach((outcome) => {
+        if (outcome.status === 'fulfilled') {
+          authoritative.push(outcome.value);
+          return;
+        }
+        const reason: unknown = outcome.reason;
+        if (!(reason instanceof ApiClientError && reason.status === 404)) unreachable = true;
       });
+
+      if (unreachable) {
+        return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+      }
+
       rememberProducts(authoritative);
       return reconcileCart(lines, authoritative);
     } catch {
