@@ -9,6 +9,10 @@ import { DataState } from '@/src/components/DataState';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { useDebouncedValue } from '@/src/hooks/useDebouncedValue';
+
+/** Trailing debounce for search, so typing does not fire one request per keystroke. */
+export const SEARCH_DEBOUNCE_MS = 280;
 
 export default function PosScreen() {
   const {
@@ -29,13 +33,15 @@ export default function PosScreen() {
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
   const responsive = useResponsive();
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+  const searchPending = query.trim() !== debouncedQuery.trim();
 
   const totalItems = cart.reduce((sum, line) => sum + line.quantity, 0);
   const matches = searchResults.slice(0, 5);
 
   useEffect(() => {
-    void searchProducts(query);
-  }, [query, searchProducts]);
+    void searchProducts(debouncedQuery);
+  }, [debouncedQuery, searchProducts]);
 
   const retrySearch = () => {
     void searchProducts(query);
@@ -104,7 +110,7 @@ export default function PosScreen() {
         </View>
       </View>
 
-      {query.trim() && catalogState === 'loading' ? (
+      {(searchPending || (query.trim() && catalogState === 'loading')) ? (
         <DataState kind="loading" title="Searching the Laravel catalog" message="Checking current product and stock information." />
       ) : null}
 
@@ -118,11 +124,11 @@ export default function PosScreen() {
         />
       ) : null}
 
-      {query.trim() && catalogState === 'ready' && matches.length === 0 ? (
+      {query.trim() && !searchPending && catalogState === 'ready' && matches.length === 0 ? (
         <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => setQuery('')} />
       ) : null}
 
-      {query.trim() && matches.length > 0 && catalogState !== 'loading' ? (
+      {query.trim() && !searchPending && matches.length > 0 && catalogState !== 'loading' ? (
         <View style={[styles.resultsCard, { padding: responsive.narrow ? 10 : spacing.md }]}>
           <Text style={[styles.resultsTitle, { fontSize: responsive.font(typography.label) }]}>Search results</Text>
           {matches.map((product) => {

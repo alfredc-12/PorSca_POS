@@ -5,6 +5,7 @@ import {
   canRecordPaidSale,
   cashChange,
   deductStock,
+  isBarcodeQuery,
   paymentError,
   searchProducts,
 } from '@/src/domain/pos';
@@ -44,6 +45,20 @@ describe('POS business rules', () => {
     expect(searchProducts(products, '480002')).toEqual([noodles]);
     expect(searchProducts(products, 'beverages')).toEqual([cola]);
     expect(searchProducts(products, 'not-found')).toEqual([]);
+  });
+
+  it('treats a barcode-shaped query as an exact lookup online and offline alike', () => {
+    const products = [{ ...cola, barcode: '4800010000011' }, { ...noodles, barcode: '4800019999999' }];
+
+    expect(isBarcodeQuery('480001')).toBe(false);
+    expect(isBarcodeQuery('4800010000011')).toBe(true);
+    expect(isBarcodeQuery('coke 500')).toBe(false);
+
+    expect(searchProducts(products, '4800010000011')).toEqual([products[0]]);
+    expect(searchProducts(products, '4800010000')).toEqual([]);
+    expect(searchProducts(products, ' 4800010000011 ')).toEqual([products[0]]);
+    // A query too short to be a barcode keeps the substring behaviour of a text search.
+    expect(searchProducts(products, '480001')).toEqual(products);
   });
 
   it('deducts inventory exactly once only after the complete cart passes validation', () => {

@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
-import { calculateCartTotal, CartChange, deductStock, searchProducts as searchLocalProducts } from '@/src/domain/pos';
+import { calculateCartTotal, CartChange, deductStock, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
 
@@ -78,6 +78,8 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const [salesState, setSalesState] = useState<ReadState>('idle');
   const [salesError, setSalesError] = useState<string>();
   const requestId = useRef(0);
+  /** The query whose request is currently in flight, so the same query is never read twice. */
+  const inFlightQuery = useRef<string | undefined>(undefined);
   const cashKeys = useRef(new Map<string, string>());
   const cashRequests = useRef(new Map<string, Promise<Sale | null>>());
   const qrKeys = useRef(new Map<string, string>());
@@ -249,6 +251,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     const normalizedQuery = query.trim();
     const currentRequest = ++requestId.current;
     if (!normalizedQuery) {
+      inFlightQuery.current = undefined;
       setSearchResults([]);
       setCatalogState('idle');
       setCatalogError(undefined);
@@ -256,6 +259,14 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       return;
     }
 
+    // One in-flight read per query: a debounced retry or a repeat keystroke
+    // never adds a second request for the same text.
+    if (inFlightQuery.current === normalizedQuery) return;
+    inFlightQuery.current = normalizedQuery;
+
+    // The same predicate decides the offline rows and the API parameter, so a
+    // numeric query means one thing whether or not Laravel is reachable.
+    const barcodeQuery = isBarcodeQuery(normalizedQuery);
     setCatalogState('loading');
     setCatalogError(undefined);
     setCatalogUsingFallback(false);
@@ -269,7 +280,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     }
 
     try {
-      const remoteProducts = /^\d+$/.test(normalizedQuery)
+      const remoteProducts = barcodeQuery
         ? await client.listProducts({ barcode: normalizedQuery })
         : await client.listProducts({ search: normalizedQuery });
       if (currentRequest !== requestId.current) return;
@@ -282,6 +293,8 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       setCatalogState('unavailable');
       setCatalogError('Laravel API is unavailable. Showing the offline demo catalog.');
       setCatalogUsingFallback(true);
+    } finally {
+      if (inFlightQuery.current === normalizedQuery) inFlightQuery.current = undefined;
     }
   }, [client, rememberProducts]);
 

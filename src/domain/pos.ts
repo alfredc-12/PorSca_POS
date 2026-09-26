@@ -25,9 +25,21 @@ export function calculateCartTotal(cart: CartLine[]) {
   return pesos(cart.reduce((sum, line) => sum + cents(line.product.price) * line.quantity, 0));
 }
 
+/**
+ * True when a search query is an exact barcode lookup. This is the same shape
+ * the API's `?barcode=` filter accepts, so the online and offline paths agree on
+ * what a numeric query means (defect G7).
+ */
+export function isBarcodeQuery(query: string) {
+  return /^\d{8,64}$/.test(query.trim());
+}
+
 export function searchProducts(products: Product[], query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return products;
+  // A barcode-shaped query is an exact lookup, matching `?barcode=` on the
+  // server; anything else is a substring match on name, barcode or category.
+  if (isBarcodeQuery(normalized)) return products.filter((product) => product.barcode === normalized);
   return products.filter((product) =>
     product.name.toLowerCase().includes(normalized) ||
     product.barcode.includes(normalized) ||

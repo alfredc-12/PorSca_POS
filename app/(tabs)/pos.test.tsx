@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import PosScreen from '@/app/(tabs)/pos';
+import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
 import { ApiClient } from '@/src/api/client';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
 import { PosProvider, usePos } from '@/src/context/PosContext';
@@ -126,5 +126,52 @@ describe('POS cart consistency', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('POS search', () => {
+  it('turns eight keystrokes into at most two catalog reads', async () => {
+    jest.useFakeTimers();
+    try {
+      const listProducts = jest.fn().mockResolvedValue([]);
+      const searchClient = { isConfigured: true, listProducts } as unknown as ApiClient;
+      const view = render(
+        <PosProvider client={searchClient}>
+          <PosScreen />
+        </PosProvider>,
+      );
+      const input = view.getByTestId('pos-search-input');
+
+      for (const value of ['s', 'sa', 'sar', 'sard', 'sardi', 'sardin', 'sardine', 'sardines']) {
+        fireEvent.changeText(input, value);
+        await act(async () => {
+          jest.advanceTimersByTime(40);
+          await Promise.resolve();
+        });
+      }
+      await act(async () => {
+        jest.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+        await Promise.resolve();
+      });
+
+      expect(listProducts.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(listProducts).toHaveBeenLastCalledWith({ search: 'sardines' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('asks for an exact barcode read when the query looks like a barcode', async () => {
+    const listProducts = jest.fn().mockResolvedValue([]);
+    const searchClient = { isConfigured: true, listProducts } as unknown as ApiClient;
+    const view = render(
+      <PosProvider client={searchClient}>
+        <PosScreen />
+      </PosProvider>,
+    );
+
+    fireEvent.changeText(view.getByTestId('pos-search-input'), '4800010000011');
+
+    await waitFor(() => expect(listProducts).toHaveBeenCalledWith({ barcode: '4800010000011' }));
   });
 });
