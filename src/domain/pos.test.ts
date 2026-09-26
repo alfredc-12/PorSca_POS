@@ -29,8 +29,8 @@ describe('POS business rules', () => {
 
     expect(first.ok).toBe(true);
     expect(second.cart[0].quantity).toBe(2);
-    expect(rejected).toMatchObject({ ok: false, message: 'No more stock is available for this item.' });
-    expect(out).toMatchObject({ ok: false, message: 'Coca-Cola is out of stock.' });
+    expect(rejected).toMatchObject({ ok: false, message: 'Only 2 of Coca-Cola in stock, and this cart already has 2. Reduce the quantity before adding more.' });
+    expect(out).toMatchObject({ ok: false, message: 'Coca-Cola has no stock left. Restock it from Inventory before selling it.' });
   });
 
   it('calculates exact cash change and reports a shortfall', () => {

@@ -37,13 +37,13 @@ export function searchProducts(products: Product[], query: string) {
 
 export function addProductToCart(cart: CartLine[], product: Product): CartChange {
   if (product.stock <= 0) {
-    return { ok: false, cart, message: `${product.name} is out of stock.` };
+    return { ok: false, cart, message: `${product.name} has no stock left. Restock it from Inventory before selling it.` };
   }
 
   const existing = cart.find((line) => line.product.id === product.id);
   const currentQuantity = existing?.quantity ?? 0;
   if (currentQuantity >= product.stock) {
-    return { ok: false, cart, message: 'No more stock is available for this item.' };
+    return { ok: false, cart, message: `Only ${product.stock} of ${product.name} in stock, and this cart already has ${currentQuantity}. Reduce the quantity before adding more.` };
   }
 
   if (existing) {

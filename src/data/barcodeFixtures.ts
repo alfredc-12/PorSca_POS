@@ -24,7 +24,7 @@ export const EAN13_LOW_STOCK = '4800000000027';
 export const EAN13_OUT_OF_STOCK = '4800000000034';
 /** Product exists with a large stock level, for multi-add exposure tests. */
 export const EAN13_HIGH_STOCK = '4800000000041';
-/** Well-formed code that is not in the catalog. */
+/** Well-formed code that is not in the catalog. Also fails the mod-10 check (the plan's set does). */
 export const UNKNOWN_BARCODE = '9999999999999';
 
 /** Code128/QR-shaped value. The API only accepts 8-64 digits, so this can never be a product barcode. */

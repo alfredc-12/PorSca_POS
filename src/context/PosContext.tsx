@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
-import { BarcodeLookupResult } from '@/src/domain/barcode';
+import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { addProductToCart, calculateCartTotal, CartChange, deductStock, decrementCartLine, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
@@ -114,41 +114,58 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     if (!client.isConfigured) {
       const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
       return fallbackProduct
-        ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true }
+        ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
         : { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable. Retry when connected before looking up this barcode.', usingFallback: true };
     }
 
-    try {
-      const product = await client.getProductByBarcode(normalizedBarcode);
-      rememberProducts([product]);
-      return { ok: true, product, status: 'found', message: `${product.name} found.` };
-    } catch (error) {
-      if (error instanceof ApiClientError && error.status === 404) {
-        return { ok: false, status: 'not-found', message: 'No product was found for this barcode.' };
+    // iOS reports UPC-A as EAN-13 with a leading zero and Android may report the
+    // 12-digit form, so a barcode stored in one shape must still resolve when
+    // the phone reports the other. One extra attempt, only after a 404.
+    const candidates = barcodeCandidates(normalizedBarcode);
+    for (const candidate of candidates) {
+      try {
+        const product = await client.getProductByBarcode(candidate);
+        rememberProducts([product]);
+        return {
+          ok: true,
+          product,
+          status: 'found',
+          message: `${product.name} found.`,
+          matchedBarcode: product.barcode || candidate,
+        };
+      } catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) continue;
+
+        const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
+        return fallbackProduct
+          ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
+          : { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable. Retry when connected before looking up this barcode.', usingFallback: true };
       }
-
-      const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
-      return fallbackProduct
-        ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true }
-        : { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable. Retry when connected before looking up this barcode.', usingFallback: true };
     }
+
+    return { ok: false, status: 'not-found', message: `No product matches ${normalizedBarcode}.` };
   }, [client, rememberProducts]);
 
   const addByBarcode = useCallback(async (barcode: string) => {
     const lookup = await lookupProductByBarcode(barcode);
     if (!lookup.ok || !lookup.product) return lookup;
 
-    const result = addProductChecked(lookup.product);
+    const product = lookup.product;
+    const result = addProductChecked(product);
     if (!result.ok) {
+      // Distinguish a product with no stock from a cart that already holds all
+      // of it: the cashier's recovery is different in each case.
+      const outOfStock = product.stock <= 0;
       return {
         ...lookup,
         ok: false,
-        status: 'out-of-stock' as const,
-        message: result.message ?? `${lookup.product.name} is out of stock.`,
+        status: outOfStock ? 'out-of-stock' as const : 'limit-reached' as const,
+        message: result.message ?? `${product.name} is out of stock.`,
       };
     }
 
-    return { ...lookup, message: `${lookup.product.name} added to cart.` };
+    const added = result.cart.find((line) => line.product.id === product.id);
+    return { ...lookup, message: `${product.name} added to cart.`, quantity: added?.quantity ?? 1 };
   }, [addProductChecked, lookupProductByBarcode]);
 
   const decrementProduct = (productId: string) => {

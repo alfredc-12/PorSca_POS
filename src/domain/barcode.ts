@@ -15,6 +15,8 @@ export type BarcodeLookupResult = {
   usingFallback?: boolean;
   /** The catalog barcode that actually matched, when it differs from the scanned value. */
   matchedBarcode?: string;
+  /** Cart quantity after a successful add. */
+  quantity?: number;
 };
 
 /** Resolves one scanned value. Injected so tests can drive the session without a camera. */
