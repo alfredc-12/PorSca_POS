@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -7,15 +7,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/src/components/AppButton';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
+import { BarcodeScanOutcome, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 export default function ScannerScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const inventoryMode = mode === 'inventory';
   const [permission, requestPermission] = useCameraPermissions();
-  const [locked, setLocked] = useState(false);
-  const [lookupBusy, setLookupBusy] = useState(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
+  const resolve = inventoryMode ? lookupProductByBarcode : addByBarcode;
+  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve });
+
+  useEffect(() => {
+    if (!outcome) return;
+    if (inventoryMode) {
+      handleInventoryOutcome(outcome, rearm);
+      return;
+    }
+    handlePosOutcome(outcome, rearm);
+  }, [inventoryMode, outcome, rearm]);
 
   if (!permission) return <View style={styles.root} />;
 
@@ -32,62 +42,13 @@ export default function ScannerScreen() {
     );
   }
 
-  const handleBarcode = async (data: string) => {
-    setLocked(true);
-    setLookupBusy(true);
-
-    if (inventoryMode) {
-      const result = await lookupProductByBarcode(data);
-      setLookupBusy(false);
-      if (result.ok && result.product) {
-        const productId = result.product.id;
-        if (result.usingFallback) {
-          Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [
-            { text: 'Continue', onPress: () => router.replace({ pathname: '/product-form', params: { id: productId } }) },
-          ]);
-        } else {
-          router.replace({ pathname: '/product-form', params: { id: result.product.id } });
-        }
-        return;
-      }
-      if (result.status === 'unavailable') {
-        Alert.alert('API unavailable', result.message, [
-          { text: 'Try again', onPress: () => setLocked(false) },
-          { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
-        ]);
-        return;
-      }
-      Alert.alert('Barcode not in inventory', 'This barcode was not found in Laravel inventory. You can scan again or add it as a new product.', [
-        { text: 'Scan again', onPress: () => setLocked(false) },
-        { text: 'Add product', onPress: () => router.replace({ pathname: '/product-form', params: { barcode: data } }) },
-      ]);
-      return;
-    }
-
-    const result = await addByBarcode(data);
-    setLookupBusy(false);
-    if (result.ok) {
-      if (result.usingFallback) {
-        Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [{ text: 'Continue', onPress: () => router.back() }]);
-      } else {
-        router.back();
-      }
-    } else {
-      const title = result.status === 'unavailable' ? 'API unavailable' : result.status === 'not-found' ? 'Product not found' : 'Unable to add product';
-      Alert.alert(title, result.message, [
-        { text: 'Try again', onPress: () => setLocked(false) },
-        { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
-      ]);
-    }
-  };
-
   return (
     <View style={styles.root}>
       <CameraView
         style={StyleSheet.absoluteFill}
         facing="back"
         barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'qr'] }}
-        onBarcodeScanned={locked ? undefined : ({ data }) => handleBarcode(data)}
+        onBarcodeScanned={scanning ? ({ data }) => handleBarcode(data) : undefined}
       />
       <View style={styles.tint} pointerEvents="none" />
       <SafeAreaView style={styles.safeOverlay} edges={['top', 'bottom']}>
@@ -110,9 +71,9 @@ export default function ScannerScreen() {
             <View style={[styles.corner, styles.bottomRight]} />
             <View style={styles.scanLine} />
           </View>
-          <Text style={styles.title}>{lookupBusy ? 'Looking up barcode…' : 'Place the barcode inside the frame'}</Text>
-          <Text style={styles.caption}>{lookupBusy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
-          {lookupBusy ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
+          <Text style={styles.title}>{busy ? 'Looking up barcode…' : 'Place the barcode inside the frame'}</Text>
+          <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+          {busy ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
         </View>
 
         <View style={styles.bottomCard} pointerEvents="none">
@@ -122,6 +83,52 @@ export default function ScannerScreen() {
       </SafeAreaView>
     </View>
   );
+}
+
+function handlePosOutcome(outcome: BarcodeScanOutcome, rearm: () => void) {
+  if (outcome.kind === 'found' && outcome.product) {
+    if (outcome.usingFallback) {
+      Alert.alert('API unavailable', `${outcome.message} The offline demo catalog was used.`, [
+        { text: 'Continue', onPress: () => router.back() },
+      ]);
+      return;
+    }
+    router.back();
+    return;
+  }
+
+  const title = outcome.kind === 'unavailable' ? 'API unavailable' : outcome.kind === 'not-found' ? 'Product not found' : 'Unable to add product';
+  Alert.alert(title, outcome.message, [
+    { text: 'Try again', onPress: rearm },
+    { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
+  ]);
+}
+
+function handleInventoryOutcome(outcome: BarcodeScanOutcome, rearm: () => void) {
+  if (outcome.kind === 'found' && outcome.product) {
+    const productId = outcome.product.id;
+    if (outcome.usingFallback) {
+      Alert.alert('API unavailable', `${outcome.message} The offline demo catalog was used.`, [
+        { text: 'Continue', onPress: () => router.replace({ pathname: '/product-form', params: { id: productId } }) },
+      ]);
+    } else {
+      router.replace({ pathname: '/product-form', params: { id: productId } });
+    }
+    return;
+  }
+
+  if (outcome.kind === 'unavailable') {
+    Alert.alert('API unavailable', outcome.message, [
+      { text: 'Try again', onPress: rearm },
+      { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
+    ]);
+    return;
+  }
+
+  Alert.alert('Barcode not in inventory', 'This barcode was not found in Laravel inventory. You can scan again or add it as a new product.', [
+    { text: 'Scan again', onPress: rearm },
+    { text: 'Add product', onPress: () => router.replace({ pathname: '/product-form', params: { barcode: outcome.barcode } }) },
+  ]);
 }
 
 const styles = StyleSheet.create({

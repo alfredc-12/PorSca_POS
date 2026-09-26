@@ -1,18 +1,13 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
+import { BarcodeLookupResult } from '@/src/domain/barcode';
 import { addProductToCart, calculateCartTotal, CartChange, deductStock, decrementCartLine, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
 
-export type ReadState = 'idle' | 'loading' | 'ready' | 'unavailable';
+export type { BarcodeLookupResult };
 
-export type BarcodeLookupResult = {
-  ok: boolean;
-  product?: Product;
-  status: 'found' | 'not-found' | 'unavailable' | 'out-of-stock';
-  message: string;
-  usingFallback?: boolean;
-};
+export type ReadState = 'idle' | 'loading' | 'ready' | 'unavailable';
 
 export type ProductField = 'name' | 'barcode' | 'price' | 'stock';
 
