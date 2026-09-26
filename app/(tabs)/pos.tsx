@@ -1,36 +1,122 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
+import { CartReviewSheet } from '@/src/components/CartReviewSheet';
+import { CartRevalidation, cartSignature } from '@/src/domain/revalidation';
+import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { useDebouncedValue } from '@/src/hooks/useDebouncedValue';
+
+/** Trailing debounce for search, so typing does not fire one request per keystroke. */
+export const SEARCH_DEBOUNCE_MS = 280;
 
 export default function PosScreen() {
-  const { cart, total, addProduct, addProductChecked, decrementProduct, searchResults, catalogState, catalogError, searchProducts, clearCart } = usePos();
+  const {
+    cart,
+    cartUndo,
+    total,
+    addProductChecked,
+    incrementProduct,
+    decrementProduct,
+    searchResults,
+    catalogState,
+    catalogError,
+    searchProducts,
+    clearCart,
+    undoClearCart,
+    beginCheckout,
+    revalidateCart,
+    replaceCartLines,
+    demoCatalogEnabled,
+    apiConfigured,
+  } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
+  const [cartNotice, setCartNotice] = useState<string>();
+  const [review, setReview] = useState<CartRevalidation>();
+  const [checkingPrices, setCheckingPrices] = useState(false);
   const responsive = useResponsive();
+  const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+  const searchPending = query.trim() !== debouncedQuery.trim();
 
   const totalItems = cart.reduce((sum, line) => sum + line.quantity, 0);
   const matches = searchResults.slice(0, 5);
 
   useEffect(() => {
-    void searchProducts(query);
-  }, [query, searchProducts]);
+    void searchProducts(debouncedQuery);
+  }, [debouncedQuery, searchProducts]);
 
   const retrySearch = () => {
     void searchProducts(query);
   };
 
-  const proceed = () => {
-    if (!cart.length) return;
+  /**
+   * Every cart add goes through the same guarded path, and a rejected add is
+   * answered in the cart instead of with a dialog the cashier has to dismiss
+   * while a customer waits.
+   */
+  const addToCart = useCallback((productId: string) => {
+    const result = incrementProduct(productId);
+    setCartNotice(result.ok ? undefined : result.message);
+    return result.ok;
+  }, [incrementProduct]);
+
+  const openCheckout = useCallback(() => {
+    beginCheckout();
     router.push({ pathname: '/checkout', params: { method } });
-  };
+  }, [beginCheckout, method]);
+
+  /**
+   * Proceed re-reads the cart against the catalog first. A clean cart goes
+   * straight to checkout; anything that changed is shown in the review sheet so
+   * the cashier sees the delta before Laravel recomputes the charge.
+   */
+  const proceed = useCallback(async () => {
+    if (!cart.length || checkingPrices) return;
+    // Strict online: a sale is only ever recorded by Laravel.
+    if (!apiConfigured) {
+      setCartNotice(OFFLINE_COPY.checkoutOffline);
+      return;
+    }
+    setCartNotice(undefined);
+    setCheckingPrices(true);
+    try {
+      const result = await revalidateCart();
+      if (result.status === 'ready') {
+        openCheckout();
+        return;
+      }
+      if (result.status === 'offline' || result.status === 'unavailable') {
+        setCartNotice(result.message);
+        return;
+      }
+      setReview(result);
+    } finally {
+      setCheckingPrices(false);
+    }
+  }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
+
+  const applyReview = useCallback(() => {
+    if (!review) return;
+    // The cart can be edited while the review sheet is open, and the revalidation
+    // result only describes the cart it read. A stale review must never overwrite
+    // a later edit or send an unvalidated cart to checkout (defect F2).
+    if (review.cartSignature !== cartSignature(cart)) {
+      setReview(undefined);
+      void proceed();
+      return;
+    }
+    replaceCartLines(review.appliedLines);
+    setReview(undefined);
+    openCheckout();
+  }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
 
@@ -75,11 +161,11 @@ export default function PosScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? 'Offline • Demo fallback' : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Demo fallback' : 'Offline • Laravel required') : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
         </View>
       </View>
 
-      {query.trim() && catalogState === 'loading' ? (
+      {(searchPending || (query.trim() && catalogState === 'loading')) ? (
         <DataState kind="loading" title="Searching the Laravel catalog" message="Checking current product and stock information." />
       ) : null}
 
@@ -87,17 +173,17 @@ export default function PosScreen() {
         <DataState
           kind="unavailable"
           title="Laravel catalog unavailable"
-          message={catalogError ?? 'The API could not be reached. The offline demo catalog is shown below.'}
+          message={catalogError ?? 'The API could not be reached. No demo catalog is in use.'}
           actionLabel="Retry search"
           onAction={retrySearch}
         />
       ) : null}
 
-      {query.trim() && catalogState === 'ready' && matches.length === 0 ? (
+      {query.trim() && !searchPending && catalogState === 'ready' && matches.length === 0 ? (
         <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => setQuery('')} />
       ) : null}
 
-      {query.trim() && matches.length > 0 && catalogState !== 'loading' ? (
+      {query.trim() && !searchPending && matches.length > 0 && catalogState !== 'loading' ? (
         <View style={[styles.resultsCard, { padding: responsive.narrow ? 10 : spacing.md }]}>
           <Text style={[styles.resultsTitle, { fontSize: responsive.font(typography.label) }]}>Search results</Text>
           {matches.map((product) => {
@@ -111,8 +197,12 @@ export default function PosScreen() {
                 disabled={outOfStock}
                 onPress={() => {
                   const result = addProductChecked(product);
-                  if (result.ok) setQuery('');
-                  else Alert.alert('Unable to add product', result.message);
+                  if (result.ok) {
+                    setQuery('');
+                    setCartNotice(undefined);
+                  } else {
+                    setCartNotice(result.message);
+                  }
                 }}
                 style={({ pressed }) => [styles.resultRow, { minHeight: responsive.s(58) }, pressed && { opacity: 0.72 }]}
               >
@@ -136,11 +226,44 @@ export default function PosScreen() {
             <Ionicons name="cart" size={responsive.s(26)} color={colors.primary} />
             <Text style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
           </View>
-          <Pressable disabled={!cart.length} onPress={clearCart} style={styles.clearAction}>
+          <Pressable
+            disabled={!cart.length}
+            onPress={() => {
+              clearCart();
+              setCartNotice(undefined);
+            }}
+            style={styles.clearAction}
+          >
             <Ionicons name="trash-outline" size={responsive.s(20)} color={cart.length ? colors.danger : colors.textMuted} />
             {!responsive.veryNarrow ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
           </Pressable>
         </View>
+
+        {cartUndo ? (
+          <View testID="cart-undo-banner" style={styles.undoBanner}>
+            <Ionicons name="trash-outline" size={responsive.s(18)} color={colors.white} />
+            <Text style={[styles.undoText, { fontSize: responsive.font(12.5) }]}>
+              Cart cleared ({cartUndo.lineCount} {cartUndo.lineCount === 1 ? 'item' : 'items'})
+            </Text>
+            <Pressable
+              testID="cart-undo-button"
+              accessibilityRole="button"
+              accessibilityLabel="Undo clear cart"
+              onPress={() => {
+                undoClearCart();
+                setCartNotice(undefined);
+              }}
+              style={styles.undoAction}
+            >
+              <Text style={[styles.undoActionText, { fontSize: responsive.font(12.5) }]}>Undo</Text>
+            </Pressable>
+          </View>
+        ) : cartNotice ? (
+          <View testID="cart-limit-notice" accessibilityRole="alert" style={styles.limitNotice}>
+            <Ionicons name="alert-circle-outline" size={responsive.s(19)} color={colors.warning} />
+            <Text style={[styles.limitNoticeText, { fontSize: responsive.font(12.5) }]}>{cartNotice}</Text>
+          </View>
+        ) : null}
 
         {cart.length === 0 ? (
           <View style={[styles.emptyCart, { minHeight: responsive.heightValue(0.205, 145, 185), paddingHorizontal: responsive.narrow ? spacing.lg : spacing.xl }]}>
@@ -171,7 +294,11 @@ export default function PosScreen() {
               <View style={[styles.qtyControl, { minHeight: responsive.s(38) }]}>
                 <Pressable accessibilityLabel={`Decrease ${line.product.name}`} style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(38) }]} onPress={() => decrementProduct(line.product.id)}><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>−</Text></Pressable>
                 <Text style={[styles.qtyNumber, { width: responsive.s(responsive.narrow ? 30 : 35), fontSize: responsive.font(16) }]}>{line.quantity}</Text>
-                <Pressable accessibilityLabel={`Increase ${line.product.name}`} style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(38) }]} onPress={() => addProduct(line.product)}><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>+</Text></Pressable>
+                <Pressable
+                  accessibilityLabel={`Increase ${line.product.name}`}
+                  style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(38) }]}
+                  onPress={() => addToCart(line.product.id)}
+                ><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>+</Text></Pressable>
               </View>
               <Text style={[styles.amount, { fontSize: responsive.font(responsive.narrow ? 16 : 18) }]}>₱{(line.product.price * line.quantity).toFixed(2)}</Text>
             </View>
@@ -198,20 +325,30 @@ export default function PosScreen() {
           <PaymentOption testID="payment-cash" icon="cash-outline" label="Cash" selected={method === 'cash'} onPress={() => setMethod('cash')} />
           <PaymentOption testID="payment-qrph" icon="qr-code-outline" label="QR Ph / PayMongo" selected={method === 'qrph'} onPress={() => setMethod('qrph')} />
         </View>
+        {!apiConfigured ? (
+          <View testID="offline-checkout-notice" accessibilityRole="alert" style={styles.offlineNotice}>
+            <Ionicons name="cloud-offline-outline" size={responsive.s(19)} color={colors.warning} />
+            <Text style={[styles.offlineNoticeText, { fontSize: responsive.font(12.5) }]}>
+              Connect to the Laravel API to complete a sale. The cart stays editable and nothing is recorded locally.
+            </Text>
+          </View>
+        ) : null}
         <Pressable
           testID="proceed-to-payment"
           accessibilityLabel="Proceed to payment"
-          disabled={!cart.length}
-          onPress={proceed}
+          disabled={!cart.length || checkingPrices || !apiConfigured}
+          onPress={() => void proceed()}
           style={({ pressed }) => [
             styles.proceedButton,
             { minHeight: responsive.heightValue(0.071, 54, 62) },
-            !cart.length && styles.proceedDisabled,
-            pressed && cart.length > 0 && { opacity: 0.86 },
+            (!cart.length || checkingPrices || !apiConfigured) && styles.proceedDisabled,
+            pressed && cart.length > 0 && apiConfigured && { opacity: 0.86 },
           ]}
         >
           <Ionicons name="lock-closed" size={responsive.s(20)} color={colors.white} />
-          <Text style={[styles.proceedText, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>Proceed to Payment</Text>
+          <Text style={[styles.proceedText, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>
+            {checkingPrices ? 'Checking prices & stock…' : 'Proceed to Payment'}
+          </Text>
           <Ionicons name="arrow-forward" size={responsive.s(23)} color={colors.white} />
         </Pressable>
         <View style={styles.secureRow}>
@@ -221,6 +358,13 @@ export default function PosScreen() {
           <Text style={[styles.paymongo, { fontSize: responsive.font(11) }]}>PayMongo</Text>
         </View>
       </View>
+
+      <CartReviewSheet
+        visible={Boolean(review)}
+        revalidation={review}
+        onApply={applyReview}
+        onDismiss={() => setReview(undefined)}
+      />
     </Screen>
   );
 }
@@ -275,6 +419,14 @@ const styles = StyleSheet.create({
   titleMuted: { color: colors.textMuted, fontWeight: '600' },
   clearAction: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8 },
   clearText: { color: colors.danger, fontWeight: '800' },
+  limitNotice: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  limitNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
+  offlineNotice: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  offlineNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
+  undoBanner: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.text, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  undoText: { color: colors.white, flex: 1, fontWeight: '700' },
+  undoAction: { minHeight: 34, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  undoActionText: { color: colors.white, fontWeight: '900' },
   emptyCart: { alignItems: 'center', justifyContent: 'center', gap: 8 },
   emptyIcon: { backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { color: colors.text, fontWeight: '800', textAlign: 'center' },

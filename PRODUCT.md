@@ -34,7 +34,7 @@ The cashier uses one phone during normal in-person retail transactions. Product 
 - Record completed transactions.
 - Avoid duplicate inventory deduction for the same paid transaction.
 - Keep PayMongo secret keys out of the mobile application.
-- Offline in-memory data supports catalog/cash UI demonstration; QR Ph completion always requires Laravel confirmation.
+- Offline in-memory data can support a catalog/cash UI demonstration, but only behind an off-by-default flag (`EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1`). While that flag is off, an unreachable API produces an explicit offline state, no substituted products, and no locally recorded sale. QR Ph completion always requires Laravel confirmation.
 
 ## Brand Commitments
 

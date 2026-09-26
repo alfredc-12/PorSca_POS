@@ -25,7 +25,7 @@ function response(body: unknown, ok = true, status = 200) {
 
 function renderForm(client: ApiClient) {
   return render(
-    <PosProvider client={client}>
+    <PosProvider client={client} demoCatalogEnabled>
       <ProductFormScreen />
     </PosProvider>,
   );

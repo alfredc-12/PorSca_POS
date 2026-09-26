@@ -11,7 +11,7 @@ import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 export default function InventoryScreen() {
-  const { inventoryProducts, inventoryState, inventoryError, refreshInventory } = usePos();
+  const { inventoryProducts, inventoryState, inventoryError, inventoryUsingFallback, refreshInventory } = usePos();
   const [query, setQuery] = useState('');
   const responsive = useResponsive();
 
@@ -69,7 +69,7 @@ export default function InventoryScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryState === 'unavailable' ? 'Offline • Demo fallback' : inventoryState === 'loading' ? 'Checking Laravel…' : 'Laravel inventory'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryUsingFallback ? 'Offline • Demo fallback' : inventoryState === 'unavailable' ? 'Offline • Laravel required' : inventoryState === 'loading' ? 'Checking Laravel…' : 'Laravel inventory'}</Text>
         </View>
       </View>
 
@@ -81,7 +81,7 @@ export default function InventoryScreen() {
         <DataState
           kind="unavailable"
           title="Laravel inventory unavailable"
-          message={inventoryError ?? 'The API could not be reached. The offline demo inventory is shown below.'}
+          message={inventoryError ?? 'The API could not be reached. Inventory is unchanged; nothing was substituted.'}
           actionLabel="Retry inventory"
           onAction={() => void refreshInventory()}
         />

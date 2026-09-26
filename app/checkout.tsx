@@ -8,6 +8,8 @@ import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { cashChange, paymentError } from '@/src/domain/pos';
+import { saleFailureCopy } from '@/src/domain/checkout';
+import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
@@ -18,7 +20,8 @@ export default function CheckoutScreen() {
   const {
     total,
     cart,
-    clearCart,
+    apiConfigured,
+    resetCart,
     completeCashSale,
     startQrPhPayment,
     refreshQrPhPayment,
@@ -42,6 +45,14 @@ export default function CheckoutScreen() {
 
   const finishCash = async () => {
     setCashError(undefined);
+    // Strict online: no sale can be recorded without Laravel, so a stale or
+    // deep-linked checkout can never fall through to a local sale (defect F1).
+    if (!apiConfigured) {
+      const message = OFFLINE_COPY.checkoutNotConfigured;
+      setCashError(message);
+      Alert.alert('Unable to complete sale', message);
+      return;
+    }
     if (!cashResult.sufficient) {
       const message = `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`;
       setCashError(message);
@@ -61,16 +72,14 @@ export default function CheckoutScreen() {
       Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
     } catch (error) {
       const apiError = error instanceof ApiClientError ? error : undefined;
-      const insufficientStock = apiError?.code === 'insufficient_stock' || apiError?.status === 409;
-      const insufficientCash = apiError?.code === 'insufficient_cash';
-      const title = insufficientStock ? 'Insufficient stock' : insufficientCash ? 'Insufficient cash' : 'Unable to complete sale';
-      const message = insufficientStock
-        ? `${apiError?.message ?? 'Some items are no longer available.'} Refresh inventory and remove the unavailable item, then try again.`
-        : insufficientCash
-          ? `${apiError?.message ?? 'Cash received is below the amount due.'} Enter more cash and confirm again. Your cart is still here.`
-          : `The sale was not confirmed. ${apiError?.message ?? 'Check your connection and try again.'} Your cart is still here so you can retry safely.`;
-      setCashError(message);
-      Alert.alert(title, message);
+      const failure = saleFailureCopy({
+        status: apiError?.status,
+        code: apiError?.code,
+        message: apiError?.message,
+        details: apiError?.details,
+      });
+      setCashError(failure.message);
+      Alert.alert(failure.title, failure.message);
     } finally {
       setCashSubmitting(false);
     }
@@ -88,7 +97,7 @@ export default function CheckoutScreen() {
       setQrStatus('paid');
       if (handledPaidPayment.current !== payment.id) {
         handledPaidPayment.current = payment.id;
-        clearCart();
+        resetCart();
         Alert.alert(
           'Payment recorded',
           `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by Laravel.`,
@@ -99,7 +108,7 @@ export default function CheckoutScreen() {
       setQrStatus('verification');
       setQrError(verificationMessage(error));
     }
-  }, [clearCart, confirmQrPhPayment]);
+  }, [confirmQrPhPayment, resetCart]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (qrBusyRef.current) return;
@@ -167,6 +176,24 @@ export default function CheckoutScreen() {
           <Text style={styles.emptyTitle}>The cart is empty</Text>
           <Text style={styles.emptyBody}>Return to the POS and add a product before starting payment.</Text>
           <AppButton testID="return-to-pos" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
+        </View>
+      </Screen>
+    );
+  }
+
+  // The POS already refuses to proceed offline, but this route can also be
+  // reached by a deep link or a stale navigation. Block it here too so no
+  // checkout path exists without Laravel (defect F1).
+  if (!apiConfigured) {
+    return (
+      <Screen title="Checkout" subtitle="Laravel is not reachable." back>
+        <View style={styles.emptyCard}>
+          <View style={styles.emptyIcon}><Ionicons name="cloud-offline-outline" size={36} color={colors.warning} /></View>
+          <Text style={styles.emptyTitle}>No sale can be recorded</Text>
+          <Text testID="checkout-offline-notice" accessibilityRole="alert" style={styles.emptyBody}>
+            {OFFLINE_COPY.checkoutNotConfigured} The cart has been kept; return to the POS, connect to the Laravel API, and start payment again.
+          </Text>
+          <AppButton testID="return-to-pos-offline" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
       </Screen>
     );

@@ -43,9 +43,10 @@ function setContext(overrides: Record<string, unknown> = {}) {
   mockUsePos.mockReturnValue({
     total: 35,
     cart,
+    apiConfigured: true,
     completeSale: jest.fn(),
     completeCashSale: jest.fn().mockResolvedValue(sale),
-    clearCart: jest.fn(),
+    resetCart: jest.fn(),
     startQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     refreshQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     cancelQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status: 'cancelled' }),
@@ -110,6 +111,20 @@ describe('CheckoutScreen cash states', () => {
     actions[0].onPress?.();
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/transactions');
   });
+
+  it('blocks checkout entirely when Laravel is not configured, even in demo mode', () => {
+    const completeCashSale = jest.fn();
+    setContext({ apiConfigured: false, completeCashSale });
+    const view = render(<CheckoutScreen />);
+
+    // A deep link or stale navigation to this route cannot record a local sale
+    // (defect F1).
+    expect(view.getByTestId('checkout-offline-notice')).toHaveTextContent(/No sale was recorded and stock was not changed/);
+    expect(view.queryByTestId('cash-received-input')).toBeNull();
+    expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
+    expect(view.queryByTestId('checkout-payment-qrph')).toBeNull();
+    expect(completeCashSale).not.toHaveBeenCalled();
+  });
 });
 
 describe('CheckoutScreen Laravel QR Ph states', () => {
@@ -150,24 +165,24 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     ['cancelled', 'Payment was cancelled. No sale was recorded and stock was not changed.'],
     ['expired', 'Payment expired. Start a new QR Ph payment; stock was not changed.'],
   ])('shows the %s state without completing a sale', async (status, message) => {
-    const clearCart = jest.fn();
-    setContext({ startQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status }), clearCart });
+    const resetCart = jest.fn();
+    setContext({ startQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status }), resetCart });
     const view = await openQrCheckout();
 
     expect(view.getByText(message)).toBeTruthy();
     expect(view.getByTestId('retry-qr-payment')).toBeTruthy();
-    expect(clearCart).not.toHaveBeenCalled();
+    expect(resetCart).not.toHaveBeenCalled();
   });
 
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
     const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
-    const clearCart = jest.fn();
-    setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment, clearCart });
+    const resetCart = jest.fn();
+    setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment, resetCart });
     await openQrCheckout();
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(paidPayment);
-    expect(clearCart).toHaveBeenCalledTimes(1);
+    expect(resetCart).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by Laravel'), expect.any(Array));
   });
 

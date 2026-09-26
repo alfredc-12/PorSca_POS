@@ -38,6 +38,13 @@ Cash sale requests contain `idempotencyKey`, `paymentMethod: "cash"`, `cashRecei
 
 Completed cash sales are loaded for the Transactions screen with `GET /sales?per_page=100`. Each sale includes `id`, `status: "completed"`, `payment_method`, `total_amount`, `cash_received`, `change_amount`, `completed_at`, and item price snapshots. The mobile client normalizes the wire amounts to pesos and displays the completed state, payment method, amount received, and change.
 
+### Mobile client behaviour on these endpoints (no contract change)
+
+- **Barcode canonicalisation.** iOS reports UPC-A as EAN-13 with a leading zero, so `getProductByBarcode()` tries the EAN-13 leading-zero form of a 12-digit symbol and the 12-digit form of a leading-zero EAN-13 symbol. The second attempt happens only after a `404`. The stored barcode is untouched; the alternates live in the mobile client.
+- **Search shape.** A query matching `^\d{8,64}$` is an exact lookup and is sent as `?barcode=`; anything else is sent as `?search=`. The offline filter uses the same predicate and the same name-only matching, so online and offline return the same rows for text and for short numeric queries. Search requests are debounced by 280 ms with one in-flight read per query; a repeated same-query invocation shares that read instead of discarding it.
+- **Pre-checkout revalidation.** Before a cart is handed to checkout the client re-reads each line with `GET /products/:id` and compares price and stock with the cart snapshot. A `404` marks that line as no longer in the catalog. Each result carries a cart signature: if the cart changes while the lines are being read (or while the review is open) the client re-reads the cart and never applies a stale review. Laravel remains the pricing authority, and `POST /sales/checkout` is still the only way a sale is recorded.
+- **Cash retry safety.** An idempotency key is bound to the exact mobile payload, per-line price included. A plain retry after a transport failure reuses the key. If the payload changed after an unacknowledged attempt, the client looks the earlier idempotency key up in `GET /sales` and refuses to send a revised sale until that receipt is resolved, so a repriced retry can never replay the earlier sale.
+
 QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`); Laravel recomputes the amount from current prices. Payment responses contain `id`, `status` (`pending`, `paid`, `failed`, `cancelled`, or `expired`), `amount`, and the provider QR payload when available.
 
 ## Safety rules

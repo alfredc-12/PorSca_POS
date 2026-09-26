@@ -25,25 +25,35 @@ export function calculateCartTotal(cart: CartLine[]) {
   return pesos(cart.reduce((sum, line) => sum + cents(line.product.price) * line.quantity, 0));
 }
 
+/**
+ * True when a search query is an exact barcode lookup. This is the same shape
+ * the API's `?barcode=` filter accepts, so the online and offline paths agree on
+ * what a numeric query means (defect G7).
+ */
+export function isBarcodeQuery(query: string) {
+  return /^\d{8,64}$/.test(query.trim());
+}
+
 export function searchProducts(products: Product[], query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return products;
-  return products.filter((product) =>
-    product.name.toLowerCase().includes(normalized) ||
-    product.barcode.includes(normalized) ||
-    (product.category ?? '').toLowerCase().includes(normalized),
-  );
+  // A barcode-shaped query is an exact lookup, matching `?barcode=` on the
+  // server. Anything else is a name search: the documented Laravel `?search=`
+  // filter is case-insensitive by name, so matching barcode or category offline
+  // as well would show rows the online search can never return (defect F5).
+  if (isBarcodeQuery(normalized)) return products.filter((product) => product.barcode === normalized);
+  return products.filter((product) => product.name.toLowerCase().includes(normalized));
 }
 
 export function addProductToCart(cart: CartLine[], product: Product): CartChange {
   if (product.stock <= 0) {
-    return { ok: false, cart, message: `${product.name} is out of stock.` };
+    return { ok: false, cart, message: `${product.name} has no stock left. Restock it from Inventory before selling it.` };
   }
 
   const existing = cart.find((line) => line.product.id === product.id);
   const currentQuantity = existing?.quantity ?? 0;
   if (currentQuantity >= product.stock) {
-    return { ok: false, cart, message: 'No more stock is available for this item.' };
+    return { ok: false, cart, message: `Only ${product.stock} of ${product.name} in stock, and this cart already has ${currentQuantity}. Reduce the quantity before adding more.` };
   }
 
   if (existing) {

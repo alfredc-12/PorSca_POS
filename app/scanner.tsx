@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -7,15 +7,39 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/src/components/AppButton';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
+import { BarcodeScanOutcome, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
+
+/**
+ * How long the added confirmation stays up before the scanner returns to the
+ * cart on its own. The cashier can tap it to return immediately.
+ */
+export const ADDED_CONFIRMATION_MS = 1200;
 
 export default function ScannerScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const inventoryMode = mode === 'inventory';
   const [permission, requestPermission] = useCameraPermissions();
-  const [locked, setLocked] = useState(false);
-  const [lookupBusy, setLookupBusy] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
+  const resolve = inventoryMode ? lookupProductByBarcode : addByBarcode;
+  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve, cameraReady });
+
+  const foundProduct = outcome?.kind === 'found' ? outcome.product : undefined;
+
+  // An inventory scan opens the matching product, which is the existing path.
+  useEffect(() => {
+    if (inventoryMode && foundProduct) {
+      router.replace({ pathname: '/product-form', params: { id: foundProduct.id } });
+    }
+  }, [foundProduct, inventoryMode]);
+
+  // A POS scan adds the product immediately and confirms it in place.
+  useEffect(() => {
+    if (inventoryMode || outcome?.kind !== 'found') return;
+    const timer = setTimeout(() => router.back(), ADDED_CONFIRMATION_MS);
+    return () => clearTimeout(timer);
+  }, [inventoryMode, outcome]);
 
   if (!permission) return <View style={styles.root} />;
 
@@ -32,54 +56,7 @@ export default function ScannerScreen() {
     );
   }
 
-  const handleBarcode = async (data: string) => {
-    setLocked(true);
-    setLookupBusy(true);
-
-    if (inventoryMode) {
-      const result = await lookupProductByBarcode(data);
-      setLookupBusy(false);
-      if (result.ok && result.product) {
-        const productId = result.product.id;
-        if (result.usingFallback) {
-          Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [
-            { text: 'Continue', onPress: () => router.replace({ pathname: '/product-form', params: { id: productId } }) },
-          ]);
-        } else {
-          router.replace({ pathname: '/product-form', params: { id: result.product.id } });
-        }
-        return;
-      }
-      if (result.status === 'unavailable') {
-        Alert.alert('API unavailable', result.message, [
-          { text: 'Try again', onPress: () => setLocked(false) },
-          { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
-        ]);
-        return;
-      }
-      Alert.alert('Barcode not in inventory', 'This barcode was not found in Laravel inventory. You can scan again or add it as a new product.', [
-        { text: 'Scan again', onPress: () => setLocked(false) },
-        { text: 'Add product', onPress: () => router.replace({ pathname: '/product-form', params: { barcode: data } }) },
-      ]);
-      return;
-    }
-
-    const result = await addByBarcode(data);
-    setLookupBusy(false);
-    if (result.ok) {
-      if (result.usingFallback) {
-        Alert.alert('API unavailable', `${result.message} The offline demo catalog was used.`, [{ text: 'Continue', onPress: () => router.back() }]);
-      } else {
-        router.back();
-      }
-    } else {
-      const title = result.status === 'unavailable' ? 'API unavailable' : result.status === 'not-found' ? 'Product not found' : 'Unable to add product';
-      Alert.alert(title, result.message, [
-        { text: 'Try again', onPress: () => setLocked(false) },
-        { text: 'Cancel', style: 'cancel', onPress: () => router.back() },
-      ]);
-    }
-  };
+  const card = inventoryMode && outcome?.kind === 'found' ? undefined : outcome;
 
   return (
     <View style={styles.root}>
@@ -87,7 +64,8 @@ export default function ScannerScreen() {
         style={StyleSheet.absoluteFill}
         facing="back"
         barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'qr'] }}
-        onBarcodeScanned={locked ? undefined : ({ data }) => handleBarcode(data)}
+        onCameraReady={() => setCameraReady(true)}
+        onBarcodeScanned={scanning ? ({ data }) => handleBarcode(data) : undefined}
       />
       <View style={styles.tint} pointerEvents="none" />
       <SafeAreaView style={styles.safeOverlay} edges={['top', 'bottom']}>
@@ -102,24 +80,120 @@ export default function ScannerScreen() {
           <View style={styles.closeSpacer} />
         </View>
 
-        <View style={styles.centerArea} pointerEvents="none">
-          <View style={styles.frame}>
-            <View style={[styles.corner, styles.topLeft]} />
-            <View style={[styles.corner, styles.topRight]} />
-            <View style={[styles.corner, styles.bottomLeft]} />
-            <View style={[styles.corner, styles.bottomRight]} />
-            <View style={styles.scanLine} />
+        {card ? (
+          <ScanOutcomeCard
+            outcome={card}
+            inventoryMode={inventoryMode}
+            onScanAgain={rearm}
+            onClose={() => router.back()}
+          />
+        ) : (
+          <View style={styles.centerArea} pointerEvents="none">
+            <View style={styles.frame}>
+              <View style={[styles.corner, styles.topLeft]} />
+              <View style={[styles.corner, styles.topRight]} />
+              <View style={[styles.corner, styles.bottomLeft]} />
+              <View style={[styles.corner, styles.bottomRight]} />
+              <View style={styles.scanLine} />
+            </View>
+            <Text style={styles.title}>{busy ? 'Looking up barcode…' : !cameraReady ? 'Starting the camera…' : 'Place the barcode inside the frame'}</Text>
+            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+            {busy || !cameraReady ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
           </View>
-          <Text style={styles.title}>{lookupBusy ? 'Looking up barcode…' : 'Place the barcode inside the frame'}</Text>
-          <Text style={styles.caption}>{lookupBusy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
-          {lookupBusy ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
-        </View>
+        )}
 
         <View style={styles.bottomCard} pointerEvents="none">
           <Ionicons name="shield-checkmark-outline" size={18} color={colors.primary} />
           <Text style={styles.bottomText}>Barcode scanning only • No photo is saved</Text>
         </View>
       </SafeAreaView>
+    </View>
+  );
+}
+
+function ScanOutcomeCard({
+  outcome,
+  inventoryMode,
+  onScanAgain,
+  onClose,
+}: {
+  outcome: BarcodeScanOutcome;
+  inventoryMode: boolean;
+  onScanAgain: () => void;
+  onClose: () => void;
+}) {
+  const added = outcome.kind === 'found' && !inventoryMode;
+  const inventoryMissing = inventoryMode && (outcome.kind === 'not-found' || outcome.kind === 'invalid');
+  const tone = added ? 'success' : inventoryMissing ? 'warning' : outcome.kind === 'found' ? 'success' : 'warning';
+  const icon = added
+    ? 'checkmark-circle'
+    : outcome.kind === 'out-of-stock' || outcome.kind === 'limit-reached'
+      ? 'alert-circle'
+      : outcome.kind === 'unavailable'
+        ? 'cloud-offline'
+        : inventoryMissing
+          ? 'barcode-outline'
+          : 'close-circle';
+
+  return (
+    <View style={styles.resultArea}>
+      <Pressable
+        accessibilityRole={added ? 'button' : undefined}
+        accessibilityLabel={added ? 'Product added to cart. Return to the cart' : undefined}
+        disabled={!added}
+        onPress={onClose}
+        style={[styles.resultCard, tone === 'success' ? styles.resultCardSuccess : styles.resultCardWarning]}
+      >
+        <View style={[styles.resultIcon, tone === 'success' ? styles.resultIconSuccess : styles.resultIconWarning]}>
+          <Ionicons name={icon} size={32} color={tone === 'success' ? colors.primary : colors.warning} />
+        </View>
+        <Text testID="scanner-outcome-title" accessibilityLiveRegion="polite" style={styles.resultTitle}>{outcome.title}</Text>
+        {outcome.product ? <Text numberOfLines={2} style={styles.resultProduct}>{outcome.product.name}</Text> : null}
+        {outcome.product ? (
+          <Text style={styles.resultMeta}>
+            ₱{outcome.product.price.toFixed(2)}
+            {outcome.quantity ? ` • ${outcome.quantity} in this sale` : ''}
+            {` • ${outcome.product.stock} in stock`}
+          </Text>
+        ) : null}
+        {outcome.matchedBarcode && outcome.matchedBarcode !== outcome.barcode ? (
+          <Text style={styles.resultMeta}>Scanned {outcome.barcode} • matched {outcome.matchedBarcode}</Text>
+        ) : null}
+        <Text testID="scanner-outcome-message" style={styles.resultMessage}>{outcome.message}</Text>
+        {outcome.usingFallback ? (
+          <Text style={styles.resultWarning}>The offline demo catalog was used. Laravel was not consulted.</Text>
+        ) : null}
+      </Pressable>
+
+      <View style={styles.resultActions}>
+        {inventoryMissing ? (
+          <>
+            <AppButton testID="scanner-scan-again" label="Scan again" onPress={onScanAgain} style={styles.resultButton} />
+            <AppButton
+              testID="scanner-add-product"
+              label="Add product"
+              variant="secondary"
+              onPress={() => router.replace({ pathname: '/product-form', params: { barcode: outcome.barcode } })}
+              style={styles.resultButton}
+            />
+          </>
+        ) : (
+          <>
+            {!added ? (
+              <AppButton testID="scanner-scan-again" label="Scan again" onPress={onScanAgain} style={styles.resultButton} />
+            ) : null}
+            <AppButton
+              testID={added ? 'scanner-done' : 'scanner-back-to-cart'}
+              label={added ? 'Done' : inventoryMode ? 'Back to inventory' : 'Back to cart'}
+              variant={added ? 'primary' : 'secondary'}
+              onPress={() => router.back()}
+              style={styles.resultButton}
+            />
+          </>
+        )}
+      </View>
+
+      {added ? <Text style={styles.resultHint}>Returning to the cart…</Text> : null}
     </View>
   );
 }
@@ -144,6 +218,21 @@ const styles = StyleSheet.create({
   title: { color: colors.white, fontSize: typography.title, fontWeight: '900', textAlign: 'center' },
   caption: { color: '#E8ECE9', fontSize: typography.label, textAlign: 'center', marginTop: spacing.sm, lineHeight: 20, maxWidth: 380 },
   lookupIndicator: { marginTop: spacing.md },
+  resultArea: { gap: spacing.md },
+  resultCard: { borderRadius: radius.lg, borderWidth: 1, padding: spacing.xl, alignItems: 'center', gap: 6 },
+  resultCardSuccess: { backgroundColor: 'rgba(255,252,248,0.97)', borderColor: colors.primarySoft },
+  resultCardWarning: { backgroundColor: 'rgba(255,252,248,0.97)', borderColor: colors.warningSoft },
+  resultIcon: { width: 64, height: 64, borderRadius: 21, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
+  resultIconSuccess: { backgroundColor: colors.primarySoft },
+  resultIconWarning: { backgroundColor: colors.warningSoft },
+  resultTitle: { color: colors.text, fontSize: typography.heading, fontWeight: '900', textAlign: 'center' },
+  resultProduct: { color: colors.text, fontSize: typography.title, fontWeight: '800', textAlign: 'center' },
+  resultMeta: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
+  resultMessage: { color: colors.text, fontSize: typography.label, lineHeight: 21, textAlign: 'center', marginTop: spacing.xs },
+  resultWarning: { color: colors.warning, fontSize: typography.caption, fontWeight: '700', textAlign: 'center', marginTop: spacing.xs },
+  resultActions: { gap: spacing.sm },
+  resultButton: { alignSelf: 'stretch' },
+  resultHint: { color: '#E8ECE9', fontSize: typography.caption, textAlign: 'center', fontWeight: '600' },
   bottomCard: { minHeight: 52, marginBottom: spacing.md, borderRadius: radius.md, backgroundColor: 'rgba(255,252,248,0.94)', paddingHorizontal: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   bottomText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
   permissionCard: { minHeight: 330, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, padding: spacing.xl, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
