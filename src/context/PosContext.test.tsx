@@ -55,6 +55,20 @@ function QrHarness() {
   );
 }
 
+function UndoHarness() {
+  const { products, cart, cartUndo, addProductChecked, clearCart, undoClearCart, beginCheckout } = usePos();
+
+  return (
+    <View>
+      <Button testID="undo-add" title="Add" onPress={() => addProductChecked(products[0])} />
+      <Button testID="undo-clear" title="Clear" onPress={() => clearCart()} />
+      <Button testID="undo-undo" title="Undo" onPress={() => undoClearCart()} />
+      <Button testID="undo-begin" title="Begin" onPress={() => beginCheckout()} />
+      <Text>{`cart:${cart.length} undo:${cartUndo ? cartUndo.lineCount : 0}`}</Text>
+    </View>
+  );
+}
+
 function makeClient(createSale: jest.Mock) {
   return {
     isConfigured: true,
@@ -88,6 +102,30 @@ function makeQrClient(createQrPhPayment: jest.Mock) {
 }
 
 const pendingPayment: Payment = { id: 'payment-1', status: 'pending', amount: 2500 };
+
+describe('PosProvider cart undo', () => {
+  it('restores a cleared cart, then refuses to restore one a checkout has taken over', async () => {
+    const { getByTestId, getByText } = render(
+      <PosProvider client={makeClient(jest.fn())}><UndoHarness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('undo-add'));
+    fireEvent.press(getByTestId('undo-clear'));
+    await waitFor(() => expect(getByText('cart:0 undo:1')).toBeTruthy());
+
+    fireEvent.press(getByTestId('undo-undo'));
+    await waitFor(() => expect(getByText('cart:1 undo:0')).toBeTruthy());
+
+    fireEvent.press(getByTestId('undo-clear'));
+    await waitFor(() => expect(getByText('cart:0 undo:1')).toBeTruthy());
+
+    fireEvent.press(getByTestId('undo-begin'));
+    await waitFor(() => expect(getByText('cart:0 undo:0')).toBeTruthy());
+
+    fireEvent.press(getByTestId('undo-undo'));
+    expect(getByText('cart:0 undo:0')).toBeTruthy();
+  });
+});
 
 describe('PosProvider Laravel cash checkout', () => {
   it('uses one idempotent request for concurrent retries and refreshes backend history/inventory', async () => {

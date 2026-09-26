@@ -18,7 +18,7 @@ export default function CheckoutScreen() {
   const {
     total,
     cart,
-    clearCart,
+    resetCart,
     completeCashSale,
     startQrPhPayment,
     refreshQrPhPayment,
@@ -88,7 +88,7 @@ export default function CheckoutScreen() {
       setQrStatus('paid');
       if (handledPaidPayment.current !== payment.id) {
         handledPaidPayment.current = payment.id;
-        clearCart();
+        resetCart();
         Alert.alert(
           'Payment recorded',
           `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by Laravel.`,
@@ -99,7 +99,7 @@ export default function CheckoutScreen() {
       setQrStatus('verification');
       setQrError(verificationMessage(error));
     }
-  }, [clearCart, confirmQrPhPayment]);
+  }, [confirmQrPhPayment, resetCart]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (qrBusyRef.current) return;

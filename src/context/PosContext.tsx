@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
-import { addProductToCart, calculateCartTotal, CartChange, deductStock, decrementCartLine, searchProducts as searchLocalProducts } from '@/src/domain/pos';
+import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
+import { calculateCartTotal, CartChange, deductStock, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
 
@@ -30,16 +31,22 @@ type PosContextValue = {
   inventoryError?: string;
   inventoryUsingFallback: boolean;
   cart: CartLine[];
+  /** Clear All undo, present only while the five-second window is open. */
+  cartUndo?: { lineCount: number; expiresAt: number };
   sales: Sale[];
   salesState: ReadState;
   salesError?: string;
   total: number;
   addByBarcode: (barcode: string) => Promise<BarcodeLookupResult>;
   lookupProductByBarcode: (barcode: string) => Promise<BarcodeLookupResult>;
-  addProduct: (product: Product) => void;
   addProductChecked: (product: Product) => CartChange;
+  incrementProduct: (productId: string) => CartChange;
   decrementProduct: (productId: string) => void;
   clearCart: () => void;
+  undoClearCart: () => void;
+  resetCart: () => void;
+  /** Called when the cashier proceeds: drops any open Clear All undo buffer. */
+  beginCheckout: () => void;
   updateProduct: (product: Product) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
   completeCashSale: (cashReceived: number) => Promise<Sale | null>;
@@ -66,7 +73,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const [inventoryState, setInventoryState] = useState<ReadState>('idle');
   const [inventoryError, setInventoryError] = useState<string>();
   const [inventoryUsingFallback, setInventoryUsingFallback] = useState(false);
-  const [cart, setCart] = useState<CartLine[]>([]);
+  const [cartState, dispatchCart] = useReducer(cartReducer, emptyCartState);
   const [sales, setSales] = useState<Sale[]>([]);
   const [salesState, setSalesState] = useState<ReadState>('idle');
   const [salesError, setSalesError] = useState<string>();
@@ -78,12 +85,35 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const qrRequests = useRef(new Map<string, Promise<Payment>>());
   const qrSettlements = useRef(new Map<string, Promise<void>>());
   const productsRef = useRef(products);
+  /**
+   * The reducer is the single cart authority. The ref mirrors its state
+   * synchronously so a guarded mutation can be answered in the same tick that
+   * asks for it, and so two taps in one tick cannot read the same cart twice.
+   * Every mutation goes through `commitCart`; nothing else calls `dispatchCart`.
+   */
+  const cartRef = useRef(cartState);
 
   useEffect(() => {
     productsRef.current = products;
   }, [products]);
 
+  const commitCart = useCallback((action: CartAction): CartReduction => {
+    const reduction = reduceCart(cartRef.current, action);
+    cartRef.current = reduction.state;
+    dispatchCart(action);
+    return reduction;
+  }, []);
+
+  const cart = cartState.lines;
   const total = useMemo(() => calculateCartTotal(cart), [cart]);
+
+  // Hide the Clear All undo once its window closes.
+  const undoExpiresAt = cartState.undo?.expiresAt;
+  useEffect(() => {
+    if (undoExpiresAt === undefined) return;
+    const timer = setTimeout(() => commitCart({ type: 'discard-undo' }), Math.max(undoExpiresAt - Date.now(), 0));
+    return () => clearTimeout(timer);
+  }, [commitCart, undoExpiresAt]);
 
   const rememberProducts = useCallback((remoteProducts: Product[]) => {
     setProducts((current) => mergeProducts(current, remoteProducts));
@@ -95,15 +125,13 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     setSearchResults((current) => mergeProducts(current, [product]));
   }, []);
 
-  const addProduct = (product: Product) => {
-    setCart((current) => addProductToCart(current, product).cart);
-  };
-
   const addProductChecked = useCallback((product: Product) => {
-    const result = addProductToCart(cart, product);
-    setCart(result.cart);
-    return result;
-  }, [cart]);
+    return commitCart({ type: 'add', product }).change ?? { ok: true, cart: cartRef.current.lines };
+  }, [commitCart]);
+
+  const incrementProduct = useCallback((productId: string) => {
+    return commitCart({ type: 'increment', productId }).change ?? { ok: true, cart: cartRef.current.lines };
+  }, [commitCart]);
 
   const lookupProductByBarcode = useCallback(async (barcode: string): Promise<BarcodeLookupResult> => {
     const normalizedBarcode = barcode.trim();
@@ -168,15 +196,36 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     return { ...lookup, message: `${product.name} added to cart.`, quantity: added?.quantity ?? 1 };
   }, [addProductChecked, lookupProductByBarcode]);
 
-  const decrementProduct = (productId: string) => {
-    setCart((current) => decrementCartLine(current, productId));
-  };
+  const decrementProduct = useCallback((productId: string) => {
+    commitCart({ type: 'decrement', productId });
+  }, [commitCart]);
 
-  const clearCart = () => setCart([]);
+  /** Clear All. Keeps a five-second undo buffer instead of asking for confirmation. */
+  const clearCart = useCallback(() => {
+    return commitCart({ type: 'clear', at: Date.now() });
+  }, [commitCart]);
+
+  const undoClearCart = useCallback(() => {
+    return commitCart({ type: 'undo-clear', at: Date.now() });
+  }, [commitCart]);
+
+  /**
+   * A checkout is about to start: drop the undo buffer so an Undo can never
+   * resurrect a cart that has been handed to Laravel.
+   */
+  const beginCheckout = useCallback(() => {
+    commitCart({ type: 'discard-undo' });
+  }, [commitCart]);
+
+  /** Clear after a recorded sale. No undo buffer: the sale is already authoritative. */
+  const resetCart = useCallback(() => {
+    commitCart({ type: 'reset' });
+  }, [commitCart]);
 
   const completeOfflineCashSale = useCallback(() => {
-    if (cart.length === 0) return null;
-    const productsAfterSale = deductStock(products, cart);
+    const lines = cartRef.current.lines;
+    if (lines.length === 0) return null;
+    const productsAfterSale = deductStock(products, lines);
     if (!productsAfterSale) return null;
 
     const sale: Sale = {
@@ -185,16 +234,16 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       total,
       paymentMethod: 'cash',
       status: 'paid',
-      items: cart.map((line) => ({ ...line })),
+      items: lines.map((line) => ({ ...line })),
     };
 
     setProducts(productsAfterSale);
-    setInventoryProducts((current) => deductStock(current, cart) ?? current);
-    setSearchResults((current) => deductStock(current, cart) ?? current);
+    setInventoryProducts((current) => deductStock(current, lines) ?? current);
+    setSearchResults((current) => deductStock(current, lines) ?? current);
     setSales((current) => mergeSales(current, [sale]));
-    setCart([]);
+    commitCart({ type: 'reset' });
     return sale;
-  }, [cart, products, total]);
+  }, [commitCart, products, total]);
 
   const searchProducts = useCallback(async (query: string) => {
     const normalizedQuery = query.trim();
@@ -323,21 +372,26 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   }, [client]);
 
   const completeCashSale = useCallback(async (cashReceived: number) => {
-    if (cart.length === 0) return null;
+    // The cart is about to be handed over; an Undo from the POS screen must not
+    // be able to resurrect it after this point.
+    commitCart({ type: 'discard-undo' });
+
+    const lines = cartRef.current.lines;
+    if (lines.length === 0) return null;
 
     if (!client.isConfigured) {
       return completeOfflineCashSale();
     }
 
     const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
-    const cartSignature = cart.map((line) => `${line.product.id}:${line.quantity}`).join('|');
+    const cartSignature = lines.map((line) => `${line.product.id}:${line.quantity}`).join('|');
     const requestSignature = `${cartSignature}|cash:${cashCents}`;
     const pending = cashRequests.current.get(requestSignature);
     if (pending) return pending;
 
     const idempotencyKey = cashKeys.current.get(requestSignature) ?? createIdempotencyKey();
     cashKeys.current.set(requestSignature, idempotencyKey);
-    const requestCart = cart;
+    const requestCart = lines;
     const requestTotal = total;
     const request = (async () => {
       const sale = await client.createSale({
@@ -353,7 +407,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       });
 
       setSales((current) => mergeSales(current, [sale]));
-      setCart((current) => sameCart(current, requestCart) ? [] : current);
+      if (sameCart(cartRef.current.lines, requestCart)) commitCart({ type: 'reset' });
       cashKeys.current.delete(requestSignature);
 
       // The sale response is authoritative for the receipt. These reads make
@@ -367,17 +421,19 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       () => cashRequests.current.delete(requestSignature),
     );
     return request;
-  }, [cart, client, completeOfflineCashSale, refreshInventory, refreshSales, total]);
+  }, [client, commitCart, completeOfflineCashSale, refreshInventory, refreshSales, total]);
 
   const startQrPhPayment = useCallback(async (forceNew = false) => {
-    if (cart.length === 0) {
+    commitCart({ type: 'discard-undo' });
+    const lines = cartRef.current.lines;
+    if (lines.length === 0) {
       throw new ApiClientError('The cart is empty. Add a product before starting QR Ph payment.');
     }
     if (!client.isConfigured) {
       throw new ApiClientError('Laravel API is not configured. QR Ph payment requires the backend; no sale was recorded.');
     }
 
-    const signature = qrCartSignature(cart);
+    const signature = qrCartSignature(lines);
     if (forceNew) {
       qrKeys.current.delete(signature);
       qrPayments.current.delete(signature);
@@ -390,7 +446,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
 
     const idempotencyKey = qrKeys.current.get(signature) ?? createIdempotencyKey('mobile-qr');
     qrKeys.current.set(signature, idempotencyKey);
-    const requestCart = cart;
+    const requestCart = lines;
     const request = client.createQrPhPayment({
       idempotencyKey,
       items: requestCart.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
@@ -404,7 +460,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     } finally {
       qrRequests.current.delete(signature);
     }
-  }, [cart, client]);
+  }, [client, commitCart]);
 
   const refreshQrPhPayment = useCallback(async (paymentId: string) => {
     if (!client.isConfigured) {
@@ -434,8 +490,8 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         throw new ApiClientError('Laravel confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
       }
       const completedSignature = [...qrPayments.current.entries()].find(([, known]) => known.id === payment.id)?.[0];
-      if (completedSignature) {
-        setCart((current) => qrCartSignature(current) === completedSignature ? [] : current);
+      if (completedSignature && qrCartSignature(cartRef.current.lines) === completedSignature) {
+        commitCart({ type: 'reset' });
       }
     });
     qrSettlements.current.set(payment.id, settlement);
@@ -444,7 +500,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       () => qrSettlements.current.delete(payment.id),
     );
     return settlement;
-  }, [refreshInventory, refreshSales]);
+  }, [commitCart, refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
@@ -504,16 +560,20 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         inventoryError,
         inventoryUsingFallback,
         cart,
+        ...(cartState.undo ? { cartUndo: { lineCount: cartState.undo.lines.length, expiresAt: cartState.undo.expiresAt } } : {}),
         sales,
         salesState,
         salesError,
         total,
         addByBarcode,
         lookupProductByBarcode,
-        addProduct,
         addProductChecked,
+        incrementProduct,
         decrementProduct,
         clearCart,
+        undoClearCart,
+        resetCart,
+        beginCheckout,
         updateProduct,
         createProduct,
         completeCashSale,
