@@ -14,6 +14,8 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
+const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+
 const single: Product = { id: 'single', barcode: '4800000000019', name: 'Sardines 155g', price: 22, stock: 1, category: 'Snacks' };
 const plenty: Product = { id: 'plenty', barcode: '4800000000026', name: 'Instant Coffee 30g', price: 9, stock: 40, category: 'Beverages' };
 
@@ -29,9 +31,34 @@ function SeedButton({ product, label }: { product: Product; label: string }) {
 
 const client = { isConfigured: true } as unknown as ApiClient;
 
-function renderPos() {
+/** A catalog client whose reads drive the pre-checkout revalidation. */
+function catalogClient({
+  products,
+  inventory,
+}: {
+  products: Product[];
+  inventory?: { productId: string; quantity: number; status?: Product['stockStatus'] }[];
+}) {
+  return {
+    isConfigured: true,
+    listProducts: jest.fn().mockResolvedValue(products),
+    listInventory: jest.fn().mockResolvedValue(
+      inventory ?? products.map((product) => ({
+        productId: product.id,
+        sku: product.sku,
+        barcode: product.barcode,
+        productName: product.name,
+        quantity: product.stock,
+        reorderLevel: product.reorderLevel ?? 0,
+        status: product.stockStatus ?? 'in_stock',
+      })),
+    ),
+  } as unknown as ApiClient;
+}
+
+function renderPos(posClient: ApiClient = client) {
   return render(
-    <PosProvider client={client}>
+    <PosProvider client={posClient}>
       <PosScreen />
       <SeedButton product={single} label="seed-single" />
       <SeedButton product={plenty} label="seed-plenty" />
@@ -42,6 +69,7 @@ function renderPos() {
 describe('POS cart consistency', () => {
   beforeEach(() => {
     jest.useRealTimers();
+    router.push.mockReset();
   });
 
   it('surfaces the stock limit on the cart "+" instead of a silent no-op', async () => {
@@ -130,6 +158,9 @@ describe('POS cart consistency', () => {
 });
 
 describe('POS search', () => {
+  beforeEach(() => {
+    router.push.mockReset();
+  });
   it('turns eight keystrokes into at most two catalog reads', async () => {
     jest.useFakeTimers();
     try {
@@ -173,5 +204,112 @@ describe('POS search', () => {
     fireEvent.changeText(view.getByTestId('pos-search-input'), '4800010000011');
 
     await waitFor(() => expect(listProducts).toHaveBeenCalledWith({ barcode: '4800010000011' }));
+  });
+});
+
+describe('POS pre-checkout revalidation', () => {
+  beforeEach(() => {
+    jest.useRealTimers();
+    router.push.mockReset();
+  });
+
+  it('goes straight to checkout when the catalog agrees with the cart', async () => {
+    const view = renderPos(catalogClient({ products: [single, plenty] }));
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));
+    expect(view.queryByTestId('cart-review-sheet')).toBeNull();
+  });
+
+  it('shows a price change and applies the authoritative price before checkout', async () => {
+    const view = renderPos(catalogClient({ products: [{ ...plenty, price: 27 }] }));
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('(2 items)')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(view.getByTestId('cart-review-sheet')).toBeTruthy());
+    expect(view.getByTestId('cart-review-change-price')).toHaveTextContent(/Price changed from ₱9.00 to ₱27.00/);
+    expect(router.push).not.toHaveBeenCalled();
+
+    fireEvent.press(view.getByTestId('cart-review-apply'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));
+    await waitFor(() => expect(view.getAllByText('₱54.00').length).toBeGreaterThan(0));
+  });
+
+  it('blocks a short-stock cart and clamps the quantity when the cashier accepts', async () => {
+    const view = renderPos(catalogClient({ products: [{ ...plenty, stock: 1, stockStatus: 'low_stock' }] }));
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('(2 items)')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(view.getByTestId('cart-review-sheet')).toBeTruthy());
+    expect(view.getByTestId('cart-review-message')).toHaveTextContent(/less stock than the cart asks for/);
+    expect(view.getByTestId('cart-review-change-stock')).toHaveTextContent(/Only 1 left in stock, but this cart has 2/);
+
+    fireEvent.press(view.getByTestId('cart-review-apply'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalled());
+    await waitFor(() => expect(view.getAllByText('₱9.00').length).toBeGreaterThan(0));
+    expect(view.getByText('(1 item)')).toBeTruthy();
+  });
+
+  it('removes a line whose product left the catalog', async () => {
+    const view = renderPos(catalogClient({ products: [plenty] }));
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(view.getByTestId('cart-review-change-removed')).toBeTruthy());
+    expect(view.getByTestId('cart-review-message')).toHaveTextContent(/no longer in the catalog/);
+
+    fireEvent.press(view.getByTestId('cart-review-apply'));
+
+    await waitFor(() => expect(view.queryByText('Sardines 155g')).toBeNull());
+    expect(view.getByText('Instant Coffee 30g')).toBeTruthy();
+  });
+
+  it('keeps the cart and explains itself when prices cannot be confirmed', async () => {
+    const unreachable = {
+      isConfigured: true,
+      listProducts: jest.fn().mockRejectedValue(new Error('offline')),
+      listInventory: jest.fn().mockRejectedValue(new Error('offline')),
+    } as unknown as ApiClient;
+    const view = renderPos(unreachable);
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(view.getByTestId('cart-limit-notice')).toHaveTextContent(/could not be confirmed/));
+    expect(view.getByText('Sardines 155g')).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it('returns to the cart without applying anything when the review is dismissed', async () => {
+    const view = renderPos(catalogClient({ products: [{ ...single, price: 30 }] }));
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+    await waitFor(() => expect(view.getByTestId('cart-review-sheet')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('cart-review-dismiss'));
+
+    await waitFor(() => expect(view.queryByTestId('cart-review-sheet')).toBeNull());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(view.getAllByText('₱22.00').length).toBeGreaterThan(0);
   });
 });

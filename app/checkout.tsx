@@ -8,6 +8,7 @@ import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { cashChange, paymentError } from '@/src/domain/pos';
+import { saleFailureCopy } from '@/src/domain/checkout';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
@@ -61,16 +62,14 @@ export default function CheckoutScreen() {
       Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
     } catch (error) {
       const apiError = error instanceof ApiClientError ? error : undefined;
-      const insufficientStock = apiError?.code === 'insufficient_stock' || apiError?.status === 409;
-      const insufficientCash = apiError?.code === 'insufficient_cash';
-      const title = insufficientStock ? 'Insufficient stock' : insufficientCash ? 'Insufficient cash' : 'Unable to complete sale';
-      const message = insufficientStock
-        ? `${apiError?.message ?? 'Some items are no longer available.'} Refresh inventory and remove the unavailable item, then try again.`
-        : insufficientCash
-          ? `${apiError?.message ?? 'Cash received is below the amount due.'} Enter more cash and confirm again. Your cart is still here.`
-          : `The sale was not confirmed. ${apiError?.message ?? 'Check your connection and try again.'} Your cart is still here so you can retry safely.`;
-      setCashError(message);
-      Alert.alert(title, message);
+      const failure = saleFailureCopy({
+        status: apiError?.status,
+        code: apiError?.code,
+        message: apiError?.message,
+        details: apiError?.details,
+      });
+      setCashError(failure.message);
+      Alert.alert(failure.title, failure.message);
     } finally {
       setCashSubmitting(false);
     }

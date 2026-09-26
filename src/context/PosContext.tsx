@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
+import { CartRevalidation, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, deductStock, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
@@ -47,6 +48,10 @@ type PosContextValue = {
   resetCart: () => void;
   /** Called when the cashier proceeds: drops any open Clear All undo buffer. */
   beginCheckout: () => void;
+  /** Re-read every cart line against the catalog before payment is attempted. */
+  revalidateCart: () => Promise<CartRevalidation>;
+  /** Apply a reconciled cart from the review sheet. */
+  replaceCartLines: (lines: CartLine[]) => void;
   updateProduct: (product: Product) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
   completeCashSale: (cashReceived: number) => Promise<Sale | null>;
@@ -223,6 +228,48 @@ export function PosProvider({ children, client = apiClient }: { children: React.
   const resetCart = useCallback(() => {
     commitCart({ type: 'reset' });
   }, [commitCart]);
+
+  const replaceCartLines = useCallback((lines: CartLine[]) => {
+    commitCart({ type: 'replace-lines', lines });
+  }, [commitCart]);
+
+  /**
+   * The cart is provisional: it stores the price and stock seen when each line
+   * was added. Laravel recomputes the real charge, so this pre-checkout read
+   * shows the cashier any drift before the sale is attempted. No cart mutation
+   * happens here; the review sheet applies the reconciliation only if the
+   * cashier accepts it.
+   */
+  const revalidateCart = useCallback(async (): Promise<CartRevalidation> => {
+    const lines = cartRef.current.lines;
+    const unchanged = (status: 'offline' | 'unavailable', message: string): CartRevalidation => ({
+      status, message, changes: [], lines, appliedLines: lines,
+    });
+
+    if (lines.length === 0) {
+      return { status: 'ready', message: 'The cart is empty.', changes: [], lines: [], appliedLines: [] };
+    }
+
+    if (!client.isConfigured) {
+      return unchanged('offline', 'Prices and stock cannot be confirmed because the Laravel API is not configured. Connect to the API and try again; the cart is unchanged.');
+    }
+
+    try {
+      const [remoteProducts, remoteInventory] = await Promise.all([client.listProducts(), client.listInventory()]);
+      const inventoryById = new Map(remoteInventory.map((item) => [item.productId, item]));
+      // Inventory is the authoritative stock source; the catalog carries price.
+      const authoritative = remoteProducts.map((product) => {
+        const stockItem = inventoryById.get(product.id);
+        return stockItem
+          ? { ...product, stock: stockItem.quantity, stockStatus: stockItem.status }
+          : product;
+      });
+      rememberProducts(authoritative);
+      return reconcileCart(lines, authoritative);
+    } catch {
+      return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+    }
+  }, [client, rememberProducts]);
 
   const completeOfflineCashSale = useCallback(() => {
     const lines = cartRef.current.lines;
@@ -587,6 +634,8 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         undoClearCart,
         resetCart,
         beginCheckout,
+        revalidateCart,
+        replaceCartLines,
         updateProduct,
         createProduct,
         completeCashSale,

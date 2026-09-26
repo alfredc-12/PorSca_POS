@@ -6,6 +6,8 @@ import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
+import { CartReviewSheet } from '@/src/components/CartReviewSheet';
+import { CartRevalidation } from '@/src/domain/revalidation';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
@@ -28,10 +30,15 @@ export default function PosScreen() {
     searchProducts,
     clearCart,
     undoClearCart,
+    beginCheckout,
+    revalidateCart,
+    replaceCartLines,
   } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
+  const [review, setReview] = useState<CartRevalidation>();
+  const [checkingPrices, setCheckingPrices] = useState(false);
   const responsive = useResponsive();
   const debouncedQuery = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const searchPending = query.trim() !== debouncedQuery.trim();
@@ -58,10 +65,41 @@ export default function PosScreen() {
     return result.ok;
   }, [incrementProduct]);
 
-  const proceed = () => {
-    if (!cart.length) return;
+  const openCheckout = useCallback(() => {
+    beginCheckout();
     router.push({ pathname: '/checkout', params: { method } });
-  };
+  }, [beginCheckout, method]);
+
+  /**
+   * Proceed re-reads the cart against the catalog first. A clean cart goes
+   * straight to checkout; anything that changed is shown in the review sheet so
+   * the cashier sees the delta before Laravel recomputes the charge.
+   */
+  const proceed = useCallback(async () => {
+    if (!cart.length || checkingPrices) return;
+    setCartNotice(undefined);
+    setCheckingPrices(true);
+    try {
+      const result = await revalidateCart();
+      if (result.status === 'ready') {
+        openCheckout();
+        return;
+      }
+      if (result.status === 'offline' || result.status === 'unavailable') {
+        setCartNotice(result.message);
+        return;
+      }
+      setReview(result);
+    } finally {
+      setCheckingPrices(false);
+    }
+  }, [cart.length, checkingPrices, openCheckout, revalidateCart]);
+
+  const applyReview = useCallback(() => {
+    replaceCartLines(review?.appliedLines ?? []);
+    setReview(undefined);
+    openCheckout();
+  }, [openCheckout, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
 
@@ -273,17 +311,19 @@ export default function PosScreen() {
         <Pressable
           testID="proceed-to-payment"
           accessibilityLabel="Proceed to payment"
-          disabled={!cart.length}
-          onPress={proceed}
+          disabled={!cart.length || checkingPrices}
+          onPress={() => void proceed()}
           style={({ pressed }) => [
             styles.proceedButton,
             { minHeight: responsive.heightValue(0.071, 54, 62) },
-            !cart.length && styles.proceedDisabled,
+            (!cart.length || checkingPrices) && styles.proceedDisabled,
             pressed && cart.length > 0 && { opacity: 0.86 },
           ]}
         >
           <Ionicons name="lock-closed" size={responsive.s(20)} color={colors.white} />
-          <Text style={[styles.proceedText, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>Proceed to Payment</Text>
+          <Text style={[styles.proceedText, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>
+            {checkingPrices ? 'Checking prices & stock…' : 'Proceed to Payment'}
+          </Text>
           <Ionicons name="arrow-forward" size={responsive.s(23)} color={colors.white} />
         </Pressable>
         <View style={styles.secureRow}>
@@ -293,6 +333,13 @@ export default function PosScreen() {
           <Text style={[styles.paymongo, { fontSize: responsive.font(11) }]}>PayMongo</Text>
         </View>
       </View>
+
+      <CartReviewSheet
+        visible={Boolean(review)}
+        revalidation={review}
+        onApply={applyReview}
+        onDismiss={() => setReview(undefined)}
+      />
     </Screen>
   );
 }
