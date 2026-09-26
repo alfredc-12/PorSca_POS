@@ -106,7 +106,7 @@ const pendingPayment: Payment = { id: 'payment-1', status: 'pending', amount: 25
 describe('PosProvider cart undo', () => {
   it('restores a cleared cart, then refuses to restore one a checkout has taken over', async () => {
     const { getByTestId, getByText } = render(
-      <PosProvider client={makeClient(jest.fn())}><UndoHarness /></PosProvider>,
+      <PosProvider client={makeClient(jest.fn())} demoCatalogEnabled><UndoHarness /></PosProvider>,
     );
 
     fireEvent.press(getByTestId('undo-add'));
@@ -132,7 +132,7 @@ describe('PosProvider Laravel cash checkout', () => {
     const createSale = jest.fn().mockResolvedValue(sale);
     const client = makeClient(createSale);
     const { getByTestId, getByText } = render(
-      <PosProvider client={client}><Harness /></PosProvider>,
+      <PosProvider client={client} demoCatalogEnabled><Harness /></PosProvider>,
     );
 
     fireEvent.press(getByTestId('add-product'));
@@ -159,7 +159,7 @@ describe('PosProvider Laravel cash checkout', () => {
       .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
       .mockResolvedValueOnce(sale);
     const { getByTestId, getByText } = render(
-      <PosProvider client={makeClient(createSale)}><Harness /></PosProvider>,
+      <PosProvider client={makeClient(createSale)} demoCatalogEnabled><Harness /></PosProvider>,
     );
 
     fireEvent.press(getByTestId('add-product'));
@@ -182,7 +182,7 @@ describe('PosProvider Laravel QR Ph checkout', () => {
   it('uses one Laravel payment request for concurrent starts and preserves its key', async () => {
     const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
     const { getByTestId, getByText } = render(
-      <PosProvider client={makeQrClient(createQrPhPayment)}><QrHarness /></PosProvider>,
+      <PosProvider client={makeQrClient(createQrPhPayment)} demoCatalogEnabled><QrHarness /></PosProvider>,
     );
 
     fireEvent.press(getByTestId('add-qr-product'));
@@ -204,7 +204,7 @@ describe('PosProvider Laravel QR Ph checkout', () => {
       .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
       .mockResolvedValueOnce(pendingPayment);
     const { getByTestId, getByText } = render(
-      <PosProvider client={makeQrClient(createQrPhPayment)}><QrHarness /></PosProvider>,
+      <PosProvider client={makeQrClient(createQrPhPayment)} demoCatalogEnabled><QrHarness /></PosProvider>,
     );
 
     fireEvent.press(getByTestId('add-qr-product'));

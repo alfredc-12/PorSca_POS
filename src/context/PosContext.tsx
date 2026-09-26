@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
+import { isDemoCatalogEnabled, OFFLINE_COPY } from '@/src/config/offline';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
 import { CartRevalidation, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, deductStock, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
@@ -32,6 +33,8 @@ type PosContextValue = {
   inventoryError?: string;
   inventoryUsingFallback: boolean;
   cart: CartLine[];
+  /** True when the seeded demo catalog is allowed to substitute for Laravel. */
+  demoCatalogEnabled: boolean;
   /** Clear All undo, present only while the five-second window is open. */
   cartUndo?: { lineCount: number; expiresAt: number };
   sales: Sale[];
@@ -68,9 +71,18 @@ type PosContextValue = {
 
 const PosContext = createContext<PosContextValue | null>(null);
 
-export function PosProvider({ children, client = apiClient }: { children: React.ReactNode; client?: ApiClient }) {
-  const [products, setProducts] = useState<Product[]>(seedProducts);
-  const [inventoryProducts, setInventoryProducts] = useState<Product[]>(seedProducts);
+export function PosProvider({
+  children,
+  client = apiClient,
+  demoCatalogEnabled = isDemoCatalogEnabled(),
+}: {
+  children: React.ReactNode;
+  client?: ApiClient;
+  /** Opt-in demo catalog. Off unless EXPO_PUBLIC_ALLOW_DEMO_CATALOG is exactly "1". */
+  demoCatalogEnabled?: boolean;
+}) {
+  const [products, setProducts] = useState<Product[]>(demoCatalogEnabled ? seedProducts : []);
+  const [inventoryProducts, setInventoryProducts] = useState<Product[]>(demoCatalogEnabled ? seedProducts : []);
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [catalogState, setCatalogState] = useState<ReadState>('idle');
   const [catalogError, setCatalogError] = useState<string>();
@@ -147,6 +159,9 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     }
 
     if (!client.isConfigured) {
+      if (!demoCatalogEnabled) {
+        return { ok: false, status: 'unavailable', message: OFFLINE_COPY.barcodeNotConfigured };
+      }
       const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
       return fallbackProduct
         ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
@@ -171,6 +186,9 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       } catch (error) {
         if (error instanceof ApiClientError && error.status === 404) continue;
 
+        if (!demoCatalogEnabled) {
+          return { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable, so this barcode could not be checked against the catalog. Check the connection and try again.' };
+        }
         const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
         return fallbackProduct
           ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
@@ -179,7 +197,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     }
 
     return { ok: false, status: 'not-found', message: `No product matches ${normalizedBarcode}.` };
-  }, [client, rememberProducts]);
+  }, [client, demoCatalogEnabled, rememberProducts]);
 
   const addByBarcode = useCallback(async (barcode: string) => {
     const lookup = await lookupProductByBarcode(barcode);
@@ -319,6 +337,13 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     setCatalogUsingFallback(false);
 
     if (!client.isConfigured) {
+      if (!demoCatalogEnabled) {
+        setSearchResults([]);
+        setCatalogState('unavailable');
+        setCatalogError(OFFLINE_COPY.catalogNotConfigured);
+        setCatalogUsingFallback(false);
+        return;
+      }
       setSearchResults(searchLocalProducts(productsRef.current, normalizedQuery));
       setCatalogState('unavailable');
       setCatalogError('Laravel API is unavailable. Showing the offline demo catalog.');
@@ -336,17 +361,22 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       setCatalogState('ready');
     } catch {
       if (currentRequest !== requestId.current) return;
-      setSearchResults(searchLocalProducts(productsRef.current, normalizedQuery));
+      setSearchResults(demoCatalogEnabled ? searchLocalProducts(productsRef.current, normalizedQuery) : []);
       setCatalogState('unavailable');
-      setCatalogError('Laravel API is unavailable. Showing the offline demo catalog.');
-      setCatalogUsingFallback(true);
+      setCatalogError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo catalog.' : OFFLINE_COPY.catalogUnavailable);
+      setCatalogUsingFallback(demoCatalogEnabled);
     } finally {
       if (inFlightQuery.current === normalizedQuery) inFlightQuery.current = undefined;
     }
-  }, [client, rememberProducts]);
+  }, [client, demoCatalogEnabled, rememberProducts]);
 
   const refreshProducts = useCallback(async () => {
-    if (!client.isConfigured) return false;
+    if (!client.isConfigured) {
+      setCatalogState('unavailable');
+      setCatalogError(OFFLINE_COPY.catalogNotConfigured);
+      setCatalogUsingFallback(false);
+      return false;
+    }
     try {
       const remoteProducts = await client.listProducts();
       rememberProducts(remoteProducts);
@@ -356,11 +386,11 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       return true;
     } catch {
       setCatalogState('unavailable');
-      setCatalogError('Laravel API is unavailable. Showing the offline demo catalog.');
-      setCatalogUsingFallback(true);
+      setCatalogError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo catalog.' : OFFLINE_COPY.catalogUnavailable);
+      setCatalogUsingFallback(demoCatalogEnabled);
       return false;
     }
-  }, [client, rememberProducts]);
+  }, [client, demoCatalogEnabled, rememberProducts]);
 
   const refreshInventory = useCallback(async () => {
     setInventoryState('loading');
@@ -368,10 +398,10 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     setInventoryUsingFallback(false);
 
     if (!client.isConfigured) {
-      setInventoryProducts(seedProducts);
+      setInventoryProducts(demoCatalogEnabled ? seedProducts : []);
       setInventoryState('unavailable');
-      setInventoryError('Laravel API is unavailable. Showing the offline demo inventory.');
-      setInventoryUsingFallback(true);
+      setInventoryError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo inventory.' : OFFLINE_COPY.inventoryNotConfigured);
+      setInventoryUsingFallback(demoCatalogEnabled);
       return false;
     }
 
@@ -401,13 +431,13 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       setInventoryState('ready');
       return true;
     } catch {
-      setInventoryProducts((current) => current.length ? current : seedProducts);
+      setInventoryProducts((current) => current.length ? current : demoCatalogEnabled ? seedProducts : []);
       setInventoryState('unavailable');
-      setInventoryError('Laravel API is unavailable. Showing the offline demo inventory.');
-      setInventoryUsingFallback(true);
+      setInventoryError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo inventory.' : OFFLINE_COPY.inventoryUnavailable);
+      setInventoryUsingFallback(demoCatalogEnabled);
       return false;
     }
-  }, [client]);
+  }, [client, demoCatalogEnabled]);
 
   const refreshSales = useCallback(async () => {
     setSalesState('loading');
@@ -415,7 +445,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
 
     if (!client.isConfigured) {
       setSalesState('unavailable');
-      setSalesError('Laravel API is unavailable. Showing locally recorded demo sales.');
+      setSalesError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing locally recorded demo sales.' : OFFLINE_COPY.salesNotConfigured);
       return false;
     }
 
@@ -430,7 +460,6 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       return false;
     }
   }, [client]);
-
   const completeCashSale = useCallback(async (cashReceived: number) => {
     // The cart is about to be handed over; an Undo from the POS screen must not
     // be able to resurrect it after this point.
@@ -440,6 +469,9 @@ export function PosProvider({ children, client = apiClient }: { children: React.
     if (lines.length === 0) return null;
 
     if (!client.isConfigured) {
+      if (!demoCatalogEnabled) {
+        throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
+      }
       return completeOfflineCashSale();
     }
 
@@ -481,7 +513,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
       () => cashRequests.current.delete(requestSignature),
     );
     return request;
-  }, [client, commitCart, completeOfflineCashSale, refreshInventory, refreshSales, total]);
+  }, [client, commitCart, completeOfflineCashSale, demoCatalogEnabled, refreshInventory, refreshSales, total]);
 
   const startQrPhPayment = useCallback(async (forceNew = false) => {
     commitCart({ type: 'discard-undo' });
@@ -620,6 +652,7 @@ export function PosProvider({ children, client = apiClient }: { children: React.
         inventoryError,
         inventoryUsingFallback,
         cart,
+        demoCatalogEnabled,
         ...(cartState.undo ? { cartUndo: { lineCount: cartState.undo.lines.length, expiresAt: cartState.undo.expiresAt } } : {}),
         sales,
         salesState,

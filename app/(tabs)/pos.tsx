@@ -8,6 +8,7 @@ import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
 import { CartReviewSheet } from '@/src/components/CartReviewSheet';
 import { CartRevalidation } from '@/src/domain/revalidation';
+import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
@@ -33,6 +34,8 @@ export default function PosScreen() {
     beginCheckout,
     revalidateCart,
     replaceCartLines,
+    demoCatalogEnabled,
+    apiConfigured,
   } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
@@ -77,6 +80,11 @@ export default function PosScreen() {
    */
   const proceed = useCallback(async () => {
     if (!cart.length || checkingPrices) return;
+    // Strict online: a sale is only ever recorded by Laravel.
+    if (!apiConfigured) {
+      setCartNotice(OFFLINE_COPY.checkoutOffline);
+      return;
+    }
     setCartNotice(undefined);
     setCheckingPrices(true);
     try {
@@ -93,7 +101,7 @@ export default function PosScreen() {
     } finally {
       setCheckingPrices(false);
     }
-  }, [cart.length, checkingPrices, openCheckout, revalidateCart]);
+  }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
 
   const applyReview = useCallback(() => {
     replaceCartLines(review?.appliedLines ?? []);
@@ -144,7 +152,7 @@ export default function PosScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? 'Offline • Demo fallback' : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Demo fallback' : 'Offline • Laravel required') : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
         </View>
       </View>
 
@@ -156,7 +164,7 @@ export default function PosScreen() {
         <DataState
           kind="unavailable"
           title="Laravel catalog unavailable"
-          message={catalogError ?? 'The API could not be reached. The offline demo catalog is shown below.'}
+          message={catalogError ?? 'The API could not be reached. No demo catalog is in use.'}
           actionLabel="Retry search"
           onAction={retrySearch}
         />
@@ -308,16 +316,24 @@ export default function PosScreen() {
           <PaymentOption testID="payment-cash" icon="cash-outline" label="Cash" selected={method === 'cash'} onPress={() => setMethod('cash')} />
           <PaymentOption testID="payment-qrph" icon="qr-code-outline" label="QR Ph / PayMongo" selected={method === 'qrph'} onPress={() => setMethod('qrph')} />
         </View>
+        {!apiConfigured ? (
+          <View testID="offline-checkout-notice" accessibilityRole="alert" style={styles.offlineNotice}>
+            <Ionicons name="cloud-offline-outline" size={responsive.s(19)} color={colors.warning} />
+            <Text style={[styles.offlineNoticeText, { fontSize: responsive.font(12.5) }]}>
+              Connect to the Laravel API to complete a sale. The cart stays editable and nothing is recorded locally.
+            </Text>
+          </View>
+        ) : null}
         <Pressable
           testID="proceed-to-payment"
           accessibilityLabel="Proceed to payment"
-          disabled={!cart.length || checkingPrices}
+          disabled={!cart.length || checkingPrices || !apiConfigured}
           onPress={() => void proceed()}
           style={({ pressed }) => [
             styles.proceedButton,
             { minHeight: responsive.heightValue(0.071, 54, 62) },
-            (!cart.length || checkingPrices) && styles.proceedDisabled,
-            pressed && cart.length > 0 && { opacity: 0.86 },
+            (!cart.length || checkingPrices || !apiConfigured) && styles.proceedDisabled,
+            pressed && cart.length > 0 && apiConfigured && { opacity: 0.86 },
           ]}
         >
           <Ionicons name="lock-closed" size={responsive.s(20)} color={colors.white} />
@@ -396,6 +412,8 @@ const styles = StyleSheet.create({
   clearText: { color: colors.danger, fontWeight: '800' },
   limitNotice: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   limitNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
+  offlineNotice: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  offlineNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
   undoBanner: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.text, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   undoText: { color: colors.white, flex: 1, fontWeight: '700' },
   undoAction: { minHeight: 34, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },

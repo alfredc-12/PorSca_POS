@@ -312,4 +312,22 @@ describe('POS pre-checkout revalidation', () => {
     expect(router.push).not.toHaveBeenCalled();
     expect(view.getAllByText('₱22.00').length).toBeGreaterThan(0);
   });
+
+  it('disables checkout and keeps the cart editable while Laravel is not configured', async () => {
+    const offline = { isConfigured: false } as unknown as ApiClient;
+    const view = renderPos(offline);
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+    expect(view.getByTestId('offline-checkout-notice')).toHaveTextContent(/nothing is recorded locally/);
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+    // The checkout action is unavailable while no sale can be recorded by Laravel.
+    expect(router.push).not.toHaveBeenCalled();
+    expect(view.queryByTestId('cart-review-sheet')).toBeNull();
+
+    // The cart is still editable while offline.
+    fireEvent.press(view.getByLabelText('Increase Sardines 155g'));
+    await waitFor(() => expect(view.getByTestId('cart-limit-notice')).toHaveTextContent(/already has 1/));
+  });
 });
