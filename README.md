@@ -17,6 +17,42 @@ QR Ph checkout is routed through the Laravel API. The app receives only a transa
 
 The development profile connects to a Laravel API running on your computer. Use Expo Go for a quick local session; use an EAS development build when you need the installed development app. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone.
 
+### Build and install the development app
+
+Build the Android development app yourself, or install an APK shared by a teammate. EAS internal Android builds produce an installable APK. The development profile's API URL in `eas.json` is only an example; set it to your computer's LAN address when creating your build. A build already made by a teammate has that teammate's URL baked in, so rebuild it to use your own API.
+
+1. Install EAS CLI:
+
+   ```bash
+   npm install --global eas-cli
+   ```
+
+   Success: `eas --version` prints the installed version. Sign in to your Expo account if prompted.
+
+2. From the mobile project directory, start a development Android build:
+
+   ```bash
+   eas build --profile development --platform android
+   ```
+
+   Success: EAS finishes the build and provides a link to the APK. Before building, set the development profile's `EXPO_PUBLIC_API_URL` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash) in your local build configuration. Use no real secrets; public variables are bundled into the app.
+
+3. Install the APK on the Android device. Open the EAS build link on the device and follow the install prompt, or download the APK and install it using Android's package installer. For a teammate's APK, use the shared build link or file in the same way. Allow installation when Android asks, if needed.
+
+   Success: PorSca POS appears in the app list and opens as a development build.
+
+4. Start the JavaScript development server in the mobile project directory:
+
+   ```bash
+   npm run start
+   ```
+
+   Success: Expo reports that the server is ready. Keep it running and connect the development app to this server on the same network.
+
+5. Confirm the configured API URL uses your computer's LAN IP, not `localhost`. With a teammate-shared APK, its API URL cannot be changed after installation: ask for a rebuild using your LAN address, or build your own APK.
+
+   Success: `GET http://<computer-LAN-IP>:8000/health` returns successfully, and the app loads products from the API. A health response plus a product load proves the backend connection; seeded in-memory data alone does not.
+
 1. Install packages and create your local environment file:
 
    ```bash
