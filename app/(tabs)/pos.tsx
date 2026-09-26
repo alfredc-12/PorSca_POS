@@ -7,7 +7,7 @@ import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
 import { CartReviewSheet } from '@/src/components/CartReviewSheet';
-import { CartRevalidation } from '@/src/domain/revalidation';
+import { CartRevalidation, cartSignature } from '@/src/domain/revalidation';
 import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
@@ -104,10 +104,19 @@ export default function PosScreen() {
   }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
 
   const applyReview = useCallback(() => {
-    replaceCartLines(review?.appliedLines ?? []);
+    if (!review) return;
+    // The cart can be edited while the review sheet is open, and the revalidation
+    // result only describes the cart it read. A stale review must never overwrite
+    // a later edit or send an unvalidated cart to checkout (defect F2).
+    if (review.cartSignature !== cartSignature(cart)) {
+      setReview(undefined);
+      void proceed();
+      return;
+    }
+    replaceCartLines(review.appliedLines);
     setReview(undefined);
     openCheckout();
-  }, [openCheckout, replaceCartLines, review]);
+  }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
 

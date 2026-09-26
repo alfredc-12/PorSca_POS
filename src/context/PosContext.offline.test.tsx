@@ -1,6 +1,5 @@
 import React from 'react';
-import { renderHook } from '@testing-library/react-native';
-import { act } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import { ApiClient } from '@/src/api/client';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { seedProducts } from '@/src/data/mockProducts';
@@ -78,7 +77,7 @@ describe('offline policy with the demo catalog off (default)', () => {
 });
 
 describe('offline policy with the demo catalog explicitly enabled', () => {
-  it('substitutes the demo catalog and records a local demo sale', async () => {
+  it('substitutes the demo catalog for reads but never records a local sale', async () => {
     const { result } = renderHook(() => usePos(), { wrapper: wrapperFor(true) });
 
     expect(result.current.products).toHaveLength(seedProducts.length);
@@ -93,10 +92,13 @@ describe('offline policy with the demo catalog explicitly enabled', () => {
       result.current.addProductChecked({ ...seedProducts[0], stock: 5 });
     });
     await act(async () => {
-      await result.current.completeCashSale(100);
+      await expect(result.current.completeCashSale(100)).rejects.toThrow(/No sale was recorded and stock was not changed/);
     });
 
-    expect(result.current.sales).toHaveLength(1);
-    expect(result.current.cart).toEqual([]);
+    // A demo catalog substitutes reads only. It can never produce a paid sale
+    // that Laravel never saw, so no local sale is recorded and the cart is kept
+    // (defect F1).
+    expect(result.current.sales).toEqual([]);
+    expect(result.current.cart).toHaveLength(1);
   });
 });

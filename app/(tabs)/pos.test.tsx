@@ -57,6 +57,22 @@ function renderPos(posClient: ApiClient = client) {
   );
 }
 
+/** A catalog client whose per-line reads resolve only when the test says so. */
+function deferredCatalogClient() {
+  const pending = new Map<string, (product: Product) => void>();
+  const getProduct = jest.fn((productId: string) => new Promise<Product>((resolve) => {
+    pending.set(productId, resolve);
+  }));
+  return {
+    client: { isConfigured: true, getProduct } as unknown as ApiClient,
+    getProduct,
+    resolve(productId: string, product: Product) {
+      pending.get(productId)?.(product);
+      pending.delete(productId);
+    },
+  };
+}
+
 describe('POS cart consistency', () => {
   beforeEach(() => {
     jest.useRealTimers();
@@ -319,5 +335,64 @@ describe('POS pre-checkout revalidation', () => {
     // The cart is still editable while offline.
     fireEvent.press(view.getByLabelText('Increase Sardines 155g'));
     await waitFor(() => expect(view.getByTestId('cart-limit-notice')).toHaveTextContent(/already has 1/));
+  });
+
+  it('re-reads the cart when an edit lands while prices are being checked', async () => {
+    const catalog = deferredCatalogClient();
+    const view = renderPos(catalog.client);
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('(1 item)')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+    await waitFor(() => expect(catalog.getProduct).toHaveBeenCalledTimes(1));
+
+    // The cashier edits the cart while the line read is in flight.
+    fireEvent.press(view.getByLabelText('Increase Instant Coffee 30g'));
+    await waitFor(() => expect(view.getByText('(2 items)')).toBeTruthy());
+
+    // The first read only describes the pre-edit cart, so it must be discarded
+    // rather than used to reach checkout (defect F2).
+    await act(async () => {
+      catalog.resolve('plenty', { ...plenty, stock: 40 });
+    });
+    expect(router.push).not.toHaveBeenCalled();
+
+    // The edited cart is re-read before anything is handed to checkout.
+    await waitFor(() => expect(catalog.getProduct).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      catalog.resolve('plenty', { ...plenty, stock: 40 });
+    });
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));
+  });
+
+  it('re-validates a cart edited while the review sheet is open instead of applying the stale review', async () => {
+    const view = renderPos(catalogClient({ products: [{ ...plenty, price: 27 }] }));
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('(1 item)')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+    await waitFor(() => expect(view.getByTestId('cart-review-sheet')).toBeTruthy());
+    expect(router.push).not.toHaveBeenCalled();
+
+    // The cashier increases the quantity while the review is on screen.
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await waitFor(() => expect(view.getByText('(2 items)')).toBeTruthy());
+
+    // Accepting re-reads the edited cart; the stale appliedLines must not
+    // overwrite the new quantity or continue with an unvalidated cart (F2).
+    fireEvent.press(view.getByTestId('cart-review-apply'));
+    await waitFor(() => expect(view.queryByTestId('cart-review-sheet')).toBeNull());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(view.getByText('(2 items)')).toBeTruthy();
+
+    // The fresh review covers the edited cart; accepting it continues.
+    await waitFor(() => expect(view.getByTestId('cart-review-sheet')).toBeTruthy());
+    fireEvent.press(view.getByTestId('cart-review-apply'));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));
+    await waitFor(() => expect(view.getAllByText('₱54.00').length).toBeGreaterThan(0));
+    expect(view.getByText('(2 items)')).toBeTruthy();
   });
 });

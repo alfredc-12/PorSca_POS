@@ -43,6 +43,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
   mockUsePos.mockReturnValue({
     total: 35,
     cart,
+    apiConfigured: true,
     completeSale: jest.fn(),
     completeCashSale: jest.fn().mockResolvedValue(sale),
     resetCart: jest.fn(),
@@ -109,6 +110,20 @@ describe('CheckoutScreen cash states', () => {
     const actions = alertSpy.mock.calls[0][2] as { onPress?: () => void }[];
     actions[0].onPress?.();
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/transactions');
+  });
+
+  it('blocks checkout entirely when Laravel is not configured, even in demo mode', () => {
+    const completeCashSale = jest.fn();
+    setContext({ apiConfigured: false, completeCashSale });
+    const view = render(<CheckoutScreen />);
+
+    // A deep link or stale navigation to this route cannot record a local sale
+    // (defect F1).
+    expect(view.getByTestId('checkout-offline-notice')).toHaveTextContent(/No sale was recorded and stock was not changed/);
+    expect(view.queryByTestId('cash-received-input')).toBeNull();
+    expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
+    expect(view.queryByTestId('checkout-payment-qrph')).toBeNull();
+    expect(completeCashSale).not.toHaveBeenCalled();
   });
 });
 

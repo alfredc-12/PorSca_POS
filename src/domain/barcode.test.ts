@@ -6,12 +6,16 @@ import {
   validateBarcodeShape,
 } from '@/src/domain/barcode';
 import {
+  EAN13_HIGH_STOCK,
   EAN13_IN_STOCK,
+  EAN13_LOW_STOCK,
+  EAN13_OUT_OF_STOCK,
   GS1_EXAMPLE_INVALID,
   GS1_EXAMPLE_VALID,
   MALFORMED_LONG_CODE,
   MALFORMED_SHORT_CODE,
   NON_PRODUCT_CODE,
+  UNKNOWN_BARCODE,
   UPC_A_AS_EAN13,
   UPC_A_VALID,
 } from '@/src/data/barcodeFixtures';
@@ -19,7 +23,7 @@ import {
 describe('barcode shape validation', () => {
   it('accepts the documented API barcode shape', () => {
     const shape = validateBarcodeShape(EAN13_IN_STOCK);
-    expect(shape).toEqual({ ok: true, digits: EAN13_IN_STOCK, gtinLength: 13, checkDigitValid: false });
+    expect(shape).toEqual({ ok: true, digits: EAN13_IN_STOCK, gtinLength: 13, checkDigitValid: true });
     expect(validateBarcodeShape(' 4800010000011 ')).toMatchObject({ ok: true, digits: '4800010000011' });
     expect(validateBarcodeShape('12345678')).toMatchObject({ ok: true, gtinLength: 8 });
   });
@@ -35,8 +39,16 @@ describe('barcode shape validation', () => {
   it('reports the check digit without blocking a code the API would accept', () => {
     expect(validateBarcodeShape(GS1_EXAMPLE_VALID)).toMatchObject({ ok: true, checkDigitValid: true });
     expect(validateBarcodeShape(GS1_EXAMPLE_INVALID)).toMatchObject({ ok: true, checkDigitValid: false });
-    // The plan's own fixture list and the seeded catalog are not mod-10 valid.
-    expect(validateBarcodeShape(EAN13_IN_STOCK)).toMatchObject({ ok: true, checkDigitValid: false });
+  });
+
+  it('ships printable fixtures whose check digits are valid', () => {
+    // The plan's original fixture list was off by one on every check digit, so a
+    // printed EAN-13 symbol could not decode to it. These are the corrected
+    // values a printed card can actually carry (defect F6).
+    for (const fixture of [EAN13_IN_STOCK, EAN13_LOW_STOCK, EAN13_OUT_OF_STOCK, EAN13_HIGH_STOCK, UNKNOWN_BARCODE]) {
+      expect(fixture).toMatch(/^\d{13}$/);
+      expect(hasValidCheckDigit(fixture)).toBe(true);
+    }
   });
 });
 

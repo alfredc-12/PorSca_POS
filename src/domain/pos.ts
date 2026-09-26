@@ -38,13 +38,11 @@ export function searchProducts(products: Product[], query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return products;
   // A barcode-shaped query is an exact lookup, matching `?barcode=` on the
-  // server; anything else is a substring match on name, barcode or category.
+  // server. Anything else is a name search: the documented Laravel `?search=`
+  // filter is case-insensitive by name, so matching barcode or category offline
+  // as well would show rows the online search can never return (defect F5).
   if (isBarcodeQuery(normalized)) return products.filter((product) => product.barcode === normalized);
-  return products.filter((product) =>
-    product.name.toLowerCase().includes(normalized) ||
-    product.barcode.includes(normalized) ||
-    (product.category ?? '').toLowerCase().includes(normalized),
-  );
+  return products.filter((product) => product.name.toLowerCase().includes(normalized));
 }
 
 export function addProductToCart(cart: CartLine[], product: Product): CartChange {

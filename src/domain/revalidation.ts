@@ -37,11 +37,29 @@ export type CartRevalidation = {
   lines: CartLine[];
   /** The cart after applying the review: quantities clamped to stock, dead lines dropped. */
   appliedLines: CartLine[];
+  /**
+   * Identity of the cart lines this read was performed against. A result may
+   * only be applied or navigated with while the live cart still matches it, so
+   * edits made during or after the read can never be overwritten or bypass
+   * validation (defect F2).
+   */
+  cartSignature: string;
 };
 
 /** Money comparisons use integer centavos so a float artefact is not a price change. */
 function cents(value: number) {
   return Math.round(value * 100);
+}
+
+/**
+ * Stable identity of a cart: product, quantity and authoritative price per line
+ * in cart order. Price is part of the identity so a repriced cart is treated as
+ * a different cart rather than silently reusing an earlier validation.
+ */
+export function cartSignature(cart: CartLine[]): string {
+  return cart
+    .map((line) => `${line.product.id}:${line.quantity}:${cents(line.product.price)}`)
+    .join('|');
 }
 
 export function reconcileCart(cart: CartLine[], authoritative: Product[]): CartRevalidation {
@@ -102,7 +120,7 @@ export function reconcileCart(cart: CartLine[], authoritative: Product[]): CartR
   }
 
   const status: CartRevalidationStatus = blocked ? 'blocked' : changes.length ? 'review' : 'ready';
-  return { status, message: statusMessage(status, changes), changes, lines, appliedLines };
+  return { status, message: statusMessage(status, changes), changes, lines, appliedLines, cartSignature: cartSignature(cart) };
 }
 
 function statusMessage(status: CartRevalidationStatus, changes: CartLineChange[]) {

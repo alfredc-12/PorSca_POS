@@ -26,8 +26,13 @@ npm run verify          # expo lint && tsc --noEmit && jest --runInBand
 ```
 
 - Baseline on `origin/staging` `070bedd`: **9 suites / 49 tests**, lint and typecheck clean.
-- Branch tip: **18 suites / 132 tests**, lint and typecheck clean.
-- Added: 9 suites, 83 tests, all below the camera screen or the domain layer.
+- Branch tip: **18 suites / 143 tests**, lint and typecheck clean (zero warnings).
+- Added: 9 suites, 94 tests, all below the camera screen or the domain layer.
+
+Post-audit follow-up: the three merge-blockers plus the search-dedupe/parity and
+fixture corrections added 11 more cases over the first branch tip and removed the
+one pre-existing `react-hooks/exhaustive-deps` warning in `PosContext.tsx`, so
+lint, typecheck, and all suites pass together.
 
 Suites that carry the new behaviour: `src/domain/barcode.test.ts`,
 `src/domain/cart.test.ts`, `src/domain/checkout.test.ts`,
@@ -65,9 +70,9 @@ drives the session directly and the screen is driven through the existing
 | C3 | inventory mode opens the product, and offers product creation when unknown | `app/scanner.test.tsx` |
 | C4 | a resolved failure re-arms only when the cashier taps "Scan again" | `app/scanner.test.tsx` |
 
-Fixtures used: `4800000000010` (in stock), `4800000000027` (low stock),
-`4800000000034` (out of stock), `4800000000041` (high stock),
-`9999999999999` (unknown), `PSCA-CART-42` (non-product code), `12345` (short),
+Fixtures used: `4800000000019` (in stock), `4800000000026` (low stock),
+`4800000000033` (out of stock), `4800000000040` (high stock),
+`9999999999994` (unknown), `PSCA-CART-42` (non-product code), `12345` (short),
 65 digits (over-long), `6291041500214` (GS1 example with a bad check digit),
 `6291041500213` (GS1 example, valid check digit), and the UPC-A / EAN-13 pair
 `036000291452` / `0036000291452`.
@@ -78,17 +83,19 @@ Fixtures used: `4800000000010` (in stock), `4800000000027` (low stock),
 | --- | --- |
 | Cart reducer | guarded add and its message; increment from the stored line; a rejected add does not mutate the cart; last-unit decrement drops the line; clear into an undo buffer and restore exact lines and quantities; undo refused after the window; buffer dropped by the next successful mutation; buffer dropped when a checkout begins; reset after a sale; replace-lines reconciliation; `useReducer` form and reduction form stay identical |
 | POS cart | limit message on "+" instead of a silent no-op; notice cleared by the next successful add; last-unit "−" empties the cart; Clear All + undo restores; undo offer disappears when its window closes |
-| Search | eight keystrokes produce at most two catalog reads; one in-flight read per query; barcode-shaped query uses `?barcode=`; the same predicate picks the offline rows |
-| Revalidation | clean cart goes straight to checkout; price change shown and applied before checkout; short stock blocks and clamps on accept; a product that left the catalog is removed on accept; unreachable API keeps the cart and explains itself; dismissing the review applies nothing |
-| Checkout copy | deleted-product detail maps to a named recovery instead of generic validation text; stock and cash conflicts keep their recovery actions |
-| Offline policy | flag is off unless exactly `1`; no substituted catalog or inventory; no barcode substitution; sale refused with no local record and the cart retained; strict-offline read not labelled a demo fallback; demo mode unchanged when explicitly enabled |
+| Search | eight keystrokes produce at most two catalog reads; one in-flight read per query; a repeated same-query invocation before it resolves still answers; a same-query retry after an unavailable catalog works; barcode-shaped query uses `?barcode=`; every non-barcode query is name-only in both modes, matching the documented `?search=` contract |
+| Revalidation | clean cart goes straight to checkout; price change shown and applied before checkout; short stock blocks and clamps on accept; a product that left the catalog is removed on accept; unreachable API keeps the cart and explains itself; dismissing the review applies nothing; an edit during the line read is re-read rather than bypassing validation; a review whose cart changed is re-validated instead of overwriting the edit |
+| Checkout copy | deleted-product detail maps to a named recovery instead of generic validation text; stock, cash, and idempotency-replay conflicts each keep their own recovery action; an unresolved earlier cash attempt points at Transactions |
+| Offline policy | flag is off unless exactly `1`; no substituted catalog or inventory; no barcode substitution; sale refused with no local record and the cart retained; strict-offline read not labelled a demo fallback; a demo catalog substitutes reads only and can never record a local sale; the checkout route itself refuses to render payment controls when the API is not configured |
+| Cash retry | a plain retry after a transport failure reuses the idempotency key; an uncertain attempt is bound to its exact payload (including per-line price); a repriced retry first looks up the earlier receipt and refuses to replay the old-price sale; a repriced retry proceeds with a fresh key only once Laravel confirms the earlier attempt was never recorded |
 
 ## Manual printed-fixture step: **NOT EXECUTED**
 
 The plan calls for one honest manual step: print a fixture card
-(`zint -b EANX13 -d 4800000000010`), hold it in frame for five seconds on a real
+(`zint -b EANX13 -d 4800000000019`), hold it in frame for five seconds on a real
 device, and assert exactly one cart line, because a glossy monitor frequently
-fails to decode.
+fails to decode. The fixture values now carry valid GS1 check digits, so the
+printed symbol and the asserted value agree (see finding 1 below).
 
 This environment has no printer and no physical device, so that step was **not
 run** and no device-decode evidence is claimed. What exists instead:
@@ -106,14 +113,22 @@ device-verified, and record the result here.
 
 ## Findings from the build
 
-1. **The approved plan's fixture list is not GS1 mod-10 valid.** Every `EAN13_*`
-   code in the plan is off by one on its check digit: for payload
-   `480000000001` the correct check digit is `9`, not the plan's `0`. The
-   repository's seeded catalog has the same defect (`4800010000011`). A hard
-   check-digit gate would therefore have rejected the plan's own happy-path
-   fixture **and** every seeded catalog row, so the check digit is implemented as
-   a reported, non-blocking signal that changes the copy for an unknown code.
-   Verified against GS1's published worked example `6291041500213`.
+1. **The approved plan's fixture list was not GS1 mod-10 valid; this branch now
+   corrects it.** Every `EAN13_*` code in the plan was off by one on its check
+   digit: for payload `480000000001` the correct check digit is `9`, not the
+   plan's `0`. The fixtures now carry the valid digits
+   (`4800000000019`, `4800000000026`, `4800000000033`, `4800000000040`, and the
+   unknown-code fixture `9999999999994`), and a test asserts each one passes the
+   GS1 mod-10 check, so a printed card can actually decode to the asserted value.
+   The seeded catalog's `4800010000011` had the same defect and is now
+   `4800010000016`.
+2. **The check digit is still a reported signal, not a hard gate.** Legacy
+   catalog identifiers can predate GTIN validation, and Laravel remains the
+   authority on whether a barcode exists. Whether those legacy identifiers need
+   tolerated lookup separately from GTIN validation is an open decision, so the
+   scanner reports `checkDigitValid` and changes the not-found copy rather than
+   rejecting the scan. Verified against GS1's published worked example
+   `6291041500213`.
 2. **The board artifact and the captain's reference images were not
    recoverable.** The plan's review board lived in `.lavish/` inside the
    planning worktree, and the worktree pool recycled it before this task started,
@@ -128,6 +143,20 @@ device-verified, and record the result here.
 4. **Revalidation originally read a paginated catalog list**, which could make a
    valid line past the first page look removed. It now reads each cart line from
    `GET /products/:id` (`a8c8cd2`).
+
+## Post-audit follow-up fixes
+
+An independent audit of the first branch tip (`905d674`) held the merge and named
+these defects. Each is fixed on this branch with the tests listed.
+
+| Defect | Fix | Regression test |
+| --- | --- | --- |
+| F1: demo mode could still record an unrecorded offline sale | `completeCashSale` has no local-sale branch; `app/checkout.tsx` refuses to render payment controls when the API is not configured | `PosContext.offline.test.tsx` (demo mode), `checkout.test.tsx` (offline route) |
+| F2: an async review could bypass or overwrite cart edits | `revalidateCart` returns a `cartSignature` and re-reads a cart that changes under it; `applyReview` re-validates instead of applying a stale review | `(tabs)/pos.test.tsx` (edit during read, edit during review) |
+| F3: a cash retry could replay an old-price sale after repricing | an uncertain attempt is bound to its exact payload; a changed payload first resolves the earlier receipt and refuses to replay it; a 409 idempotency conflict has its own copy | `PosContext.test.tsx` (recorded and unrecorded repriced retries), `domain/checkout.test.ts` |
+| F4: a duplicate same-query search could leave the catalog loading forever | the request generation advances only when a request starts, and the in-flight marker is released on every exit | `PosContext.test.tsx` (duplicate invocation, retry after unavailable) |
+| F5: short numeric queries differed online and offline | non-barcode search is name-only in both modes, matching the documented `?search=` contract | `domain/pos.test.ts` (name-only, short numeric prefix) |
+| F6: fixtures had invalid check digits | the five EAN fixtures and the seeded `4800010000016` carry valid GS1 check digits | `domain/barcode.test.ts` (fixtures pass mod-10) |
 
 ## Residual limitations and risks
 
@@ -145,5 +174,13 @@ device-verified, and record the result here.
   by Laravel's checkout validation, which now has named recovery copy.
 - Barcode canonicalisation (UPC-A/EAN-13) lives in the client only, as the plan
   decided. The server-side form of that rule remains future work.
-- Signing and read-back of `EAN13_IN_STOCK` etc. are the plan's codes, not real
-  GTINs; they exist to keep this evidence comparable with the plan.
+- Signing and read-back of `EAN13_IN_STOCK` etc. use synthetic GTINs; the values
+  are now mod-10 valid so they can be printed and scanned, but they are not real
+  products and are not in any production catalog.
+- The Appium smoke seam's `APPIUM_BARCODE_FIXTURE` default is an external
+  staging-seed value supplied by the device lab, not one of this repo's
+  fixtures; it is left to the captain-owned device run.
+- Resolving an uncertain cash attempt reads `GET /sales?per_page=100` and
+  matches the echoed idempotency key. A receipt older than the first page, or an
+  unreachable sales list, keeps the client in the safe "needs checking" state
+  rather than sending a duplicate sale.

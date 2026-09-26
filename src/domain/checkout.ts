@@ -17,10 +17,19 @@ export type ApiFailure = {
 export function saleFailureCopy(error: ApiFailure): CheckoutFailure {
   const detail = error.message?.trim();
 
-  if (error.code === 'insufficient_stock' || error.status === 409) {
+  if (error.code === 'insufficient_stock') {
     return {
       title: 'Insufficient stock',
       message: `${detail ?? 'Some items are no longer available.'} Refresh inventory and remove the unavailable item, then try again.`,
+    };
+  }
+
+  // An uncertain cash attempt that the client refused to replay is not a stock
+  // problem: the cashier has to confirm the earlier receipt first (defect F3).
+  if (error.code === 'cash_attempt_unresolved' || error.code === 'cash_attempt_already_recorded') {
+    return {
+      title: 'Earlier cash attempt needs checking',
+      message: `${detail ?? 'An earlier cash attempt could not be confirmed.'} Check Transactions before taking payment again. Your cart is still here.`,
     };
   }
 
@@ -28,6 +37,16 @@ export function saleFailureCopy(error: ApiFailure): CheckoutFailure {
     return {
       title: 'Insufficient cash',
       message: `${detail ?? 'Cash received is below the amount due.'} Enter more cash and confirm again. Your cart is still here.`,
+    };
+  }
+
+  // Laravel answers 409 for both insufficient stock and an idempotency key
+  // reused for a different request. The stock case is handled by its code
+  // above, so a remaining 409 is a replay conflict, not a stock problem.
+  if (error.status === 409 || isIdempotencyCode(error.code)) {
+    return {
+      title: 'Sale already in progress',
+      message: `${detail ?? 'Laravel recognised this as a repeated request.'} Retry with the same cart and cash, or check Transactions before taking payment again. Your cart is still here.`,
     };
   }
 
@@ -43,6 +62,11 @@ export function saleFailureCopy(error: ApiFailure): CheckoutFailure {
     title: 'Unable to complete sale',
     message: `The sale was not confirmed. ${fieldDetail ?? detail ?? 'Check your connection and try again.'} Your cart is still here so you can retry safely.`,
   };
+}
+
+/** True when Laravel names an idempotency replay conflict in the error code. */
+export function isIdempotencyCode(code: string | undefined): boolean {
+  return typeof code === 'string' && code.toLowerCase().includes('idempot');
 }
 
 /** True when Laravel rejected the sale because a cart line's product is gone. */

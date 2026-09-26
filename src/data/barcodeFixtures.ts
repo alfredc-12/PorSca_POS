@@ -1,31 +1,32 @@
 /**
  * Barcode fixtures for the scanner/cart test plan and for the one manual step
  * in that plan, the printed fixture card (for example
- * `zint -b EANX13 -d 4800000000010`).
+ * `zint -b EANX13 -d 4800000000019`).
  *
- * These are synthetic codes, not real products.
+ * These are synthetic codes, not real products, but every `EAN13_*` value below
+ * is now a genuine GS1 mod-10 symbol. The approved week-6 plan's original list
+ * was off by one on every check digit (`4800000000010` instead of
+ * `4800000000019`), so no valid printed symbol could decode to those values; a
+ * printed fixture card could never have passed. The codes below carry the
+ * correct check digit and can be generated and scanned as-is.
  *
- * The `EAN13_*` values below are the codes named in the approved week-6 plan.
- * They are **not** GS1 mod-10 valid: the plan's fixture list is off by one on
- * every check digit (for example the correct check digit for the payload
- * `480000000001` is `9`, not `0`), and the repository's own seeded catalog is
- * not mod-10 valid either (`4800010000011` has the same defect). That is why
- * the scanner treats the GTIN check digit as a soft signal rather than a hard
- * gate - a hard gate would reject the plan's own happy-path fixture and every
- * row in the seeded catalog. The GS1 publish worked example is used instead
- * when a test needs a genuinely check-digit-valid code.
+ * The scanner still reports the check digit rather than gating on it, because
+ * legacy rows in the seeded catalog (`4800010000011` and the other pre-existing
+ * identifiers) are not mod-10 valid, and Laravel stays the authority on whether
+ * a barcode exists. Whether those legacy identifiers need tolerated lookup
+ * separately from GTIN validation is still an open decision.
  */
 
 /** Product exists in the catalog with a healthy stock level. */
-export const EAN13_IN_STOCK = '4800000000010';
+export const EAN13_IN_STOCK = '4800000000019';
 /** Product exists with stock at or below its reorder level. */
-export const EAN13_LOW_STOCK = '4800000000027';
+export const EAN13_LOW_STOCK = '4800000000026';
 /** Product exists but has no stock left. */
-export const EAN13_OUT_OF_STOCK = '4800000000034';
+export const EAN13_OUT_OF_STOCK = '4800000000033';
 /** Product exists with a large stock level, for multi-add exposure tests. */
-export const EAN13_HIGH_STOCK = '4800000000041';
-/** Well-formed code that is not in the catalog. Also fails the mod-10 check (the plan's set does). */
-export const UNKNOWN_BARCODE = '9999999999999';
+export const EAN13_HIGH_STOCK = '4800000000040';
+/** Well-formed, check-digit-valid code that is not in the catalog. */
+export const UNKNOWN_BARCODE = '9999999999994';
 
 /** Code128/QR-shaped value. The API only accepts 8-64 digits, so this can never be a product barcode. */
 export const NON_PRODUCT_CODE = 'PSCA-CART-42';

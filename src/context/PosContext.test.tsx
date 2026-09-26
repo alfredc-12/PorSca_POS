@@ -17,13 +17,18 @@ const sale: Sale = {
 };
 
 function Harness() {
-  const { products, cart, sales, addProductChecked, completeCashSale } = usePos();
+  const { products, cart, sales, addProductChecked, completeCashSale, replaceCartLines } = usePos();
   const [result, setResult] = useState('');
   const product = products[0];
 
   return (
     <View>
       <Button testID="add-product" title="Add product" onPress={() => addProductChecked(product)} />
+      <Button
+        testID="reprice-product"
+        title="Reprice product"
+        onPress={() => replaceCartLines([{ product: { ...product, price: 30 }, quantity: 1 }])}
+      />
       <Button
         testID="complete-sale"
         title="Complete sale"
@@ -32,6 +37,22 @@ function Harness() {
         }}
       />
       <Text>{`cart:${cart.length} sales:${sales.length} result:${result}`}</Text>
+    </View>
+  );
+}
+
+function SearchHarness() {
+  const { searchProducts, catalogState, searchResults, catalogError } = usePos();
+
+  return (
+    <View>
+      <Button testID="search-once" title="Search" onPress={() => { void searchProducts('coffee'); }} />
+      <Button
+        testID="search-twice"
+        title="Search twice"
+        onPress={() => { void searchProducts('coffee'); void searchProducts('coffee'); }}
+      />
+      <Text>{`state:${catalogState} results:${searchResults.length} error:${catalogError ?? ''}`}</Text>
     </View>
   );
 }
@@ -175,6 +196,118 @@ describe('PosProvider Laravel cash checkout', () => {
 
     expect(createSale).toHaveBeenCalledTimes(2);
     expect(createSale.mock.calls[0][0].idempotencyKey).toBe(createSale.mock.calls[1][0].idempotencyKey);
+  });
+
+  it('refuses to replay an uncertain cash attempt at the old price after repricing', async () => {
+    const createSale = jest.fn().mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    const client = makeClient(createSale);
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><Harness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('complete-sale'));
+    });
+    await waitFor(() => expect(getByText(/result:Unable to reach PorSca API: timeout/)).toBeTruthy());
+
+    // Laravel actually recorded the first sale, but the response was lost.
+    const attemptedKey = createSale.mock.calls[0][0].idempotencyKey;
+    expect(attemptedKey).toMatch(/^mobile-cash-/);
+    client.listSales = jest.fn().mockResolvedValue([{ ...sale, idempotencyKey: attemptedKey }]);
+
+    // The cashier revalidates, accepts the new price, and retries the sale.
+    fireEvent.press(getByTestId('reprice-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('complete-sale'));
+    });
+
+    await waitFor(() => expect(getByText(/already recorded by Laravel/)).toBeTruthy());
+    // The old-price sale was never replayed and no second sale was sent.
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(getByText(/cart:1 sales:0/)).toBeTruthy();
+  });
+
+  it('charges the revised price once an uncertain attempt is confirmed as unrecorded', async () => {
+    const revisedSale: Sale = {
+      ...sale,
+      total: 30,
+      items: [{ product: { ...sale.items[0].product, price: 30 }, quantity: 1 }],
+    };
+    const createSale = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
+      .mockResolvedValueOnce(revisedSale);
+    const client = makeClient(createSale);
+    // No sale carries the uncertain key, so Laravel never recorded it. The
+    // second read feeds the post-sale history refresh.
+    client.listSales = jest.fn().mockResolvedValueOnce([]).mockResolvedValue([revisedSale]);
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><Harness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('complete-sale'));
+    });
+    await waitFor(() => expect(getByText(/result:Unable to reach PorSca API: timeout/)).toBeTruthy());
+    const attemptedKey = createSale.mock.calls[0][0].idempotencyKey;
+
+    fireEvent.press(getByTestId('reprice-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('complete-sale'));
+    });
+    await waitFor(() => expect(getByText('cart:0 sales:1 result:completed')).toBeTruthy());
+
+    expect(createSale).toHaveBeenCalledTimes(2);
+    expect(createSale.mock.calls[1][0].idempotencyKey).not.toBe(attemptedKey);
+    expect(createSale.mock.calls[1][0]).toMatchObject({ total: 3000, items: [{ productId: 'prd-001', quantity: 1, unitPrice: 3000 }] });
+  });
+});
+
+describe('PosProvider catalog search', () => {
+  it('does not strand a search when the same query is invoked twice before it resolves', async () => {
+    let resolveProducts: (products: unknown[]) => void = () => undefined;
+    const listProducts = jest.fn().mockImplementation(() => new Promise((resolve) => { resolveProducts = resolve; }));
+    const client = { isConfigured: true, listProducts } as unknown as ApiClient;
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client}><SearchHarness /></PosProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('search-twice'));
+    });
+    // The duplicate invocation shares the in-flight read instead of discarding
+    // its only answer and leaving the catalog loading forever (defect F4).
+    expect(listProducts).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveProducts([{ id: 'prd-001', barcode: '4800010000016', name: 'Coffee 30g', price: 9 }]);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(getByText(/state:ready results:1/)).toBeTruthy());
+  });
+
+  it('allows the same query to be retried after the catalog was unavailable', async () => {
+    const listProducts = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
+      .mockResolvedValueOnce([{ id: 'prd-001', barcode: '4800010000016', name: 'Coffee 30g', price: 9 }]);
+    const client = { isConfigured: true, listProducts } as unknown as ApiClient;
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client}><SearchHarness /></PosProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('search-once'));
+    });
+    await waitFor(() => expect(getByText(/state:unavailable results:0/)).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('search-once'));
+    });
+
+    await waitFor(() => expect(getByText(/state:ready results:1/)).toBeTruthy());
+    expect(listProducts).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -3,8 +3,8 @@ import { apiClient, ApiClient, ApiClientError, Payment } from '@/src/api/client'
 import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { isDemoCatalogEnabled, OFFLINE_COPY } from '@/src/config/offline';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
-import { CartRevalidation, reconcileCart } from '@/src/domain/revalidation';
-import { calculateCartTotal, CartChange, deductStock, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
+import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
+import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
 
@@ -71,6 +71,9 @@ type PosContextValue = {
 
 const PosContext = createContext<PosContextValue | null>(null);
 
+/** How many times a pre-checkout read retries after the cart changes under it. */
+const MAX_REVALIDATION_ATTEMPTS = 3;
+
 export function PosProvider({
   children,
   client = apiClient,
@@ -99,6 +102,11 @@ export function PosProvider({
   const inFlightQuery = useRef<string | undefined>(undefined);
   const cashKeys = useRef(new Map<string, string>());
   const cashRequests = useRef(new Map<string, Promise<Sale | null>>());
+  /**
+   * The last cash attempt whose outcome Laravel never acknowledged. It is bound
+   * to the exact payload that was sent so a repriced retry cannot replay it.
+   */
+  const uncertainCashRef = useRef<{ payloadSignature: string; idempotencyKey: string } | undefined>(undefined);
   const qrKeys = useRef(new Map<string, string>());
   const qrPayments = useRef(new Map<string, Payment>());
   const qrRequests = useRef(new Map<string, Promise<Payment>>());
@@ -259,74 +267,75 @@ export function PosProvider({
    * cashier accepts it.
    */
   const revalidateCart = useCallback(async (): Promise<CartRevalidation> => {
-    const lines = cartRef.current.lines;
-    const unchanged = (status: 'offline' | 'unavailable', message: string): CartRevalidation => ({
-      status, message, changes: [], lines, appliedLines: lines,
-    });
-
-    if (lines.length === 0) {
-      return { status: 'ready', message: 'The cart is empty.', changes: [], lines: [], appliedLines: [] };
-    }
-
-    if (!client.isConfigured) {
-      return unchanged('offline', 'Prices and stock cannot be confirmed because the Laravel API is not configured. Connect to the API and try again; the cart is unchanged.');
-    }
-
-    try {
-      // One read per cart line: `GET /products/:id` carries the authoritative
-      // price and stock block, and a 404 means the product is gone. Reading the
-      // whole catalog instead would silently miss lines past the first page.
-      const settled = await Promise.allSettled(lines.map((line) => client.getProduct(line.product.id)));
-      const authoritative: Product[] = [];
-      let unreachable = false;
-
-      settled.forEach((outcome) => {
-        if (outcome.status === 'fulfilled') {
-          authoritative.push(outcome.value);
-          return;
-        }
-        const reason: unknown = outcome.reason;
-        if (!(reason instanceof ApiClientError && reason.status === 404)) unreachable = true;
+    const read = async (lines: CartLine[]): Promise<CartRevalidation> => {
+      const signature = cartSignature(lines);
+      const unchanged = (status: 'offline' | 'unavailable', message: string): CartRevalidation => ({
+        status, message, changes: [], lines, appliedLines: lines, cartSignature: signature,
       });
 
-      if (unreachable) {
-        return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+      if (lines.length === 0) {
+        return { status: 'ready', message: 'The cart is empty.', changes: [], lines: [], appliedLines: [], cartSignature: signature };
       }
 
-      rememberProducts(authoritative);
-      return reconcileCart(lines, authoritative);
-    } catch {
-      return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
-    }
-  }, [client, rememberProducts]);
+      if (!client.isConfigured) {
+        return unchanged('offline', 'Prices and stock cannot be confirmed because the Laravel API is not configured. Connect to the API and try again; the cart is unchanged.');
+      }
 
-  const completeOfflineCashSale = useCallback(() => {
-    const lines = cartRef.current.lines;
-    if (lines.length === 0) return null;
-    const productsAfterSale = deductStock(products, lines);
-    if (!productsAfterSale) return null;
+      try {
+        // One read per cart line: `GET /products/:id` carries the authoritative
+        // price and stock block, and a 404 means the product is gone. Reading the
+        // whole catalog instead would silently miss lines past the first page.
+        const settled = await Promise.allSettled(lines.map((line) => client.getProduct(line.product.id)));
+        const authoritative: Product[] = [];
+        let unreachable = false;
 
-    const sale: Sale = {
-      id: `TX-${Date.now().toString().slice(-8)}`,
-      createdAt: new Date().toISOString(),
-      total,
-      paymentMethod: 'cash',
-      status: 'paid',
-      items: lines.map((line) => ({ ...line })),
+        settled.forEach((outcome) => {
+          if (outcome.status === 'fulfilled') {
+            authoritative.push(outcome.value);
+            return;
+          }
+          const reason: unknown = outcome.reason;
+          if (!(reason instanceof ApiClientError && reason.status === 404)) unreachable = true;
+        });
+
+        if (unreachable) {
+          return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+        }
+
+        rememberProducts(authoritative);
+        return reconcileCart(lines, authoritative);
+      } catch {
+        return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+      }
     };
 
-    setProducts(productsAfterSale);
-    setInventoryProducts((current) => deductStock(current, lines) ?? current);
-    setSearchResults((current) => deductStock(current, lines) ?? current);
-    setSales((current) => mergeSales(current, [sale]));
-    commitCart({ type: 'reset' });
-    return sale;
-  }, [commitCart, products, total]);
+    // A cart edit can land while a line read is in flight. A result is only
+    // valid for the cart it read, so re-read the cart now on screen instead of
+    // handing a stale amount to checkout or letting an old review overwrite a
+    // later edit (defect F2).
+    for (let attempt = 0; attempt < MAX_REVALIDATION_ATTEMPTS; attempt += 1) {
+      const lines = cartRef.current.lines;
+      const signature = cartSignature(lines);
+      const result = await read(lines);
+      if (cartSignature(cartRef.current.lines) === signature) return result;
+    }
+
+    const lines = cartRef.current.lines;
+    return {
+      status: 'unavailable',
+      message: 'The cart changed while prices and stock were being checked. Review the cart and try again.',
+      changes: [],
+      lines,
+      appliedLines: lines,
+      cartSignature: cartSignature(lines),
+    };
+  }, [client, rememberProducts]);
 
   const searchProducts = useCallback(async (query: string) => {
     const normalizedQuery = query.trim();
-    const currentRequest = ++requestId.current;
     if (!normalizedQuery) {
+      // A cleared search invalidates any request that is still in flight.
+      requestId.current += 1;
       inFlightQuery.current = undefined;
       setSearchResults([]);
       setCatalogState('idle');
@@ -336,9 +345,12 @@ export function PosProvider({
     }
 
     // One in-flight read per query: a debounced retry or a repeat keystroke
-    // never adds a second request for the same text.
+    // never adds a second request for the same text. The generation is bumped
+    // only when a request actually starts, so a duplicate invocation can no
+    // longer invalidate the one answer that is on its way (defect F4).
     if (inFlightQuery.current === normalizedQuery) return;
     inFlightQuery.current = normalizedQuery;
+    const currentRequest = ++requestId.current;
 
     // The same predicate decides the offline rows and the API parameter, so a
     // numeric query means one thing whether or not Laravel is reachable.
@@ -348,6 +360,8 @@ export function PosProvider({
     setCatalogUsingFallback(false);
 
     if (!client.isConfigured) {
+      // Release the marker on every exit so the same query can be retried.
+      inFlightQuery.current = undefined;
       if (!demoCatalogEnabled) {
         setSearchResults([]);
         setCatalogState('unavailable');
@@ -470,7 +484,21 @@ export function PosProvider({
       setSalesError('Laravel API is unavailable. Showing the last known transaction history.');
       return false;
     }
+  }, [client, demoCatalogEnabled]);
+  /**
+   * Resolve whether an earlier uncertain cash attempt actually became a sale.
+   * Laravel echoes the idempotency key on each sale, so the receipt can be
+   * found without resending the uncertain request.
+   */
+  const resolveCashAttempt = useCallback(async (idempotencyKey: string): Promise<'found' | 'not-found' | 'unknown'> => {
+    try {
+      const sales = await client.listSales();
+      return sales.some((sale) => sale.idempotencyKey === idempotencyKey) ? 'found' : 'not-found';
+    } catch {
+      return 'unknown';
+    }
   }, [client]);
+
   const completeCashSale = useCallback(async (cashReceived: number) => {
     // The cart is about to be handed over; an Undo from the POS screen must not
     // be able to resurrect it after this point.
@@ -479,52 +507,85 @@ export function PosProvider({
     const lines = cartRef.current.lines;
     if (lines.length === 0) return null;
 
+    // Strict online: every sale is recorded by Laravel. There is deliberately no
+    // local-sale branch, not even for the demo catalog, so a demo catalog can
+    // never produce an unrecorded paid sale (defect F1).
     if (!client.isConfigured) {
-      if (!demoCatalogEnabled) {
-        throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
-      }
-      return completeOfflineCashSale();
+      throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     }
 
     const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
-    const cartSignature = lines.map((line) => `${line.product.id}:${line.quantity}`).join('|');
-    const requestSignature = `${cartSignature}|cash:${cashCents}`;
-    const pending = cashRequests.current.get(requestSignature);
+    const payloadSignature = cashPayloadSignature(lines, cashCents);
+
+    // A transport failure can leave an attempt committed but unacknowledged.
+    // That attempt is bound to its exact payload: a plain retry reuses its key,
+    // but a repriced or otherwise changed cart must first establish whether the
+    // earlier sale was recorded, so a retry can never return the old sale
+    // (defect F3).
+    const uncertain = uncertainCashRef.current;
+    if (uncertain && uncertain.payloadSignature !== payloadSignature) {
+      const resolution = await resolveCashAttempt(uncertain.idempotencyKey);
+      if (resolution !== 'not-found') {
+        throw new ApiClientError(
+          resolution === 'found'
+            ? 'An earlier cash attempt for this cart was already recorded by Laravel. Nothing new was sent; check Transactions before taking payment again.'
+            : 'An earlier cash attempt could not be confirmed. Check Transactions for a completed sale before taking payment again; nothing new was sent.',
+          undefined,
+          'cash_attempt_unresolved',
+        );
+      }
+      // Laravel confirmed the earlier attempt never became a sale, so the
+      // revised cart can be charged with a fresh key without duplicating it.
+      uncertainCashRef.current = undefined;
+    }
+
+    const pending = cashRequests.current.get(payloadSignature);
     if (pending) return pending;
 
-    const idempotencyKey = cashKeys.current.get(requestSignature) ?? createIdempotencyKey();
-    cashKeys.current.set(requestSignature, idempotencyKey);
+    const idempotencyKey = cashKeys.current.get(payloadSignature) ?? createIdempotencyKey();
+    cashKeys.current.set(payloadSignature, idempotencyKey);
     const requestCart = lines;
     const requestTotal = total;
     const request = (async () => {
-      const sale = await client.createSale({
-        idempotencyKey,
-        items: requestCart.map((line) => ({
-          productId: line.product.id,
-          quantity: line.quantity,
-          unitPrice: Math.round(line.product.price * 100),
-        })),
-        total: Math.round(requestTotal * 100),
-        paymentMethod: 'cash',
-        cashReceived: cashCents,
-      });
+      try {
+        const sale = await client.createSale({
+          idempotencyKey,
+          items: requestCart.map((line) => ({
+            productId: line.product.id,
+            quantity: line.quantity,
+            unitPrice: Math.round(line.product.price * 100),
+          })),
+          total: Math.round(requestTotal * 100),
+          paymentMethod: 'cash',
+          cashReceived: cashCents,
+        });
 
-      setSales((current) => mergeSales(current, [sale]));
-      if (sameCart(cartRef.current.lines, requestCart)) commitCart({ type: 'reset' });
-      cashKeys.current.delete(requestSignature);
+        if (uncertainCashRef.current?.payloadSignature === payloadSignature) uncertainCashRef.current = undefined;
+        cashKeys.current.delete(payloadSignature);
+        setSales((current) => mergeSales(current, [sale]));
+        if (sameCart(cartRef.current.lines, requestCart)) commitCart({ type: 'reset' });
 
-      // The sale response is authoritative for the receipt. These reads make
-      // inventory and history authoritative too, even after a retry response.
-      await Promise.allSettled([refreshInventory(), refreshSales()]);
-      return sale;
+        // The sale response is authoritative for the receipt. These reads make
+        // inventory and history authoritative too, even after a retry response.
+        await Promise.allSettled([refreshInventory(), refreshSales()]);
+        return sale;
+      } catch (error) {
+        // No HTTP answer, or a server error: Laravel may have committed the
+        // sale. Keep the key and bind the attempt to its payload so a later
+        // repriced cart cannot replay the old sale.
+        if (isUncertainCashFailure(error)) {
+          uncertainCashRef.current = { payloadSignature, idempotencyKey };
+        }
+        throw error;
+      }
     })();
-    cashRequests.current.set(requestSignature, request);
+    cashRequests.current.set(payloadSignature, request);
     request.then(
-      () => cashRequests.current.delete(requestSignature),
-      () => cashRequests.current.delete(requestSignature),
+      () => cashRequests.current.delete(payloadSignature),
+      () => cashRequests.current.delete(payloadSignature),
     );
     return request;
-  }, [client, commitCart, completeOfflineCashSale, demoCatalogEnabled, refreshInventory, refreshSales, total]);
+  }, [client, commitCart, refreshInventory, refreshSales, resolveCashAttempt, total]);
 
   const startQrPhPayment = useCallback(async (forceNew = false) => {
     commitCart({ type: 'discard-undo' });
@@ -791,6 +852,29 @@ function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {
   for (const [signature, known] of payments) {
     if (known.id === payment.id) payments.set(signature, payment);
   }
+}
+
+/**
+ * Identity of the exact cash payload the mobile app sent. Unlike the API's
+ * canonical request (items and cash only), this includes the per-line price, so
+ * a repriced cart is a different attempt and cannot silently reuse an earlier
+ * uncertain attempt's idempotency key (defect F3).
+ */
+function cashPayloadSignature(lines: CartLine[], cashCents: number) {
+  const items = lines
+    .map((line) => `${line.product.id}:${line.quantity}:${Math.round(line.product.price * 100)}`)
+    .join('|');
+  return `${items}|cash:${cashCents}`;
+}
+
+/**
+ * True when a cash attempt failed without a definite answer, so Laravel may
+ * still have committed the sale: a transport failure (no HTTP status) or a
+ * server-side error.
+ */
+function isUncertainCashFailure(error: unknown) {
+  if (!(error instanceof ApiClientError)) return true;
+  return error.status === undefined || error.status >= 500;
 }
 
 function createIdempotencyKey(prefix: 'mobile-cash' | 'mobile-qr' = 'mobile-cash') {

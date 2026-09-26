@@ -9,6 +9,7 @@ import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { cashChange, paymentError } from '@/src/domain/pos';
 import { saleFailureCopy } from '@/src/domain/checkout';
+import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
@@ -19,6 +20,7 @@ export default function CheckoutScreen() {
   const {
     total,
     cart,
+    apiConfigured,
     resetCart,
     completeCashSale,
     startQrPhPayment,
@@ -43,6 +45,14 @@ export default function CheckoutScreen() {
 
   const finishCash = async () => {
     setCashError(undefined);
+    // Strict online: no sale can be recorded without Laravel, so a stale or
+    // deep-linked checkout can never fall through to a local sale (defect F1).
+    if (!apiConfigured) {
+      const message = OFFLINE_COPY.checkoutNotConfigured;
+      setCashError(message);
+      Alert.alert('Unable to complete sale', message);
+      return;
+    }
     if (!cashResult.sufficient) {
       const message = `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`;
       setCashError(message);
@@ -166,6 +176,24 @@ export default function CheckoutScreen() {
           <Text style={styles.emptyTitle}>The cart is empty</Text>
           <Text style={styles.emptyBody}>Return to the POS and add a product before starting payment.</Text>
           <AppButton testID="return-to-pos" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
+        </View>
+      </Screen>
+    );
+  }
+
+  // The POS already refuses to proceed offline, but this route can also be
+  // reached by a deep link or a stale navigation. Block it here too so no
+  // checkout path exists without Laravel (defect F1).
+  if (!apiConfigured) {
+    return (
+      <Screen title="Checkout" subtitle="Laravel is not reachable." back>
+        <View style={styles.emptyCard}>
+          <View style={styles.emptyIcon}><Ionicons name="cloud-offline-outline" size={36} color={colors.warning} /></View>
+          <Text style={styles.emptyTitle}>No sale can be recorded</Text>
+          <Text testID="checkout-offline-notice" accessibilityRole="alert" style={styles.emptyBody}>
+            {OFFLINE_COPY.checkoutNotConfigured} The cart has been kept; return to the POS, connect to the Laravel API, and start payment again.
+          </Text>
+          <AppButton testID="return-to-pos-offline" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
       </Screen>
     );

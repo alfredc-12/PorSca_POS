@@ -39,26 +39,37 @@ describe('POS business rules', () => {
     expect(cashChange(63, 50)).toEqual({ sufficient: false, change: 0, shortfall: 13 });
   });
 
-  it('searches by name, barcode, and category while keeping an empty query unfiltered', () => {
+  it('searches by name only for non-barcode queries, keeping an empty query unfiltered', () => {
     const products = [cola, noodles];
     expect(searchProducts(products, '')).toEqual(products);
-    expect(searchProducts(products, '480002')).toEqual([noodles]);
-    expect(searchProducts(products, 'beverages')).toEqual([cola]);
+    expect(searchProducts(products, 'coca')).toEqual([cola]);
+    expect(searchProducts(products, 'lucky me')).toEqual([noodles]);
     expect(searchProducts(products, 'not-found')).toEqual([]);
+    // The Laravel `?search=` filter is name-only, so a barcode value or a
+    // category must not match a name search offline either (defect F5).
+    expect(searchProducts(products, '480002')).toEqual([]);
+    expect(searchProducts(products, 'beverages')).toEqual([]);
   });
 
   it('treats a barcode-shaped query as an exact lookup online and offline alike', () => {
-    const products = [{ ...cola, barcode: '4800010000011' }, { ...noodles, barcode: '4800019999999' }];
+    const products = [{ ...cola, barcode: '4800010000019' }, { ...noodles, barcode: '4800019999991' }];
 
     expect(isBarcodeQuery('480001')).toBe(false);
-    expect(isBarcodeQuery('4800010000011')).toBe(true);
+    expect(isBarcodeQuery('4800010000019')).toBe(true);
     expect(isBarcodeQuery('coke 500')).toBe(false);
 
-    expect(searchProducts(products, '4800010000011')).toEqual([products[0]]);
+    expect(searchProducts(products, '4800010000019')).toEqual([products[0]]);
     expect(searchProducts(products, '4800010000')).toEqual([]);
-    expect(searchProducts(products, ' 4800010000011 ')).toEqual([products[0]]);
-    // A query too short to be a barcode keeps the substring behaviour of a text search.
-    expect(searchProducts(products, '480001')).toEqual(products);
+    expect(searchProducts(products, ' 4800010000019 ')).toEqual([products[0]]);
+  });
+
+  it('keeps a short numeric prefix on the same name-only meaning in both modes', () => {
+    const products = [{ ...cola, barcode: '4800010000019' }];
+
+    // Too short to be a barcode, so it is a name search: it finds no product
+    // whose only match is the barcode prefix, online or offline (defect F5).
+    expect(isBarcodeQuery('480')).toBe(false);
+    expect(searchProducts(products, '480')).toEqual([]);
   });
 
   it('deducts inventory exactly once only after the complete cart passes validation', () => {
