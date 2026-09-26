@@ -89,6 +89,10 @@ Build the Android development app yourself, or install an APK shared by a teamma
 
    Success: lint, TypeScript, and the fast Jest/RNTL tests all pass.
 
+## Build and API pairing
+
+Use the development app with the `development` API branch for daily integration, and the preview app with the `staging` API branch for formal testing. Mixing app builds and API branches makes failures ambiguous because the app configuration and API changes may not match.
+
 ## Staging environment
 
 The EAS `preview` profile is the internal staging/SQA build. It points at the stable staging API origin configured in `eas.json` and is built manually only after every check in the [preview gate](docs/WORKFLOW.md#previewstaging-build-gate) is green. Follow that gate before running:
