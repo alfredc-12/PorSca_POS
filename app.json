@@ -20,7 +20,11 @@
       "typedRoutes": true
     },
     "android": {
-      "package": "com.porsca.pos"
+      "package": "com.porsca.pos",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "ios": {
       "bundleIdentifier": "com.porsca.pos",
@@ -28,6 +32,13 @@
     },
     "web": {
       "bundler": "metro"
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "27ef9713-4c08-4815-bf6c-48368dd2b260"
+      }
+    },
+    "owner": "porscapos"
   }
 }
