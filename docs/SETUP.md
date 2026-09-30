@@ -83,7 +83,7 @@ A local API without provider credentials can create a synthetic pending payment.
 
 ## Build profiles
 
-The EAS profiles in [`eas.json`](../eas.json) are `development`, `preview`, and `production`. They are not automatic builds. A preview build is a staging/SQA artifact and may be run manually only after the [preview gate](WORKFLOW.md#previewstaging-build-gate) is green. Never spend the limited preview quota to test a failed CI, API, migration, seed, or webhook setup.
+The EAS profiles in [`eas.json`](../eas.json) are `development`, `preview`, and `production`. The `development` profile is a true dev-client build pinned to the `development` EAS environment and requires `expo-dev-client`. The linked Expo project and matching slug are configured in [`app.json`](../app.json). See [Environment profiles](WORKFLOW.md#environment-profiles) for staging over-the-air update behavior. Preview is a staging/SQA artifact and may be built only after the [preview gate](WORKFLOW.md#previewstaging-build-gate) is green. Never spend the limited preview quota to test a failed CI, API, migration, seed, or webhook setup.
 
 ## Optional Android automation
 

@@ -15,7 +15,7 @@ QR Ph checkout is routed through the Laravel API. The app receives only a transa
 
 ## Development environment
 
-The development profile connects to a Laravel API running on your computer. Use Expo Go for a quick local session; use an EAS development build when you need the installed development app. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone.
+The development profile connects to a Laravel API running on your computer. It is a true dev-client build and requires `expo-dev-client`; use Expo Go for a quick local session or an EAS development build when you need the installed development app. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone. See [Build profiles](docs/SETUP.md#build-profiles) for the EAS environment and project link.
 
 ### Find your computer's LAN address
 
