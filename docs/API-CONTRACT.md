@@ -4,7 +4,7 @@
 
 ## Configuration
 
-`EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the stable staging API base.
+`EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the stable staging API base configured in [`eas.json`](../eas.json).
 
 Protected local/staging requests use `EXPO_PUBLIC_API_TOKEN` when the environment provides one; `src/api/client.ts` sends it as a Bearer token. Never commit a real staging or production token, and never put PayMongo credentials in any mobile environment variable.
 

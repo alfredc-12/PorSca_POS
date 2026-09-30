@@ -44,11 +44,11 @@ Quotas reset every month, so this rule is a temporary bridge, not a permanent lo
 
 Profiles are in [`eas.json`](../eas.json):
 
-- `development`: internal development build pointed at a developer LAN API example. Replace the LAN address for the current network. A physical phone must never use `localhost`.
-- `preview`: internal staging build pointed at the stable staging API origin. This is the formal SQA candidate.
+- `development`: true dev-client build pinned to the `development` EAS environment and pointed at a developer LAN API example. Replace the LAN address for the current network; a physical phone must never use `localhost`.
+- `preview`: internal staging build pointed at the stable staging API origin. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
 - `production`: reserved for a separately approved production configuration; production hosting and PayMongo are out of scope for this round.
 
-Profiles are configuration only. No EAS build or deploy runs automatically. Keep the preview build manual because the Expo build quota is limited.
+The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
 
 ## Preview/staging build gate
 
