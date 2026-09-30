@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "PorSca POS",
-    "slug": "porsca-pos",
+    "slug": "porsca-app",
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "porsca",
@@ -32,6 +32,14 @@
     },
     "web": {
       "bundler": "metro"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/27ef9713-4c08-4815-bf6c-48368dd2b260",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
     },
     "extra": {
       "router": {},
