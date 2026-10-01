@@ -18,6 +18,7 @@ app/
   scanner.tsx
   checkout.tsx
   product-form.tsx
+  users.tsx           # admin-only cashier account management
   (tabs)/
     _layout.tsx
     pos.tsx
@@ -36,7 +37,7 @@ src/
   types/
 ```
 
-`AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form also requires admin. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Staff administration remains API-only; cashiers read all sales without per-cashier scoping.
+`AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form and Users screen also require admin. Admin navigation exposes Users while cashier navigation does not. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Users actions stay inside the single API client; cashier permissions remain fixed by role, and cashiers read all sales without per-cashier scoping.
 
 `PosProvider` owns the signed-in POS state. Cart state is a single pure reducer
 (`src/domain/cart.ts`); every add, quantity change, clear, undo and
@@ -78,7 +79,7 @@ Unpaid, failed, cancelled, expired, or pending payments do not create a sale or 
 
 ## API resources
 
-The mobile client covers products, inventory, sales, transactions, and payments. Endpoint shapes and response/error rules are recorded in [API-CONTRACT.md](API-CONTRACT.md); keep screens free of endpoint details. The API track owns Postman/Newman backend automation and Laravel implementation.
+The mobile client covers products, inventory, sales, transactions, payments, and admin user management. Endpoint shapes and response/error rules are recorded in [API-CONTRACT.md](API-CONTRACT.md); keep screens free of endpoint details. The API track owns Postman/Newman backend automation and Laravel implementation.
 
 ## SQA seams
 

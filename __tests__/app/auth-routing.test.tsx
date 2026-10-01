@@ -16,8 +16,9 @@ function response(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-function setup(initialUrl = '/', savedToken: string | null = null) {
-  const fetchImpl = jest.fn().mockResolvedValue(response({ data: { token: 'token', token_type: 'Bearer', user: cashier } }));
+function setup(initialUrl = '/', savedToken: string | null = null, role: 'cashier' | 'admin' = 'cashier') {
+  const signedInUser = { ...cashier, role };
+  const fetchImpl = jest.fn().mockResolvedValue(response({ data: { token: 'token', token_type: 'Bearer', user: signedInUser } }));
   const client = new ApiClient({ baseUrl: 'https://api.example.test', fetchImpl });
   const store = { get: async () => savedToken, set: jest.fn().mockResolvedValue(undefined), remove: jest.fn().mockResolvedValue(undefined) };
   const screen = renderRouter({
@@ -31,6 +32,7 @@ function setup(initialUrl = '/', savedToken: string | null = null) {
     scanner: () => <Text>Protected scanner</Text>,
     checkout: () => <Text>Protected checkout</Text>,
     'product-form': () => <Text>Admin product form</Text>,
+    users: () => <Text>Admin user management</Text>,
   }, { initialUrl });
   return { ...screen, client, fetchImpl, store };
 }
@@ -38,7 +40,7 @@ function setup(initialUrl = '/', savedToken: string | null = null) {
 describe('real Expo Router authentication flow', () => {
   afterEach(() => jest.useRealTimers());
 
-  it.each(['/checkout', '/scanner', '/inventory', '/product-form'])('redirects a signed-out deep link %s to login', async (initialUrl) => {
+  it.each(['/checkout', '/scanner', '/inventory', '/product-form', '/users'])('redirects a signed-out deep link %s to login', async (initialUrl) => {
     const screen = setup(initialUrl);
     await waitFor(() => expect(screen.getPathname()).toBe('/login'));
     expect(screen.getByLabelText('Password')).toBeTruthy();
@@ -61,10 +63,22 @@ describe('real Expo Router authentication flow', () => {
     expect(screen.store.remove).toHaveBeenCalled();
   });
 
-  it('redirects a restored cashier admin-route deep link to the POS and signs out through the header', async () => {
-    const screen = setup('/product-form', 'saved-token');
+  it.each(['/product-form', '/users'])('redirects a restored cashier admin-route deep link %s to the POS', async (initialUrl) => {
+    const screen = setup(initialUrl, 'saved-token');
     await waitFor(() => expect(screen.getPathname()).toBe('/pos'));
     expect(screen.queryByText('Admin product form')).toBeNull();
+    expect(screen.queryByText('Admin user management')).toBeNull();
+  });
+
+  it('allows a restored admin to open the protected Users route directly', async () => {
+    const screen = setup('/users', 'saved-token', 'admin');
+    await waitFor(() => expect(screen.getPathname()).toBe('/users'));
+    expect(screen.getByText('Admin user management')).toBeTruthy();
+  });
+
+  it('signs out through the header after a restored cashier reaches the POS', async () => {
+    const screen = setup('/product-form', 'saved-token');
+    await waitFor(() => expect(screen.getPathname()).toBe('/pos'));
     screen.fetchImpl.mockResolvedValue(response(undefined, 204));
     fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(screen.getPathname()).toBe('/login'));

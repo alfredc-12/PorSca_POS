@@ -70,7 +70,7 @@ Tab navigation lives in `app/(tabs)/_layout.tsx` and must remain visually consis
 
 ### Login
 
-Login uses the same cream/green PorSca shell, labeled email/password inputs, a masked password, and an in-place recoverable error. Disable submission while the request is pending. Session restoration shows a loading state, never a flash of protected content. The signed-in tab header identifies the account role and offers Sign out.
+Login uses the same cream/green PorSca shell, labeled email/password inputs, a masked password, and an in-place recoverable error. Disable submission while the request is pending. Session restoration shows a loading state, never a flash of protected content. The signed-in tab header identifies the account role and offers Sign out; admins also see a Users entry for cashier account management.
 
 ### POS
 
@@ -98,6 +98,10 @@ Checkout inherits the same cream/green visual system. It presents amount due, or
 ### Product editor
 
 Admin-only product create/edit uses the same surface and form system and includes product category. Inventory barcode scanning can pre-fill a new product barcode.
+
+### Users
+
+The admin-only Users screen lists account name, email, role, and active state. Admins can create a cashier with name, email, and password, with field-level validation and recoverable API errors. Deactivation requires an explicit confirmation and explains that sign-in is disabled and API sessions are revoked. Inactive cashiers can be reactivated; role and permissions remain fixed. Cashiers do not see the Users navigation entry and cannot open the protected route.
 
 ### Scanner
 

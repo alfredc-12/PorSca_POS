@@ -29,7 +29,8 @@ The cashier uses one phone during normal in-person retail transactions. Product 
 - Prevent quantities beyond available stock.
 - Sign in with an individual API-managed admin or cashier account; native sessions use secure token storage.
 - Admins manage product name, barcode, price, and stock quantity; cashiers view inventory read-only.
-- Both roles can read all sales. Staff setup stays API-only, with no phone staff-management screen.
+- Admins manage cashier accounts from the phone Users screen: create accounts, review roles and active state, deactivate, and reactivate cashiers. Cashiers cannot access this screen; the API remains the authorization authority.
+- Both roles can read all sales. Cashier permissions are fixed by role; there is no permission editor.
 - Record cash received and calculate change.
 - Support a PayMongo sandbox QR Ph integration through a backend.
 - Deduct inventory only after successful payment confirmation.

@@ -247,6 +247,46 @@ describe('ApiClient', () => {
     );
   });
 
+  it('lists users, creates a fixed-role cashier, updates active state, and deactivates through the admin routes', async () => {
+    const admin = { id: 1, name: 'Store Admin', email: 'admin@example.test', role: 'admin', is_active: true, created_at: '2026-10-01T09:00:00Z' };
+    const cashier = { id: 2, name: 'Counter One', email: 'cashier@example.test', role: 'cashier', is_active: true, created_at: '2026-10-01T09:01:00Z' };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response({ data: { items: [admin, cashier] } }))
+      .mockResolvedValueOnce(response({ data: { user: cashier } }, true, 201))
+      .mockResolvedValueOnce(response({ data: { user: { ...cashier, is_active: false } } }))
+      .mockResolvedValueOnce(response(undefined, true, 204));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('admin-session');
+
+    await expect(client.listUsers()).resolves.toEqual([
+      { ...admin, id: '1' },
+      { ...cashier, id: '2' },
+    ]);
+    await expect(client.createCashier({ name: 'Counter One', email: 'cashier@example.test', password: 'cashier-password' })).resolves.toEqual({
+      ...cashier,
+      id: '2',
+    });
+    await expect(client.updateUser('2', { is_active: false })).resolves.toMatchObject({ id: '2', is_active: false });
+    await expect(client.deactivateUser('2')).resolves.toBeUndefined();
+
+    expect(fetchImpl.mock.calls[0]).toEqual([
+      'https://staging-api.example.test/api/v1/users',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer admin-session' }) }),
+    ]);
+    expect(fetchImpl.mock.calls[1]).toEqual([
+      'https://staging-api.example.test/api/v1/users',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Counter One', email: 'cashier@example.test', password: 'cashier-password' }) }),
+    ]);
+    expect(fetchImpl.mock.calls[2]).toEqual([
+      'https://staging-api.example.test/api/v1/users/2',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ is_active: false }) }),
+    ]);
+    expect(fetchImpl.mock.calls[3]).toEqual([
+      'https://staging-api.example.test/api/v1/users/2/deactivate',
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    ]);
+  });
+
   it('edits supported product fields and updates stock through the documented endpoints', async () => {
     const updated = {
       data: {

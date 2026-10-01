@@ -18,6 +18,8 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v2` and expects J
 | Login (public, rate-limited) | POST | `/auth/login` | `login()` |
 | Current user | GET | `/auth/me` | `me()` |
 | Logout | POST | `/auth/logout` | `logout()` |
+| Admin users | GET/POST | `/users` | `listUsers()` / `createCashier()` |
+| Admin user update/deactivate | PATCH/POST | `/users/:id` / `/users/:id/deactivate` | `updateUser()` / `deactivateUser()` |
 | Products | GET/POST | `/products` | `listProducts()` / `createProduct()` |
 | Product | GET/PATCH | `/products/:id` | `getProduct()` / `updateProduct()` |
 | Barcode lookup | GET | `/products/barcode/:barcode` | `getProductByBarcode()` (404 when unknown) |
@@ -45,7 +47,9 @@ Sanctum tokens expire after **30 days** by default (`43200` minutes). Every curr
 
 Both active roles (`admin`, `cashier`) can read catalog/inventory, create cash sales and QR payments, refresh payments, and read **all sales/transactions**. Cashier history is read-only and not scoped per cashier. Only admins may create/edit products or change stock. The mobile app hides product write controls and protects the product-form route for cashiers; Laravel role middleware remains the security authority even if someone calls those endpoints directly.
 
-Staff setup, user management, and deactivation remain **API-only** (`/users` admin routes). There is no phone staff/admin-management screen. The API admin seed uses private `ADMIN_EMAIL`/`ADMIN_PASSWORD` configuration; no account credentials belong in this repository.
+Cashier account management is available from the admin-only phone Users screen. All user routes require an active authenticated admin; Laravel's `role:admin` middleware is the security authority, while navigation and route guards only hide the screen from cashiers. `GET /users` returns `{ data: { items: [{ id, name, email, role, is_active, created_at }] } }`. `POST /users` accepts `{ name, email, password }`, requires a unique valid email and an 8–255 character password, forces `role: cashier` and `is_active: true`, and returns `201 { data: { user } }`. `PATCH /users/:id` accepts supported partial fields `name`, `email`, `password`, and `is_active` and returns `{ data: { user } }`; setting `is_active: true` reactivates an account, while setting it false also revokes its tokens. `POST /users/:id/deactivate` has no request body, sets the account inactive, revokes its tokens, and returns `204` with no body. The screen asks for explicit confirmation before deactivation and offers reactivation through the supported PATCH update. Roles and permissions are not editable from the phone. These shapes were confirmed against the API development implementation at [`335eb36447f8997f43485d6c7d44583acdf9334a`](https://github.com/niks0501/PorSca_POS_API/tree/335eb36447f8997f43485d6c7d44583acdf9334a) and its `UserManagementTest` feature tests.
+
+The API admin seed uses private `ADMIN_EMAIL`/`ADMIN_PASSWORD` configuration; no account credentials belong in this repository.
 
 The paired RBAC API implementation was inspected on development at `335eb36447f8997f43485d6c7d44583acdf9334a`. Promote compatible mobile/API contract-v2 revisions together; do not pair this client with a shared-token v1 API.
 

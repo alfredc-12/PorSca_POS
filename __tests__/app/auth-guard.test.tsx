@@ -30,22 +30,23 @@ function setup(role: 'cashier' | 'admin' | null) {
 }
 
 describe('signed-in route guards', () => {
-  it('gates entry, tabs, scanner, checkout, and product form when signed out', async () => {
+  it('gates entry, tabs, scanner, checkout, product form, and Users when signed out', async () => {
     const screen = setup(null);
     expect(screen.queryByText('route:(tabs)')).toBeNull();
     await waitFor(() => expect(screen.getByText('redirect:/login')).toBeTruthy());
     expect(screen.getByText('route:login')).toBeTruthy();
-    ['(tabs)', 'scanner', 'checkout', 'product-form'].forEach((route) => expect(screen.queryByText(`route:${route}`)).toBeNull());
+    ['(tabs)', 'scanner', 'checkout', 'product-form', 'users'].forEach((route) => expect(screen.queryByText(`route:${route}`)).toBeNull());
     expect(screen.queryByText('protected POS session')).toBeNull();
     expect(screen.fetchImpl).not.toHaveBeenCalled();
   });
 
-  it.each(['cashier', 'admin'] as const)('opens signed-in routes for %s and keeps catalog writes admin-only', async (role) => {
+  it.each(['cashier', 'admin'] as const)('opens signed-in routes for %s and keeps admin screens role-gated', async (role) => {
     const screen = setup(role);
     expect(screen.queryByText('protected POS session')).toBeNull();
     await waitFor(() => expect(screen.getByText('redirect:/(tabs)/pos')).toBeTruthy());
     ['(tabs)', 'scanner', 'checkout'].forEach((route) => expect(screen.getByText(`route:${route}`)).toBeTruthy());
     expect(Boolean(screen.queryByText('route:product-form'))).toBe(role === 'admin');
+    expect(Boolean(screen.queryByText('route:users'))).toBe(role === 'admin');
     expect(screen.queryByText('route:login')).toBeNull();
   });
 
