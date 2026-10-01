@@ -17,6 +17,92 @@ QR Ph checkout is routed through the Laravel API. The app receives only a transa
 
 The development profile connects to a Laravel API running on your computer. It is a true dev-client build and requires `expo-dev-client`; use Expo Go for a quick local session or an EAS development build when you need the installed development app. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone. See [Build profiles](docs/SETUP.md#build-profiles) for the EAS environment and project link.
 
+### Windows 11 native Wi-Fi LAN development
+
+Use these steps when Expo and Laravel run directly on Windows 11 and an Android phone connects over Wi-Fi. Use an installed PorSca POS development build; this needs no ADB or USB.
+
+1. Connect the PC and phone to the same Wi-Fi network. On Windows, open **Settings > Network & internet > Wi-Fi**, select the connected network, and set its network profile to **Private**. Check the profile in PowerShell:
+
+   ```powershell
+   Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
+   ```
+
+   Success: the listed Wi-Fi name matches the phone's network and `NetworkCategory` is `Private`. If it is a trusted network but shows `Public`, run PowerShell as Administrator (replace `Wi-Fi` if the interface has another name), then check again:
+
+   ```powershell
+   Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+   ```
+
+2. Find the PC's current Wi-Fi IPv4 address:
+
+   ```powershell
+   Get-NetIPConfiguration
+   ```
+
+   Success: the connected Wi-Fi adapter shows an `IPv4Address`. Use that current LAN address below. Never use `localhost` or `127.0.0.1` in the phone app.
+
+3. In PowerShell opened as Administrator, allow the API and Metro through Windows Firewall on the Private profile only:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "PorSca POS development - API and Metro" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000,8081 -Profile Private
+   ```
+
+   Verify the rule:
+
+   ```powershell
+   Get-NetFirewallRule -DisplayName "PorSca POS development - API and Metro" | Format-List DisplayName, Enabled, Profile, Direction, Action
+   ```
+
+   Success: the rule is enabled, inbound, allows traffic, and shows `Profile : Private`. The Public profile is not selected.
+
+4. From the mobile repository root, open the local `.env` file:
+
+   ```powershell
+   notepad .env
+   ```
+
+   Add or update these entries, replacing the placeholder with the address from `Get-NetIPConfiguration`:
+
+   ```env
+   EXPO_PUBLIC_API_URL=http://<current-LAN-IP>:8000/api/v1
+   # Uncomment only if the local API requires bearer auth; use a development-only token.
+   # EXPO_PUBLIC_API_TOKEN=<development-only-token>
+   ```
+
+   Success: the URL contains the PC's current LAN address, and the token is omitted unless the local API needs it. Use no production secrets or provider credentials, and do not commit `.env`.
+
+#### Daily commands
+
+Keep the local API checkout and mobile repository in separate PowerShell terminals. In the API checkout, run:
+
+```powershell
+php artisan serve --host=0.0.0.0 --port=8000
+```
+
+Success: Laravel reports that the server is running on port `8000`. Leave this terminal open. The `0.0.0.0` bind makes the API reachable from the phone.
+
+From the mobile repository root in the other terminal, run:
+
+```powershell
+npx expo start
+```
+
+Success: Metro is ready on port `8081` and Expo displays a QR code. Leave this terminal open. The defaults are `8000 = API` and `8081 = Metro`.
+
+On the phone, open these addresses in its browser, replacing the placeholder with the same current PC Wi-Fi IPv4 address:
+
+- `http://<PC-LAN-IP>:8000/api/v1/health` — success: the API health endpoint responds.
+- `http://<PC-LAN-IP>:8081/status` — success: the page says `packager-status:running`.
+
+After both checks pass, open the installed development build and scan Expo's QR code, or connect manually to `http://<PC-LAN-IP>:8081`. Success: the development build connects to Metro and loads the app over Wi-Fi, without ADB or USB.
+
+Troubleshooting:
+
+- **API unreachable:** In the API checkout, run `php artisan serve --host=0.0.0.0 --port=8000` and retry `http://<PC-LAN-IP>:8000/api/v1/health` on the phone. Success is an API health response; confirm the Private-only firewall rule allows port `8000`.
+- **Metro unreachable:** From the mobile repository root, stop Metro with `Ctrl+C` and run `npx expo start --lan`. Success is Metro ready on `8081` and a working `http://<PC-LAN-IP>:8081/status` phone check; confirm the Private-only firewall rule allows port `8081`.
+- **Requests failing after load:** Check that `.env` has the current LAN URL and, only when required, the local development token. Stop Metro with `Ctrl+C`, then run `npx expo start --clear`. Success: the phone's API health check responds and app requests work; rebuild a shared development build if it has another API URL baked in.
+- **IP changes or DHCP reservation:** Run `Get-NetIPConfiguration`, update `EXPO_PUBLIC_API_URL` in `.env` with the new Wi-Fi IPv4 address, then restart Expo with `npx expo start --clear`. Success: both phone checks work again. Ask the network administrator to reserve the PC's DHCP address if it changes often.
+
 ### Find your computer's LAN address
 
 Use the address for the Wi-Fi or Ethernet adapter that is on the same network as your phone. Ignore loopback addresses and virtual adapters. Windows PowerShell (built-in NetTCPIP module):
