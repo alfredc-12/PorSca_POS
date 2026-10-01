@@ -6,12 +6,14 @@ import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { DataState } from '@/src/components/DataState';
 import { usePos } from '@/src/context/PosContext';
+import { useAuth } from '@/src/context/AuthContext';
 import { Product } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 
 export default function InventoryScreen() {
   const { inventoryProducts, inventoryState, inventoryError, inventoryUsingFallback, refreshInventory } = usePos();
+  const { isAdmin } = useAuth();
   const [query, setQuery] = useState('');
   const responsive = useResponsive();
 
@@ -97,7 +99,7 @@ export default function InventoryScreen() {
             numberOfLines={responsive.narrow ? 2 : 1}
             style={[styles.headingHint, { fontSize: responsive.font(12.5), maxWidth: responsive.narrow ? '100%' : '58%' }]}
           >
-            Manage your products and stock levels
+            {isAdmin ? 'Manage your products and stock levels' : 'View products and stock levels • Read-only'}
           </Text>
         </View>
 
@@ -111,7 +113,7 @@ export default function InventoryScreen() {
 
       {inventoryState !== 'loading' ? <View style={styles.listCard}>
         {filtered.length ? filtered.map((product, index) => (
-          <ProductRow key={product.id} product={product} first={index === 0} />
+          <ProductRow key={product.id} product={product} first={index === 0} editable={isAdmin} />
         )) : (
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.26, 190, 250) }]}>
             <Ionicons name="search-outline" size={responsive.s(34)} color={colors.textMuted} />
@@ -121,7 +123,7 @@ export default function InventoryScreen() {
         )}
       </View> : null}
 
-      <View style={styles.addWrap}>
+      {isAdmin ? <View style={styles.addWrap}>
         <Pressable
           style={[
             styles.addButton,
@@ -136,7 +138,7 @@ export default function InventoryScreen() {
           <Ionicons name="add" size={responsive.s(25)} color={colors.white} />
           <Text style={[styles.addText, { fontSize: responsive.font(16) }]}>Add Product</Text>
         </Pressable>
-      </View>
+      </View> : null}
     </Screen>
   );
 }
@@ -164,7 +166,7 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
   );
 }
 
-function ProductRow({ product, first }: { product: Product; first: boolean }) {
+function ProductRow({ product, first, editable }: { product: Product; first: boolean; editable: boolean }) {
   const responsive = useResponsive();
   const low = product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10);
   const out = product.stockStatus === 'out_of_stock' || product.stock === 0;
@@ -175,6 +177,9 @@ function ProductRow({ product, first }: { product: Product; first: boolean }) {
 
   return (
     <Pressable
+      accessibilityRole={editable ? 'button' : undefined}
+      accessibilityLabel={editable ? `Edit ${product.name}` : product.name}
+      disabled={!editable}
       onPress={() => router.push({ pathname: '/product-form', params: { id: product.id } })}
       style={({ pressed }) => [
         styles.productRow,
@@ -207,7 +212,7 @@ function ProductRow({ product, first }: { product: Product; first: boolean }) {
         ) : null}
         <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{product.price > 0 ? `₱${product.price.toFixed(2)}` : 'Price unavailable'}</Text>
       </View>
-      <Ionicons name="ellipsis-vertical" size={responsive.s(20)} color={colors.textMuted} />
+      {editable ? <Ionicons name="ellipsis-vertical" size={responsive.s(20)} color={colors.textMuted} /> : null}
     </Pressable>
   );
 }

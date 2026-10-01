@@ -14,6 +14,8 @@ import {
 
 const mockRouter = { back: jest.fn(), replace: jest.fn() };
 const mockRouteParams: { mode?: string } = {};
+let mockIsAdmin = true;
+jest.mock('@/src/context/AuthContext', () => ({ useAuth: () => ({ isAdmin: mockIsAdmin }) }));
 
 jest.mock('expo-router', () => ({
   __esModule: true,
@@ -111,8 +113,29 @@ function renderScanner({ mode, fetchImpl }: { mode?: string; fetchImpl: jest.Moc
 
 describe('ScannerScreen', () => {
   beforeEach(() => {
+    mockIsAdmin = true;
     mockRouter.back.mockReset();
     mockRouter.replace.mockReset();
+  });
+
+  it('lets a cashier inspect an inventory scan without opening the product editor', async () => {
+    mockIsAdmin = false;
+    const scanner = renderScanner({ mode: 'inventory', fetchImpl: apiFetch() });
+    scanner.startCamera();
+    scanner.scan(EAN13_IN_STOCK);
+    await waitFor(() => expect(scanner.getByText('Coca-Cola 500mL')).toBeTruthy());
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+    expect(scanner.cart()).toBe('lines:0 qty:0 total:0');
+  });
+
+  it('hides add-product for a cashier unknown inventory barcode', async () => {
+    mockIsAdmin = false;
+    const scanner = renderScanner({ mode: 'inventory', fetchImpl: apiFetch() });
+    scanner.startCamera();
+    scanner.scan('4800000000998');
+    await waitFor(() => expect(scanner.getByTestId('scanner-scan-again')).toBeTruthy());
+    expect(scanner.queryByTestId('scanner-add-product')).toBeNull();
+    expect(scanner.getByText('Back to inventory')).toBeTruthy();
   });
 
   it('does not scan before the camera reports it is ready', async () => {

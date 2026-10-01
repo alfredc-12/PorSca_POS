@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { DataState } from '@/src/components/DataState';
 import { ProductField, usePos } from '@/src/context/PosContext';
 import { ProductCategory } from '@/src/types';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 const categories: ProductCategory[] = ['Beverages', 'Noodles', 'Milk', 'Snacks', 'Personal Care', 'Household', 'General'];
@@ -40,6 +41,7 @@ export function validateProductDraft(draft: { name: string; barcode: string; pri
 }
 
 export default function ProductFormScreen() {
+  const { isAdmin } = useAuth();
   const { id, barcode: scannedBarcode } = useLocalSearchParams<{ id?: string; barcode?: string }>();
   const { products, inventoryProducts, updateProduct, createProduct, refreshInventory } = usePos();
   const existing = useMemo(
@@ -66,7 +68,7 @@ export default function ProductFormScreen() {
   };
 
   const save = async () => {
-    if (saving || retryingRefresh) return;
+    if (!isAdmin || saving || retryingRefresh) return;
     const errors = validateProductDraft({ name, barcode, price, stock });
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -123,6 +125,8 @@ export default function ProductFormScreen() {
     }
     setFormError('The inventory is still unavailable. Keep this form open and retry the refresh again.');
   };
+
+  if (!isAdmin) return <Redirect href="/(tabs)/inventory" />;
 
   if (id && !existing) {
     return (

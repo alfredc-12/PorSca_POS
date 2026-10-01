@@ -14,7 +14,8 @@
           "cameraPermission": "Allow PorSca POS to use the camera to scan product barcodes.",
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

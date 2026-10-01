@@ -6,7 +6,7 @@ This is the mobile half of the PorSca release unit. The Expo app is the only use
 
 - `main` is stable and protected.
 - `staging` is the permanent integration branch. It is created from `main` if absent and must be protected with required CI checks.
-- Work happens on `feature/*` (or an automation worker branch such as `fm/*`) and reaches `staging` only through a pull request.
+- Daily integration work starts from `development` on `feature/*` (or an automation worker branch such as `fm/*`) and returns to `development` through a pull request. Promote matching mobile/API development revisions to `staging` together for formal QA.
 - A defect found in staging is fixed on a new branch from `staging`, then returned through a pull request. Do not patch `staging` directly.
 - Mobile and API changes are promoted as a pair to `main` only after the formal QA cycle has human approval. Neither track should promote alone.
 
@@ -44,11 +44,11 @@ Quotas reset every month, so this rule is a temporary bridge, not a permanent lo
 
 Profiles are in [`eas.json`](../eas.json):
 
-- `development`: true dev-client build pinned to the `development` EAS environment and pointed at a developer LAN API example. Replace the LAN address for the current network; a physical phone must never use `localhost`.
+- `development`: true dev-client build pinned to the `development` EAS environment. Set the developer LAN API URL in `.env` or the selected EAS environment; no fixed LAN URL is in this profile. A physical phone must never use `localhost`.
 - `preview`: internal staging build pointed at the stable staging API origin. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
 - `production`: reserved for a separately approved production configuration; production hosting and PayMongo are out of scope for this round.
 
-The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
+The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Contract v2 adds `expo-secure-store`: existing binaries require a fresh native build (`eas build --profile development --platform android` for daily Android development). OTA updates alone cannot add the native module. Preview rebuilds still require the gate below. Tokens/passwords never belong in EAS public settings; testers sign in with individual API-managed accounts. Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
 
 ## Preview/staging build gate
 
@@ -60,7 +60,7 @@ Run the following gate and record the evidence before any `eas build --profile p
 4. Laravel migrations have run and staging data has been seeded with the recorded data/seed version.
 5. PayMongo sandbox credentials are configured server-side, sandbox callbacks/webhooks are reachable, and webhook verification is enabled.
 6. API-track backend automation checks (Postman/Newman) are green.
-7. The required mobile smoke flows are green on the Android/Appium staging seam: search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
+7. The required mobile smoke flows are green on the Android/Appium staging seam: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 8. The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context.
 
 Only after all eight checks are green may the release owner manually build the preview candidate:
@@ -81,7 +81,7 @@ Keep the record with:
 
 - cycle ID and owner;
 - exact mobile commit SHA and exact Laravel API commit SHA;
-- `porsca-mobile-api-v1` contract version;
+- `porsca-mobile-api-v2` contract version;
 - environment/profile and staging API origin;
 - migration and seed/data version;
 - PayMongo sandbox account/context, webhook endpoint reachability, and provider test mode;

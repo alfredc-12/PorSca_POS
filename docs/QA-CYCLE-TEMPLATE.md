@@ -15,7 +15,7 @@ See [WORKFLOW.md](WORKFLOW.md) for the standing collaboration and release rules 
 - **Environment:** `staging`
 - **Staging API address:** `<stable HTTPS address ending in /api/v1>`
 - **App profile:** `preview`, after the pre-build checklist is green
-- **API contract:** `porsca-mobile-api-v1`
+- **API contract:** `porsca-mobile-api-v2`
 - **Cycle status:** `not started | in progress | approval pending | approved | rejected`
 - **Approval:** `<human decision, date, and evidence links>`
 
@@ -68,6 +68,8 @@ eas build --profile preview --platform android
 ## Required smoke checks
 
 Record a result and evidence for each behavior. Record stock before and after every successful sale.
+
+Before sale checks, verify individual admin/cashier login, secure token restoration on restart, failed login, logout, and expired/revoked-token redirect to login. Confirm cashier inventory is read-only (no add/edit controls), admin product writes are available, and both roles can read all sales. Staff setup stays API-only. Record account role labels, never passwords or tokens.
 
 1. Search a product, add it to the cart, and complete a cash checkout.
 2. Scan a barcode, add it to the cart, and complete a cash checkout.

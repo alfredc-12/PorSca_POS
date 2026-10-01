@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/src/components/AppButton';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
+import { useAuth } from '@/src/context/AuthContext';
 import { BarcodeScanOutcome, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
@@ -19,6 +20,7 @@ export const ADDED_CONFIRMATION_MS = 1200;
 export default function ScannerScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const inventoryMode = mode === 'inventory';
+  const { isAdmin } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
@@ -29,10 +31,10 @@ export default function ScannerScreen() {
 
   // An inventory scan opens the matching product, which is the existing path.
   useEffect(() => {
-    if (inventoryMode && foundProduct) {
+    if (inventoryMode && isAdmin && foundProduct) {
       router.replace({ pathname: '/product-form', params: { id: foundProduct.id } });
     }
-  }, [foundProduct, inventoryMode]);
+  }, [foundProduct, inventoryMode, isAdmin]);
 
   // A POS scan adds the product immediately and confirms it in place.
   useEffect(() => {
@@ -56,7 +58,7 @@ export default function ScannerScreen() {
     );
   }
 
-  const card = inventoryMode && outcome?.kind === 'found' ? undefined : outcome;
+  const card = inventoryMode && isAdmin && outcome?.kind === 'found' ? undefined : outcome;
 
   return (
     <View style={styles.root}>
@@ -84,6 +86,7 @@ export default function ScannerScreen() {
           <ScanOutcomeCard
             outcome={card}
             inventoryMode={inventoryMode}
+            canManageProducts={isAdmin}
             onScanAgain={rearm}
             onClose={() => router.back()}
           />
@@ -97,7 +100,7 @@ export default function ScannerScreen() {
               <View style={styles.scanLine} />
             </View>
             <Text style={styles.title}>{busy ? 'Looking up barcode…' : !cameraReady ? 'Starting the camera…' : 'Place the barcode inside the frame'}</Text>
-            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? isAdmin ? 'We will open the matching product or prepare a new item.' : 'View the matching product and stock. Inventory is read-only.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
             {busy || !cameraReady ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
           </View>
         )}
@@ -114,11 +117,13 @@ export default function ScannerScreen() {
 function ScanOutcomeCard({
   outcome,
   inventoryMode,
+  canManageProducts,
   onScanAgain,
   onClose,
 }: {
   outcome: BarcodeScanOutcome;
   inventoryMode: boolean;
+  canManageProducts: boolean;
   onScanAgain: () => void;
   onClose: () => void;
 }) {
@@ -169,13 +174,13 @@ function ScanOutcomeCard({
         {inventoryMissing ? (
           <>
             <AppButton testID="scanner-scan-again" label="Scan again" onPress={onScanAgain} style={styles.resultButton} />
-            <AppButton
+            {canManageProducts ? <AppButton
               testID="scanner-add-product"
               label="Add product"
               variant="secondary"
               onPress={() => router.replace({ pathname: '/product-form', params: { barcode: outcome.barcode } })}
               style={styles.resultButton}
-            />
+            /> : <AppButton label="Back to inventory" variant="secondary" onPress={onClose} style={styles.resultButton} />}
           </>
         ) : (
           <>

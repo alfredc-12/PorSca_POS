@@ -2,10 +2,11 @@ export const config = {
   runner: 'local',
   specs: ['./test/**/*.e2e.ts'],
   maxInstances: 1,
-  logLevel: 'info',
+  // Login credentials are supplied through element commands; do not log their payloads.
+  logLevel: 'warn',
   framework: 'mocha',
   reporters: ['spec'],
-  services: ['appium'],
+  services: [['appium', { args: { logLevel: 'warn' } }]],
   port: Number(process.env.APPIUM_PORT ?? 4723),
   capabilities: [{
     platformName: 'Android',

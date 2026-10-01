@@ -1,12 +1,20 @@
 import { PaymentMethod, PaymentStatus, Product, Sale, StockStatus } from '@/src/types';
 
 /** The mobile/API contract version promoted with the staging workflow. */
-export const API_CONTRACT_VERSION = 'porsca-mobile-api-v1';
+export const API_CONTRACT_VERSION = 'porsca-mobile-api-v2';
+
+export type AuthUser = {
+  id: string | number;
+  name: string;
+  email: string;
+  role: 'admin' | 'cashier';
+  is_active: boolean;
+};
+
+export type LoginResponse = { token: string; token_type: 'Bearer'; user: AuthUser };
 
 export type ApiClientOptions = {
   baseUrl?: string;
-  /** Staging/local API bearer token. Production credentials must not be bundled. */
-  apiToken?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -180,11 +188,6 @@ function configuredBaseUrl() {
   return value ? value.replace(/\/+$/, '') : undefined;
 }
 
-function configuredApiToken() {
-  const value = process.env.EXPO_PUBLIC_API_TOKEN?.trim();
-  return value || undefined;
-}
-
 export function isDeviceSafeApiUrl(value: string | undefined) {
   if (!value) return false;
   try {
@@ -208,17 +211,42 @@ function unwrapData<T>(payload: T | { data: T }) {
  */
 export class ApiClient {
   readonly baseUrl?: string;
-  private readonly apiToken?: string;
+  private token?: string;
+  private tokenRevision = 0;
+  private onUnauthorized?: () => void;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? configuredBaseUrl())?.replace(/\/+$/, '');
-    this.apiToken = options.apiToken?.trim() || configuredApiToken();
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   get isConfigured() {
     return Boolean(this.baseUrl);
+  }
+
+  /** Tokens are runtime session state, never build-time public configuration. */
+  setToken(token: string | null) {
+    this.token = token?.trim() || undefined;
+    this.tokenRevision += 1;
+  }
+
+  setUnauthorizedHandler(handler?: () => void) {
+    this.onUnauthorized = handler;
+  }
+
+  login(email: string, password: string) {
+    return this.request<LoginResponse>(this.versionedPath('/auth/login'), {
+      method: 'POST', body: { email, password, device_name: 'PorSca POS' }, authenticated: false,
+    });
+  }
+
+  me() {
+    return this.request<{ user: AuthUser }>(this.versionedPath('/auth/me'));
+  }
+
+  logout() {
+    return this.request<void>(this.versionedPath('/auth/logout'), { method: 'POST' });
   }
 
   async health() {
@@ -320,11 +348,14 @@ export class ApiClient {
     return /\/api\/v1$/i.test(baseUrl) ? path : `/api/v1${path}`;
   }
 
-  private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown } = {}) {
+  private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown; authenticated?: boolean } = {}) {
     if (!this.baseUrl) {
       throw new ApiClientError('API URL is not configured. Set EXPO_PUBLIC_API_URL before using the backend.');
     }
 
+    // A late 401 from a previous session must not sign out a newly logged-in user.
+    const revision = this.tokenRevision;
+    const token = options.authenticated === false ? undefined : this.token;
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
@@ -332,7 +363,7 @@ export class ApiClient {
         headers: {
           Accept: 'application/json',
           'X-PorSca-Contract-Version': API_CONTRACT_VERSION,
-          ...(this.apiToken ? { Authorization: `Bearer ${this.apiToken}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers,
         },
@@ -341,6 +372,11 @@ export class ApiClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Network request failed.';
       throw new ApiClientError(`Unable to reach PorSca API: ${message}`);
+    }
+
+    if (response.status === 401 && revision === this.tokenRevision) {
+      this.setToken(null);
+      this.onUnauthorized?.();
     }
 
     const payload = await response.json().catch(() => undefined) as ApiErrorBody | T | undefined;

@@ -10,12 +10,13 @@ QR Ph checkout is routed through the Laravel API. The app receives only a transa
 
 - Node.js 20 LTS or newer
 - npm
-- Expo Go on a phone, or Android Studio with an emulator
+- A fresh PorSca development build on a phone, or Android Studio with an emulator
+- An active API-managed admin or cashier account
 - Git
 
 ## Development environment
 
-The development profile connects to a Laravel API running on your computer. It is a true dev-client build and requires `expo-dev-client`; use Expo Go for a quick local session or an EAS development build when you need the installed development app. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone. See [Build profiles](docs/SETUP.md#build-profiles) for the EAS environment and project link.
+The development profile connects to a Laravel API running on your computer. It is a true dev-client build and requires `expo-dev-client` and `expo-secure-store`. Install a fresh native development build for the new secure-storage module; an OTA update alone cannot add it. For a physical phone, use your computer's LAN IP and keep both devices on the same network. Never use `localhost` on a phone. See [Build profiles](docs/SETUP.md#build-profiles) for the EAS environment and project link.
 
 ### Windows 11 native Wi-Fi LAN development
 
@@ -65,11 +66,9 @@ Use these steps when Expo and Laravel run directly on Windows 11 and an Android 
 
    ```env
    EXPO_PUBLIC_API_URL=http://<current-LAN-IP>:8000/api/v1
-   # Uncomment only if the local API requires bearer auth; use a development-only token.
-   # EXPO_PUBLIC_API_TOKEN=<development-only-token>
    ```
 
-   Success: the URL contains the PC's current LAN address, and the token is omitted unless the local API needs it. Use no production secrets or provider credentials, and do not commit `.env`.
+   Success: the URL contains the PC's current LAN address. Sign in on the phone with your own active API account. Use no production secrets or provider credentials, and do not commit `.env`.
 
 #### Daily commands
 
@@ -100,7 +99,7 @@ Troubleshooting:
 
 - **API unreachable:** In the API checkout, run `php artisan serve --host=0.0.0.0 --port=8000` and retry `http://<PC-LAN-IP>:8000/api/v1/health` on the phone. Success is an API health response; confirm the Private-only firewall rule allows port `8000`.
 - **Metro unreachable:** From the mobile repository root, stop Metro with `Ctrl+C` and run `npx expo start --lan`. Success is Metro ready on `8081` and a working `http://<PC-LAN-IP>:8081/status` phone check; confirm the Private-only firewall rule allows port `8081`.
-- **Requests failing after load:** Check that `.env` has the current LAN URL and, only when required, the local development token. Stop Metro with `Ctrl+C`, then run `npx expo start --clear`. Success: the phone's API health check responds and app requests work; rebuild a shared development build if it has another API URL baked in.
+- **Requests failing after load:** Check that `.env` has the current LAN URL and that your API account is active. Stop Metro with `Ctrl+C`, then run `npx expo start --clear`. Success: the phone's API health check responds and app requests work; rebuild a shared development build if it has another API URL baked in.
 - **IP changes or DHCP reservation:** Run `Get-NetIPConfiguration`, update `EXPO_PUBLIC_API_URL` in `.env` with the new Wi-Fi IPv4 address, then restart Expo with `npx expo start --clear`. Success: both phone checks work again. Ask the network administrator to reserve the PC's DHCP address if it changes often.
 
 ### Find your computer's LAN address
@@ -135,20 +134,18 @@ npm install
 cp .env.example .env
 ```
 
-Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). The optional `EXPO_PUBLIC_API_TOKEN` is the non-production bearer token configured by the maintainer of the local API. Obtain it from that API maintainer; the mobile app cannot generate or retrieve it. If the local API does not require bearer authentication, omit the variable. Never use a real production secret or provider credential: Expo public variables are bundled into the app.
+Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). Sign in in the app with your API-managed email and password. The app saves the returned 30-day session token in native secure storage; no token or password belongs in an Expo public variable. Ask the API maintainer for an account, not a shared token.
 
-PowerShell can set the value for the current session (replace the placeholder with the LAN address found above and the optional token supplied by the API maintainer):
+PowerShell can set the URL for the current session (replace the placeholder with the LAN address found above):
 
 ```powershell
 $env:EXPO_PUBLIC_API_URL = 'http://<computer-LAN-IP>:8000/api/v1'
-$env:EXPO_PUBLIC_API_TOKEN = '<local-api-token-if-required>'
 ```
 
 Bash equivalent:
 
 ```bash
 export EXPO_PUBLIC_API_URL='http://<computer-LAN-IP>:8000/api/v1'
-export EXPO_PUBLIC_API_TOKEN='<local-api-token-if-required>'
 ```
 
 Alternatively, put those assignments in the local `.env`; do not commit `.env` or real tokens.
@@ -165,23 +162,23 @@ npm run start
 npm run start
 ```
 
-Expo shows a QR code. Open it with Expo Go, or use an installed EAS development build. Keep the phone and computer on the same network. To check the API health endpoint, PowerShell uses its built-in web request command:
+Expo shows a QR code. Open it with the newly installed EAS development build, then sign in. Keep the phone and computer on the same network. To check the API health endpoint, PowerShell uses its built-in web request command:
 
 ```powershell
-(Invoke-WebRequest -Uri 'http://<computer-LAN-IP>:8000/health').StatusCode
+(Invoke-WebRequest -Uri 'http://<computer-LAN-IP>:8000/api/v1/health').StatusCode
 ```
 
 Bash uses curl:
 
 ```bash
-curl --fail --show-error 'http://<computer-LAN-IP>:8000/health'
+curl --fail --show-error 'http://<computer-LAN-IP>:8000/api/v1/health'
 ```
 
 A successful health response and a product load in the app show that it reached the backend; seeded in-memory data alone does not.
 
 ### Build and install the development app
 
-Build the Android development app yourself, or install an APK shared by a teammate. EAS internal Android builds produce an installable APK. The development profile's API URL in `eas.json` is only an example; set it to your computer's LAN address when creating your build. A build already made by a teammate has that teammate's URL baked in, so rebuild it to use your own API.
+Build the Android development app yourself, or install an APK shared by a teammate. EAS internal Android builds produce an installable APK. Set `EXPO_PUBLIC_API_URL` to your computer's LAN address in `.env` or the selected EAS environment before creating your build; the development profile deliberately has no fixed LAN URL. A build already made by a teammate has that teammate's URL baked in, so rebuild it to use your own API.
 
 Install EAS CLI (both shells):
 
@@ -239,7 +236,7 @@ eas build --profile preview --platform android
 eas build --profile preview --platform android
 ```
 
-Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the configured staging base, including `/api/v1` and with no trailing slash. Set `EXPO_PUBLIC_API_TOKEN` through the approved build environment if staging requires bearer auth; ask the staging API maintainer for access rather than placing credentials in docs. Never commit or document a real token. Do not replace the configured staging origin with a phone's `localhost` address.
+Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the configured staging base, including `/api/v1` and with no trailing slash. Sign in using your own active staging account. Ask the staging API maintainer for access; never bundle or document a password or token. Do not replace the configured staging origin with a phone's `localhost` address.
 
 Prove the staging connection by requesting `<staging-api-origin>/health` and confirming a successful response, then load products in the installed app. PowerShell request form:
 
@@ -264,10 +261,10 @@ Use an isolated API checkout under `/tmp`, never a shared staging checkout or th
 PowerShell:
 
 ```powershell
-Set-Location /tmp/porsca-pos-api-staging
+Set-Location /tmp/porsca-pos-api-development
 git fetch origin
-git checkout staging
-git reset --hard origin/staging
+git checkout development
+git reset --hard origin/development
 composer install
 Copy-Item .env.example .env
 php artisan key:generate
@@ -278,10 +275,10 @@ php artisan serve --host=0.0.0.0 --port=8000
 Bash (Linux/WSL2):
 
 ```bash
-cd /tmp/porsca-pos-api-staging
+cd /tmp/porsca-pos-api-development
 git fetch origin
-git checkout staging
-git reset --hard origin/staging
+git checkout development
+git reset --hard origin/development
 composer install
 cp .env.example .env
 php artisan key:generate
@@ -289,7 +286,7 @@ php artisan migrate:fresh --seed --force
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1` and provide only the local API bearer token when enabled. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
+Before seeding the isolated local database, configure private `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the API checkout's `.env` (see the API setup guide). Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1`, then sign in with that account. Create cashier accounts through the admin API; there is no staff setup screen on the phone. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
 
 ## Check it works
 
@@ -303,7 +300,7 @@ npm run verify
 npm run verify
 ```
 
-Then search for a seeded product, add it, choose Cash, enter an amount, and confirm. A successful Laravel sale appears in Transactions and stock is refreshed from Laravel.
+Then sign in, search for a seeded product, add it, choose Cash, enter an amount, and confirm. A successful Laravel sale appears in Transactions and stock is refreshed from Laravel.
 
 ## Learn more
 
