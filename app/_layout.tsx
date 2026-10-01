@@ -24,6 +24,7 @@ export function RootNavigator() {
         <Stack.Screen name="checkout" />
         <Stack.Protected guard={isAdmin}>
           <Stack.Screen name="product-form" />
+          <Stack.Screen name="users" />
         </Stack.Protected>
       </Stack.Protected>
     </Stack>

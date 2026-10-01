@@ -11,6 +11,20 @@ export type AuthUser = {
   is_active: boolean;
 };
 
+export type ManagedUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'cashier';
+  is_active: boolean;
+  created_at?: string | null;
+};
+
+export type CashierInput = { name: string; email: string; password: string };
+export type UserUpdate = Partial<CashierInput> & { is_active?: boolean };
+
+type ApiUser = Omit<ManagedUser, 'id'> & { id: string | number };
+
 export type LoginResponse = { token: string; token_type: 'Bearer'; user: AuthUser };
 
 export type ApiClientOptions = {
@@ -249,6 +263,27 @@ export class ApiClient {
     return this.request<void>(this.versionedPath('/auth/logout'), { method: 'POST' });
   }
 
+  listUsers() {
+    return this.request<ApiUser[] | { items?: ApiUser[] }>(this.versionedPath('/users')).then((payload) => {
+      const users = Array.isArray(payload) ? payload : payload.items ?? [];
+      return users.map(normalizeManagedUser);
+    });
+  }
+
+  createCashier(user: CashierInput) {
+    return this.request<{ user: ApiUser }>(this.versionedPath('/users'), { method: 'POST', body: user })
+      .then((payload) => normalizeManagedUser(payload.user));
+  }
+
+  updateUser(userId: string, update: UserUpdate) {
+    return this.request<{ user: ApiUser }>(this.versionedPath(`/users/${encodeURIComponent(userId)}`), { method: 'PATCH', body: update })
+      .then((payload) => normalizeManagedUser(payload.user));
+  }
+
+  deactivateUser(userId: string) {
+    return this.request<void>(this.versionedPath(`/users/${encodeURIComponent(userId)}/deactivate`), { method: 'POST' });
+  }
+
   async health() {
     return this.request<{ ok?: boolean; service?: string; status?: string }>(this.versionedPath('/health'));
   }
@@ -417,6 +452,17 @@ function serializeProductPatch(product: Partial<ProductInput>) {
 
 function toApiPrice(price: number) {
   return Math.round(price * 100);
+}
+
+function normalizeManagedUser(user: ApiUser): ManagedUser {
+  return {
+    id: String(user.id),
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    is_active: Boolean(user.is_active),
+    ...(user.created_at === undefined ? {} : { created_at: user.created_at }),
+  };
 }
 
 function normalizeProduct(product: ApiProduct): Product {
