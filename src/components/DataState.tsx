@@ -44,6 +44,6 @@ const styles = StyleSheet.create({
   icon: { width: 52, height: 52, borderRadius: 17, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   title: { color: colors.text, fontSize: typography.label, fontWeight: '900', textAlign: 'center' },
   message: { color: colors.textMuted, fontSize: typography.caption, lineHeight: 18, textAlign: 'center' },
-  action: { minHeight: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  action: { minHeight: 48, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   actionText: { color: colors.white, fontSize: typography.caption, fontWeight: '900' },
 });

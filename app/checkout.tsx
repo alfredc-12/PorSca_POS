@@ -35,6 +35,7 @@ export default function CheckoutScreen() {
   const [cashError, setCashError] = useState<string>();
   const [cashSubmitting, setCashSubmitting] = useState(false);
   const [qrBusy, setQrBusy] = useState(false);
+  const cashBusyRef = useRef(false);
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
 
@@ -58,7 +59,10 @@ export default function CheckoutScreen() {
       Alert.alert('Insufficient cash', message);
       return;
     }
-
+    // Single-submit guard: the disabled button state commits a render later,
+    // so a second tap before that must not record a second sale.
+    if (cashBusyRef.current) return;
+    cashBusyRef.current = true;
     setCashSubmitting(true);
     try {
       const sale = await completeCashSale(received);
@@ -80,6 +84,7 @@ export default function CheckoutScreen() {
       setCashError(failure.message);
       Alert.alert(failure.title, failure.message);
     } finally {
+      cashBusyRef.current = false;
       setCashSubmitting(false);
     }
   };
@@ -243,12 +248,12 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Choose one</Text>
           </View>
           <View style={styles.segmentRow}>
-            <Pressable testID="checkout-payment-cash" onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash' }} onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
               <Ionicons name="cash-outline" size={22} color={mode === 'cash' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>Cash</Text>
               <Ionicons name={mode === 'cash' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'cash' ? colors.primary : colors.outline} />
             </Pressable>
-            <Pressable testID="checkout-payment-qrph" onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph' }} onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
               <Ionicons name="qr-code-outline" size={22} color={mode === 'qrph' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>QR Ph</Text>
               <Ionicons name={mode === 'qrph' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'qrph' ? colors.primary : colors.outline} />

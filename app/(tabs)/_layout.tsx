@@ -92,9 +92,9 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, backgroundColor: colors.surface },
   accountName: { flex: 1, color: colors.textMuted, fontSize: 12, fontWeight: '600' },
-  usersButton: { minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
+  usersButton: { minHeight: 48, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
   usersButtonText: { color: colors.primary, fontWeight: '800' },
-  signOut: { minHeight: 44, minWidth: 64, justifyContent: 'center', alignItems: 'center' },
+  signOut: { minHeight: 48, minWidth: 64, justifyContent: 'center', alignItems: 'center' },
   signOutText: { color: colors.primary, fontWeight: '800' },
   tabBar: {
     backgroundColor: colors.surface,

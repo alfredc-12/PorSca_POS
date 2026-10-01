@@ -111,6 +111,20 @@ describe('CheckoutScreen cash states', () => {
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/transactions');
   });
 
+  it('ignores a second confirm tap while a cash sale is in flight', async () => {
+    let resolve!: (sale: Sale) => void;
+    const completeCashSale = jest.fn().mockReturnValue(new Promise<Sale>((done) => { resolve = done; }));
+    setContext({ completeCashSale });
+    const { getByTestId } = render(<CheckoutScreen />);
+
+    fireEvent.changeText(getByTestId('cash-received-input'), '100');
+    fireEvent.press(getByTestId('confirm-cash-payment'));
+    fireEvent.press(getByTestId('confirm-cash-payment'));
+    expect(completeCashSale).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(sale); });
+    expect(completeCashSale).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks checkout entirely when Laravel is not configured, even in demo mode', () => {
     const completeCashSale = jest.fn();
     setContext({ apiConfigured: false, completeCashSale });

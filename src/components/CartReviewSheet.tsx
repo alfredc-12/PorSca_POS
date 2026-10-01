@@ -44,7 +44,7 @@ export function CartReviewSheet({ visible, revalidation, onApply, onDismiss }: P
               <Text style={styles.title}>Review before payment</Text>
               <Text style={styles.subtitle}>Laravel recomputes the final amount. Nothing has been charged yet.</Text>
             </View>
-            <Pressable accessibilityLabel="Close review" onPress={onDismiss} style={styles.close}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close review" onPress={onDismiss} style={styles.close}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
             </Pressable>
           </View>
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
   headerCopy: { flex: 1, minWidth: 0 },
   title: { color: colors.text, fontSize: typography.title, fontWeight: '900' },
   subtitle: { color: colors.textMuted, fontSize: typography.caption, lineHeight: 17, marginTop: 2 },
-  close: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceMuted },
+  close: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceMuted },
   message: { color: colors.text, fontSize: typography.label, lineHeight: 20, fontWeight: '600', backgroundColor: colors.warningSoft, borderRadius: radius.md, padding: spacing.md },
   messageDanger: { backgroundColor: colors.dangerSoft, color: colors.danger },
   changes: { flexGrow: 0 },

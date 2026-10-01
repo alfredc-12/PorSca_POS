@@ -1,4 +1,5 @@
 import React from 'react';
+import { Alert } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ApiClient } from '@/src/api/client';
 import ProductFormScreen from '@/app/product-form';
@@ -186,6 +187,29 @@ describe('ProductFormScreen', () => {
     await waitFor(() => expect(screen.getByTestId('product-form-error')).toBeTruthy());
     expect(screen.getByText('Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.')).toBeTruthy();
     expect(mockRouter.back).not.toHaveBeenCalled();
+  });
+
+  it('asks before leaving with unsaved edits instead of dropping them', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    try {
+      const client = new ApiClient({ baseUrl: undefined });
+      const screen = renderForm(client);
+
+      expect(screen.queryByTestId('discard-product-button')).toBeNull();
+      fireEvent.press(screen.getByRole('button', { name: 'Go back' }));
+      expect(mockRouter.back).toHaveBeenCalledTimes(1);
+
+      fireEvent.changeText(screen.getByTestId('product-name-input'), 'Half-entered product');
+      fireEvent.press(screen.getByTestId('discard-product-button'));
+      expect(alertSpy).toHaveBeenCalledWith('Discard unsaved changes?', expect.stringContaining('not been saved'), expect.any(Array));
+      expect(mockRouter.back).toHaveBeenCalledTimes(1);
+
+      fireEvent.press(screen.getByRole('button', { name: 'Go back' }));
+      expect(alertSpy).toHaveBeenCalledTimes(2);
+      expect(mockRouter.back).toHaveBeenCalledTimes(1);
+    } finally {
+      alertSpy.mockRestore();
+    }
   });
 
   it('shows a scanned unknown barcode prefilled in the creation form', () => {

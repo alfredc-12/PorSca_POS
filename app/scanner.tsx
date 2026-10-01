@@ -72,7 +72,7 @@ export default function ScannerScreen() {
       <View style={styles.tint} pointerEvents="none" />
       <SafeAreaView style={styles.safeOverlay} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Pressable accessibilityLabel="Close scanner" onPress={() => router.back()} style={styles.closeButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close scanner" onPress={() => router.back()} style={styles.closeButton}>
             <Ionicons name="close" size={25} color={colors.white} />
           </Pressable>
           <View style={styles.modePill}>
@@ -208,8 +208,8 @@ const styles = StyleSheet.create({
   tint: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(8,19,15,0.24)' },
   safeOverlay: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'space-between' },
   topBar: { minHeight: 66, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  closeButton: { width: 46, height: 46, borderRadius: 15, backgroundColor: 'rgba(10,13,11,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
-  closeSpacer: { width: 46 },
+  closeButton: { width: 48, height: 48, borderRadius: 15, backgroundColor: 'rgba(10,13,11,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
+  closeSpacer: { width: 48 },
   modePill: { minHeight: 42, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: 'rgba(7,131,81,0.84)', flexDirection: 'row', alignItems: 'center', gap: 7 },
   modeText: { color: colors.white, fontSize: 13, fontWeight: '800' },
   centerArea: { alignItems: 'center', paddingHorizontal: spacing.md },
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
   resultProduct: { color: colors.text, fontSize: typography.title, fontWeight: '800', textAlign: 'center' },
   resultMeta: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
   resultMessage: { color: colors.text, fontSize: typography.label, lineHeight: 21, textAlign: 'center', marginTop: spacing.xs },
-  resultWarning: { color: colors.warning, fontSize: typography.caption, fontWeight: '700', textAlign: 'center', marginTop: spacing.xs },
+  resultWarning: { color: colors.text, fontSize: typography.caption, fontWeight: '700', textAlign: 'center', marginTop: spacing.xs },
   resultActions: { gap: spacing.sm },
   resultButton: { alignSelf: 'stretch' },
   resultHint: { color: '#E8ECE9', fontSize: typography.caption, textAlign: 'center', fontWeight: '600' },

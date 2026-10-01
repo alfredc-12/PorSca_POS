@@ -146,6 +146,7 @@ export default function PosScreen() {
             },
           ]}
           testID="pos-scan-button"
+          accessibilityRole="button"
           accessibilityLabel="Scan product barcode"
           onPress={() => router.push('/scanner')}
         >
@@ -193,6 +194,7 @@ export default function PosScreen() {
               <Pressable
                 key={product.id}
                 testID="search-result"
+                accessibilityRole="button"
                 accessibilityLabel={`Add ${product.name}`}
                 disabled={outOfStock}
                 onPress={() => {
@@ -228,6 +230,8 @@ export default function PosScreen() {
           </View>
           <Pressable
             disabled={!cart.length}
+            accessibilityRole="button"
+            accessibilityLabel="Clear cart"
             onPress={() => {
               clearCart();
               setCartNotice(undefined);
@@ -292,11 +296,12 @@ export default function PosScreen() {
             </View>
             <View style={[styles.lineRight, { minWidth: responsive.narrow ? 94 : 108, gap: responsive.short ? 7 : 10 }]}>
               <View style={[styles.qtyControl, { minHeight: responsive.s(38) }]}>
-                <Pressable accessibilityLabel={`Decrease ${line.product.name}`} style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(38) }]} onPress={() => decrementProduct(line.product.id)}><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>−</Text></Pressable>
+                <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${line.product.name}`} style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(48) }]} onPress={() => decrementProduct(line.product.id)}><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>−</Text></Pressable>
                 <Text style={[styles.qtyNumber, { width: responsive.s(responsive.narrow ? 30 : 35), fontSize: responsive.font(16) }]}>{line.quantity}</Text>
                 <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel={`Increase ${line.product.name}`}
-                  style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(38) }]}
+                  style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(48) }]}
                   onPress={() => addToCart(line.product.id)}
                 ><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>+</Text></Pressable>
               </View>
@@ -335,6 +340,7 @@ export default function PosScreen() {
         ) : null}
         <Pressable
           testID="proceed-to-payment"
+          accessibilityRole="button"
           accessibilityLabel="Proceed to payment"
           disabled={!cart.length || checkingPrices || !apiConfigured}
           onPress={() => void proceed()}
@@ -374,7 +380,9 @@ function PaymentOption({ testID, icon, label, selected, onPress }: { testID: str
   return (
     <Pressable
       testID={testID}
+      accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ selected }}
       onPress={onPress}
       style={[
         styles.paymentOption,
@@ -417,7 +425,7 @@ const styles = StyleSheet.create({
   headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
   sectionTitle: { color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
   titleMuted: { color: colors.textMuted, fontWeight: '600' },
-  clearAction: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8 },
+  clearAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, minHeight: 48, minWidth: 48 },
   clearText: { color: colors.danger, fontWeight: '800' },
   limitNotice: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   limitNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
@@ -425,7 +433,7 @@ const styles = StyleSheet.create({
   offlineNoticeText: { color: colors.text, flex: 1, lineHeight: 18, fontWeight: '600' },
   undoBanner: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.text, paddingHorizontal: spacing.md, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   undoText: { color: colors.white, flex: 1, fontWeight: '700' },
-  undoAction: { minHeight: 34, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  undoAction: { minHeight: 48, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   undoActionText: { color: colors.white, fontWeight: '900' },
   emptyCart: { alignItems: 'center', justifyContent: 'center', gap: 8 },
   emptyIcon: { backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
@@ -439,7 +447,7 @@ const styles = StyleSheet.create({
   stockLine: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
   stockText: { color: colors.success, fontWeight: '600' },
   lineRight: { alignItems: 'flex-end' },
-  qtyControl: { borderRadius: 12, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.surfaceMuted, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
+  qtyControl: { borderRadius: 12, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.surfaceMuted, flexDirection: 'row', alignItems: 'center', overflow: 'hidden', minHeight: 48 },
   qtyButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   qtyText: { color: colors.text, fontWeight: '700' },
   qtyNumber: { textAlign: 'center', color: colors.text, fontWeight: '800' },
