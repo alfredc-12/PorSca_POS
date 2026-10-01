@@ -1,20 +1,23 @@
 # Mobile/API contract
 
-**Contract version for this round: `porsca-mobile-api-v1`.** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release. The embedded Express scaffold has been retired after Laravel payment parity was verified.
+**Contract version for this round: `porsca-mobile-api-v2`.** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release. The embedded Express scaffold has been retired after Laravel payment parity was verified.
 
 ## Configuration
 
 `EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the stable staging API base configured in [`eas.json`](../eas.json).
 
-Protected local/staging requests use `EXPO_PUBLIC_API_TOKEN` when the environment provides one; `src/api/client.ts` sends it as a Bearer token. Never commit a real staging or production token, and never put PayMongo credentials in any mobile environment variable.
+Users sign in with their own email and password. `AuthProvider` obtains a Sanctum token from `POST /auth/login`, saves only the token in native `expo-secure-store` under `porsca.session.v1`, and supplies it at runtime through `ApiClient.setToken()`. No shared token or password is bundled or stored in public Expo configuration. Use HTTPS for staging/release login; LAN HTTP is for isolated development only. Web development keeps the token in memory only and requires login after a page reload.
 
 ## Resource boundary
 
-The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Authorized routes also receive `Authorization: Bearer <local-or-staging-token>` when `EXPO_PUBLIC_API_TOKEN` is configured; PayMongo/provider secrets never belong in the mobile bundle. Error responses should be `{ "error": "...", "details": ... }` or `{ "message": "..." }` with an appropriate HTTP status.
+The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v2` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Protected routes receive `Authorization: Bearer <session-token>` from the runtime token setter. Error responses should be `{ "error": "...", "details": ... }`, `{ "error": { "code": "...", "message": "...", "details": ... } }`, or `{ "message": "..." }` with an appropriate HTTP status. Paths below are relative to `/api/v1`; the contract version is v2 but the URL prefix remains `/api/v1`.
 
 | Capability | Method | Path | Client method |
 | --- | --- | --- | --- |
-| Health | GET | `/health` | `health()` |
+| Health (public) | GET | `/health` | `health()` |
+| Login (public, rate-limited) | POST | `/auth/login` | `login()` |
+| Current user | GET | `/auth/me` | `me()` |
+| Logout | POST | `/auth/logout` | `logout()` |
 | Products | GET/POST | `/products` | `listProducts()` / `createProduct()` |
 | Product | GET/PATCH | `/products/:id` | `getProduct()` / `updateProduct()` |
 | Barcode lookup | GET | `/products/barcode/:barcode` | `getProductByBarcode()` (404 when unknown) |
@@ -30,9 +33,21 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 
 Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `category`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI and converts them back to centavos for product writes. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
 
-Product create requests contain `name`, `barcode` (8–64 digits), `category`, `price` (non-negative integer centavos), `stock` (non-negative integer), and optional `sku`/`reorder_level`. Product edits use PATCH with any supported subset of those fields. Product stock updates use `stock` and optional `reorder_level`. Duplicate barcodes, invalid price/stock values, and other validation failures return HTTP 422 as `{ error: { code: "validation_error", message, details } }`; the mobile form keeps the entered values so the cashier can correct and retry.
+Product create requests contain `name`, `barcode` (8–64 digits), `category`, `price` (non-negative integer centavos), `stock` (non-negative integer), and optional `sku`/`reorder_level`. Product edits use PATCH with any supported subset of those fields. Product stock updates use `stock` and optional `reorder_level`. Duplicate barcodes, invalid price/stock values, and other validation failures return HTTP 422 as `{ error: { code: "validation_error", message, details } }`; the mobile form keeps the entered values so the admin can correct and retry.
 
-Protected catalog, inventory, product-management, sales, transaction, and payment routes require `Authorization: Bearer <API_TOKEN>`. Local/staging clients may provide that token through their environment; real provider secrets remain server-side and must never be bundled.
+### Authentication and roles
+
+Login sends `{ email, password, device_name: "PorSca POS" }` without an Authorization header. Success is `{ data: { token, token_type: "Bearer", user: { id, name, email, role, is_active } } }`. Invalid credentials or an inactive account return `401`; validation errors return `422`; throttled attempts return `429`. There is no public registration.
+
+`GET /auth/me` returns `{ data: { user: { id, name, email, role, is_active } } }`. Native startup loads the saved token and validates it with `me()` before opening protected routes; it never trusts a cached role. A transport failure leaves the saved token available for explicit retry but keeps the POS closed. `POST /auth/logout` revokes the current token and returns `204` with no body. The app clears local session/cart/payment state immediately even if revocation cannot reach the API; in that case the server token remains valid until revocation or expiry.
+
+Sanctum tokens expire after **30 days** by default (`43200` minutes). Every current-session `401`, even outside auth endpoints or without JSON, clears the runtime token and saved token and returns the app to login. A late `401` from a previous session cannot clear a newer login. A `403` is a permission denial, not automatic logout.
+
+Both active roles (`admin`, `cashier`) can read catalog/inventory, create cash sales and QR payments, refresh payments, and read **all sales/transactions**. Cashier history is read-only and not scoped per cashier. Only admins may create/edit products or change stock. The mobile app hides product write controls and protects the product-form route for cashiers; Laravel role middleware remains the security authority even if someone calls those endpoints directly.
+
+Staff setup, user management, and deactivation remain **API-only** (`/users` admin routes). There is no phone staff/admin-management screen. The API admin seed uses private `ADMIN_EMAIL`/`ADMIN_PASSWORD` configuration; no account credentials belong in this repository.
+
+The paired RBAC API implementation was inspected on development at `335eb36447f8997f43485d6c7d44583acdf9334a`. Promote compatible mobile/API contract-v2 revisions together; do not pair this client with a shared-token v1 API.
 
 Cash sale requests contain `idempotencyKey`, `paymentMethod: "cash"`, `cashReceived`, and line items (`productId`, `quantity`). Money values sent to Laravel are integer PHP centavos (`₱100.00` is `10000`). `total` and line `unitPrice` may be sent for client compatibility, but Laravel ignores them and recomputes authoritative prices and totals. The mobile client sends `POST /sales/checkout` with an `Idempotency-Key` header. A new sale returns the completed sale with `201`; retrying the same key and identical cart/cash returns that sale with `200`. A reused key with a different request returns `409`; insufficient cash returns `422`; insufficient stock returns `409` without creating a sale or changing stock.
 
@@ -52,7 +67,7 @@ QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`)
 - PayMongo secret keys, webhook signing secrets, and provider requests stay on Laravel. The mobile bundle only receives a transaction-specific QR or payment status.
 - The API must authorize a sale only after a confirmed payment. Failed, cancelled, expired, or pending payments create no sale and change no stock.
 - `Idempotency-Key` is required on sale and QR payment requests. A retry of the same key must return the original result rather than create another sale or deduct stock again.
-- Backend transaction processing owns the final inventory deduction. The mobile in-memory provider remains a demonstration fallback until Laravel parity is verified.
+- Backend transaction processing owns the final inventory deduction. The opt-in demo catalog substitutes reads only after sign-in; it never bypasses auth or records a local sale.
 - API changes require a contract version update and paired mobile/API promotion notes.
 
 Backend automation is owned by the API track. Reference its Postman/Newman contract and report its exact collection/commit in the QA cycle record; do not copy that collection into this repository.

@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v1`.
+Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v2`.
 
 The mobile bundle never contains PayMongo secrets. QR creation, payment status checks, webhook verification, sale persistence, idempotency, and final inventory deduction belong to Laravel. The former embedded Express scaffold is retired.
 
@@ -14,6 +14,7 @@ Expo Router separates route screens from shared state, types, data, rules, and v
 app/
   _layout.tsx
   index.tsx
+  login.tsx
   scanner.tsx
   checkout.tsx
   product-form.tsx
@@ -23,10 +24,11 @@ app/
     inventory.tsx
     transactions.tsx
 src/
-  api/client.ts       # the single configurable network boundary
+  api/client.ts       # the single network boundary with runtime token setter
+  auth/tokenStore.ts  # native SecureStore; memory-only web development
   components/         # shared visual controls
   config/             # offline policy and its environment flag
-  context/            # POS session state and the cart reducer host
+  context/            # authentication + POS state and the cart reducer host
   data/               # seeded local demonstration data and barcode fixtures
   domain/             # behavior rules: money/stock, cart, barcode, revalidation
   hooks/              # scan session, debounce, responsive metrics
@@ -34,7 +36,9 @@ src/
   types/
 ```
 
-`PosProvider` owns the session. Cart state is a single pure reducer
+`AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form also requires admin. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Staff administration remains API-only; cashiers read all sales without per-cashier scoping.
+
+`PosProvider` owns the signed-in POS state. Cart state is a single pure reducer
 (`src/domain/cart.ts`); every add, quantity change, clear, undo and
 reconciliation goes through it, so no screen can reach an unchecked add.
 
@@ -57,7 +61,8 @@ pricing and sale authority.
 ## Intended flow
 
 ```text
-Phone camera/search
+Login or SecureStore token -> /auth/me validation -> signed-in route guard
+  -> Phone camera/search
   -> product lookup through the session/API boundary
   -> cart and total rules
   -> checkout

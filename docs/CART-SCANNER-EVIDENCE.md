@@ -2,7 +2,7 @@
 
 Scope: the six staged steps of the approved week-6 plan
 (`porsca-cart-plan-20260926/report.md`, captain's rounds 1 and 2 applied). Mobile
-only. **Zero API changes**: the contract version stays `porsca-mobile-api-v1` and
+only. **Zero API changes**: the contract version at that delivery stayed `porsca-mobile-api-v1` (historical; the current auth delivery uses v2) and
 no Laravel route, request or response changed.
 
 Branch: `fm/porsca-cart-build-20260926`, based on `origin/staging` `070bedd`.

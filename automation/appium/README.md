@@ -4,7 +4,7 @@ This is the formal native Android frontend automation seam. It is deliberately n
 
 ## Run exactly
 
-From a fresh preview APK/install and the recorded staging seed, connect an Android emulator/device, install the UiAutomator2 driver, and run:
+From a freshly rebuilt contract-v2 preview APK/install (with `expo-secure-store`) and the recorded staging seed, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active staging cashier/admin account; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
 
 ```bash
 cd automation/appium
@@ -28,6 +28,7 @@ For the barcode case, the test opens the native camera and waits for a human to 
 
 The staging specs in `test/smoke.e2e.ts` cover:
 
+- individual account login after each app reset;
 - search → cash checkout;
 - barcode scan → cash checkout;
 - insufficient-stock rejection;
@@ -37,6 +38,8 @@ The staging specs in `test/smoke.e2e.ts` cover:
 - exactly-once inventory deduction when a payment is retried/duplicated.
 
 Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `paid_unfulfilled` it additionally asserts that no new payment is offered. The test never simulates a provider result in the mobile app.
+
+Separately record native session restart/restoration, sign-out, expired/revoked-token redirect, and admin-versus-cashier inventory controls in the QA cycle. Fast Jest/RNTL tests cover these boundaries without claiming native secure-storage/device execution.
 
 The last assertion is backed by the API `Idempotency-Key` contract and must compare the inventory delta with the cart quantity. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
 

@@ -7,7 +7,8 @@ function response(body: unknown, ok = true, status = 200) {
 describe('ApiClient', () => {
   it('uses the configured API URL and idempotency key for QR payments', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-1', status: 'pending', amount: 63 } }));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createQrPhPayment({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] })).resolves.toEqual({
       id: 'pay-1',
@@ -18,7 +19,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/payments',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'Idempotency-Key': 'TX-1', Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ 'Idempotency-Key': 'TX-1', Authorization: 'Bearer session-token' }),
         body: JSON.stringify({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] }),
       }),
     );
@@ -122,7 +123,7 @@ describe('ApiClient', () => {
     }]);
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://staging-api.example.test/api/v1/products?search=coffee&per_page=100',
-      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v1' }) }),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v2' }) }),
     );
   });
 
@@ -166,7 +167,8 @@ describe('ApiClient', () => {
         stock: { quantity: 8, reorder_level: 2, status: 'in_stock' },
       },
     }, true, 201));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createProduct({ barcode: '4800000000012', name: 'House Blend Coffee', category: 'Beverages', price: 185, stock: 8, reorderLevel: 2 })).resolves.toMatchObject({
       id: '12',
@@ -178,7 +180,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/products',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer session-token' }),
         body: JSON.stringify({ barcode: '4800000000012', name: 'House Blend Coffee', category: 'Beverages', price: 18500, stock: 8, reorder_level: 2 }),
       }),
     );
@@ -198,7 +200,8 @@ describe('ApiClient', () => {
         items: [{ product_id: 4, sku: 'WATER-001', name: 'Mineral Water 1L', quantity: 1, unit_price: 3700 }],
       },
     }, true, 201));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createSale({
       idempotencyKey: 'cash-42',
@@ -219,7 +222,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/sales/checkout',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'Idempotency-Key': 'cash-42', Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ 'Idempotency-Key': 'cash-42', Authorization: 'Bearer session-token' }),
         body: JSON.stringify({
           idempotencyKey: 'cash-42',
           items: [{ productId: '4', quantity: 1, unitPrice: 3700 }],

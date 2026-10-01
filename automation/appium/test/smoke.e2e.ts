@@ -68,6 +68,7 @@ describe('PorSca required cashier smoke flows', () => {
     const mobileDriver = browser as unknown as {
       execute: (script: string, args: unknown) => Promise<unknown>;
       activateApp: (packageName: string) => Promise<unknown>;
+      waitUntil: (condition: () => Promise<boolean>, options: { timeoutMsg: string }) => Promise<unknown>;
     };
     if (process.env.APPIUM_RESET_APP !== 'false') {
       await mobileDriver.execute('mobile: shell', {
@@ -76,6 +77,19 @@ describe('PorSca required cashier smoke flows', () => {
       });
     }
     await mobileDriver.activateApp(process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos');
+    await mobileDriver.waitUntil(async () =>
+      await byId('login-email-input').isDisplayed().catch(() => false) ||
+      await byId('pos-search-input').isDisplayed().catch(() => false),
+    { timeoutMsg: 'Neither login nor the signed-in POS became available.' });
+    if (await byId('login-email-input').isDisplayed().catch(() => false)) {
+      const email = process.env.APPIUM_LOGIN_EMAIL;
+      const password = process.env.APPIUM_LOGIN_PASSWORD;
+      if (!email || !password) throw new Error('Set private APPIUM_LOGIN_EMAIL and APPIUM_LOGIN_PASSWORD for an active staging account.');
+      await byId('login-email-input').setValue(email);
+      await byId('login-password-input').setValue(password);
+      await tap('login-submit');
+      await byId('pos-search-input').waitForDisplayed();
+    }
   });
 
   smoke('search to cash checkout', async () => {

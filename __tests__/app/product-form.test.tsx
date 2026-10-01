@@ -5,10 +5,17 @@ import ProductFormScreen from '@/app/product-form';
 import { PosProvider } from '@/src/context/PosContext';
 
 const mockRouter = { back: jest.fn() };
+let mockIsAdmin = true;
+
+jest.mock('@/src/context/AuthContext', () => ({ useAuth: () => ({ isAdmin: mockIsAdmin }) }));
 let mockRouteParams: { id?: string; barcode?: string } = {};
 
 jest.mock('expo-router', () => ({
   __esModule: true,
+  Redirect: ({ href }: { href: string }) => {
+    const { Text } = require('react-native');
+    return <Text>{href}</Text>;
+  },
   router: {
     back: (...args: unknown[]) => mockRouter.back(...args),
   },
@@ -60,7 +67,15 @@ function refreshResponses() {
 describe('ProductFormScreen', () => {
   beforeEach(() => {
     mockRouteParams = {};
+    mockIsAdmin = true;
     mockRouter.back.mockReset();
+  });
+
+  it('redirects a cashier deep link without exposing any write controls', async () => {
+    mockIsAdmin = false;
+    const screen = renderForm({ isConfigured: false } as ApiClient);
+    expect(screen.getByText('/(tabs)/inventory')).toBeTruthy();
+    expect(screen.queryByTestId('save-product-button')).toBeNull();
   });
 
   it('creates a product through Laravel and leaves only after the authoritative refresh succeeds', async () => {
