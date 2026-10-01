@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -12,10 +12,12 @@ type Props = {
   children: React.ReactNode;
   scroll?: boolean;
   back?: boolean;
+  /** When `backConfirm.when` is true, the back button asks before discarding. */
+  backConfirm?: { when: boolean; title: string; message: string; confirmLabel?: string };
   contentStyle?: StyleProp<ViewStyle>;
 };
 
-export function Screen({ title, subtitle, children, scroll = true, back = false, contentStyle }: Props) {
+export function Screen({ title, subtitle, children, scroll = true, back = false, backConfirm, contentStyle }: Props) {
   const responsive = useResponsive();
 
   const body = (
@@ -31,7 +33,7 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
         contentStyle,
       ]}
     >
-      <BrandHeader back={back} />
+      <BrandHeader back={back} backConfirm={backConfirm} />
       {title ? (
         <View style={styles.localHeader}>
           <Text style={[styles.title, { fontSize: responsive.font(typography.display) }]}>{title}</Text>
@@ -60,7 +62,17 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
   );
 }
 
-function BrandHeader({ back }: { back: boolean }) {
+function BrandHeader({ back, backConfirm }: { back: boolean; backConfirm?: Props['backConfirm'] }) {
+  const confirmBack = () => {
+    if (backConfirm?.when) {
+      Alert.alert(backConfirm.title, backConfirm.message, [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: backConfirm.confirmLabel ?? 'Discard changes', style: 'destructive', onPress: () => router.back() },
+      ]);
+      return;
+    }
+    router.back();
+  };
   const responsive = useResponsive();
   const logoSize = responsive.s(50);
   const actionSize = responsive.s(42);
@@ -71,7 +83,7 @@ function BrandHeader({ back }: { back: boolean }) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          onPress={() => router.back()}
+          onPress={confirmBack}
           style={[
             styles.backButton,
             { width: actionSize, height: actionSize, borderRadius: responsive.s(14) },

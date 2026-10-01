@@ -41,6 +41,7 @@ export default function InventoryScreen() {
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
           <TextInput
+            accessibilityLabel="Search inventory"
             value={query}
             onChangeText={setQuery}
             placeholder="Search product or scan barcode..."
@@ -57,6 +58,8 @@ export default function InventoryScreen() {
               minWidth: responsive.veryNarrow ? responsive.controlHeight : undefined,
             },
           ]}
+          accessibilityRole="button"
+          accessibilityLabel="Scan product barcode"
           onPress={() => router.push({ pathname: '/scanner', params: { mode: 'inventory' } })}
         >
           <Ionicons name="barcode-outline" size={responsive.s(25)} color={colors.white} />
@@ -134,6 +137,8 @@ export default function InventoryScreen() {
             },
           ]}
           onPress={() => router.push('/product-form')}
+          accessibilityRole="button"
+          accessibilityLabel="Add product"
         >
           <Ionicons name="add" size={responsive.s(25)} color={colors.white} />
           <Text style={[styles.addText, { fontSize: responsive.font(16) }]}>Add Product</Text>
@@ -161,7 +166,7 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
     >
       <Ionicons name={icon} size={responsive.s(23)} color={fg} />
       <Text style={[styles.metricValue, { fontSize: responsive.font(responsive.narrow ? 21 : 23) }]}>{value}</Text>
-      <Text numberOfLines={2} style={[styles.metricLabel, { color: fg, fontSize: responsive.font(10.5) }]}>{label}</Text>
+      <Text numberOfLines={2} style={[styles.metricLabel, { fontSize: responsive.font(10.5) }]}>{label}</Text>
     </View>
   );
 }
@@ -237,7 +242,7 @@ const styles = StyleSheet.create({
   metricsWrap: { flexWrap: 'wrap' },
   metric: { flex: 1, minWidth: 0, borderRadius: radius.md, paddingVertical: 9, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
   metricValue: { color: colors.text, fontWeight: '900', marginTop: 3 },
-  metricLabel: { fontWeight: '700', textAlign: 'center', lineHeight: 14 },
+  metricLabel: { color: colors.text, fontWeight: '700', textAlign: 'center', lineHeight: 14 },
   listCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, overflow: 'hidden', shadowColor: colors.shadow, shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   productRow: { flexDirection: 'row', alignItems: 'center' },
   rowBorder: { borderTopWidth: 1, borderTopColor: colors.outline },
