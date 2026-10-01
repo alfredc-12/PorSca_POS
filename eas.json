@@ -10,8 +10,7 @@
       "channel": "development",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "development",
-        "EXPO_PUBLIC_API_URL": "http://192.168.100.84:8000/api/v1"
+        "EXPO_PUBLIC_APP_ENV": "development"
       }
     },
     "preview": {
