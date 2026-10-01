@@ -85,6 +85,7 @@ describe('POS business rules', () => {
     ['pending', 'Payment is still pending. Keep the QR screen open or try again later.'],
     ['failed', 'Payment failed. No sale was recorded and stock was not changed.'],
     ['cancelled', 'Payment was cancelled. No sale was recorded and stock was not changed.'],
+    ['paid_unfulfilled', 'Payment was received but stock could not be fulfilled. No sale was recorded. Reconcile with the operator before refunding.'],
     ['expired', 'Payment expired. Start a new QR Ph payment; stock was not changed.'],
     ['paid', null],
   ])('handles payment state %s without recording an unpaid sale', (status, message) => {

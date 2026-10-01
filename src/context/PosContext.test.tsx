@@ -58,8 +58,9 @@ function SearchHarness() {
 }
 
 function QrHarness() {
-  const { products, addProductChecked, startQrPhPayment } = usePos();
+  const { products, cart, addProductChecked, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment } = usePos();
   const [result, setResult] = useState('');
+  const [status, setStatus] = useState('');
 
   return (
     <View>
@@ -71,7 +72,24 @@ function QrHarness() {
           void startQrPhPayment().then(() => setResult('created')).catch((error: Error) => setResult(error.message));
         }}
       />
+      <Button
+        testID="refresh-qr"
+        title="Refresh QR"
+        onPress={() => {
+          void refreshQrPhPayment('payment-1').then((payment) => setStatus(payment.status)).catch((error: Error) => setStatus(error.message));
+        }}
+      />
+      <Button
+        testID="confirm-qr"
+        title="Confirm QR"
+        onPress={() => {
+          void confirmQrPhPayment({ id: 'payment-1', status: 'paid_unfulfilled', amount: 2500 })
+            .then(() => setResult('confirmed')).catch((error: Error) => setResult(error.message));
+        }}
+      />
       <Text>{`qr-result:${result}`}</Text>
+      <Text>{`qr-status:${status}`}</Text>
+      <Text>{`qr-cart:${cart.length}`}</Text>
     </View>
   );
 }
@@ -119,6 +137,18 @@ function makeQrClient(createQrPhPayment: jest.Mock) {
   return {
     isConfigured: true,
     createQrPhPayment,
+  } as unknown as ApiClient;
+}
+
+function makeQrStageClient(overrides: Record<string, jest.Mock> = {}) {
+  return {
+    isConfigured: true,
+    createQrPhPayment: jest.fn(),
+    refreshPayment: jest.fn(),
+    listInventory: jest.fn().mockResolvedValue([]),
+    listProducts: jest.fn().mockResolvedValue([]),
+    listSales: jest.fn().mockResolvedValue([]),
+    ...overrides,
   } as unknown as ApiClient;
 }
 
@@ -353,5 +383,40 @@ describe('PosProvider Laravel QR Ph checkout', () => {
 
     expect(createQrPhPayment).toHaveBeenCalledTimes(2);
     expect(createQrPhPayment.mock.calls[0][0].idempotencyKey).toBe(createQrPhPayment.mock.calls[1][0].idempotencyKey);
+  });
+
+  it('verifies status through the provider-verified refresh endpoint instead of a stored read', async () => {
+    const refreshPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'paid', saleId: 'sale-9' });
+    const client = makeQrStageClient({ refreshPayment });
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><QrHarness /></PosProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('refresh-qr'));
+    });
+
+    await waitFor(() => expect(getByText('qr-status:paid')).toBeTruthy());
+    expect(refreshPayment).toHaveBeenCalledWith('payment-1');
+    expect(refreshPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes authoritative state after paid_unfulfilled without clearing the cart', async () => {
+    const client = makeQrStageClient();
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><QrHarness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-qr-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('confirm-qr'));
+    });
+
+    // Money was received but no sale was recorded, so inventory and history
+    // are re-read while the cart is kept for operator reconciliation.
+    await waitFor(() => expect(getByText('qr-result:confirmed')).toBeTruthy());
+    expect(client.listInventory).toHaveBeenCalled();
+    expect(client.listSales).toHaveBeenCalled();
+    expect(getByText('qr-cart:1')).toBeTruthy();
   });
 });

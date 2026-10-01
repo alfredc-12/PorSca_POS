@@ -25,7 +25,6 @@ export default function CheckoutScreen() {
     completeCashSale,
     startQrPhPayment,
     refreshQrPhPayment,
-    cancelQrPhPayment,
     confirmQrPhPayment,
   } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
@@ -90,6 +89,24 @@ export default function CheckoutScreen() {
     setQrStatus(payment.status);
     setQrError(undefined);
 
+    if (payment.status === 'paid_unfulfilled') {
+      try {
+        await confirmQrPhPayment(payment);
+        setQrStatus('paid_unfulfilled');
+        if (handledPaidPayment.current !== payment.id) {
+          handledPaidPayment.current = payment.id;
+          Alert.alert(
+            'Payment needs reconciliation',
+            'Laravel received the money but could not fulfil stock. No sale was recorded; reconcile with the operator before refunding.',
+          );
+        }
+      } catch (error) {
+        setQrStatus('verification');
+        setQrError(verificationMessage(error));
+      }
+      return;
+    }
+
     if (payment.status !== 'paid') return;
 
     try {
@@ -144,21 +161,13 @@ export default function CheckoutScreen() {
     }
   }, [qrPayment, refreshQrPhPayment, showQrPayment]);
 
-  const cancelQrPayment = useCallback(async () => {
-    if (!qrPayment || qrBusyRef.current) return;
-    qrBusyRef.current = true;
-    setQrBusy(true);
-    try {
-      const payment = await cancelQrPhPayment(qrPayment.id);
-      await showQrPayment(payment);
-    } catch (error) {
-      setQrStatus('verification');
-      setQrError(verificationMessage(error));
-    } finally {
-      qrBusyRef.current = false;
-      setQrBusy(false);
-    }
-  }, [cancelQrPhPayment, qrPayment, showQrPayment]);
+  // Laravel exposes no cashier cancel action: leaving the QR screen does not
+  // cancel the payment attempt. The pending payment stays payable until the
+  // provider settles it or the server-side reservation expires, so the cart
+  // is kept and the cashier returns to the POS.
+  const leaveQrPayment = useCallback(() => {
+    router.back();
+  }, []);
 
   useEffect(() => {
     if (mode !== 'qrph' || qrStatus !== 'pending' || !qrPayment) return;
@@ -283,13 +292,16 @@ export default function CheckoutScreen() {
                 </View>
               )}
               <Text style={styles.qrTitle}>Laravel QR Ph payment</Text>
-              <Text style={styles.qrBody}>Laravel creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged.</Text>
+              <Text style={styles.qrBody}>Laravel creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending payment stays payable until the provider settles it or the reservation expires.</Text>
               {qrStatus !== 'idle' ? (
-                <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
+                <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
                   {qrStatusText(qrStatus)}
                 </Text>
               ) : null}
               {qrError ? <Text testID="qr-payment-error" accessibilityRole="alert" style={styles.qrError}>{qrError}</Text> : null}
+              {qrPayment?.failureReason && (qrTerminal || qrStatus === 'paid_unfulfilled') ? (
+                <Text testID="qr-payment-failure-reason" style={styles.qrFailureReason}>Reference: {qrPayment.failureReason}</Text>
+              ) : null}
               {qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment ? (
                 <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy} style={styles.fullButton} />
               ) : null}
@@ -299,17 +311,26 @@ export default function CheckoutScreen() {
               {qrStatus === 'pending' && qrPayment ? (
                 <View style={styles.qrActions}>
                   <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
-                  <AppButton testID="cancel-qr-payment" label="Cancel QR Payment" onPress={() => void cancelQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                  <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
               {qrStatus === 'verification' && qrPayment ? (
                 <View style={styles.qrActions}>
                   <AppButton testID="retry-qr-verification" label="Retry Payment Verification" onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
-                  <AppButton testID="cancel-qr-payment" label="Cancel QR Payment" onPress={() => void cancelQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                  <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                </View>
+              ) : null}
+              {qrStatus === 'paid_unfulfilled' && qrPayment ? (
+                <View style={styles.qrActions}>
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
               {qrTerminal ? (
-                <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy} style={styles.fullButton} />
+                <View style={styles.qrActions}>
+                  <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
+                </View>
               ) : null}
             </View>
           )}
@@ -344,6 +365,7 @@ function qrStatusText(status: QrViewStatus) {
     case 'creating': return 'Creating a Laravel payment…';
     case 'pending': return 'Payment pending…';
     case 'paid': return 'Payment confirmed by Laravel. Inventory and history refreshed.';
+    case 'paid_unfulfilled': return 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.';
     case 'failed':
     case 'cancelled':
     case 'expired': return paymentError(status);
@@ -399,9 +421,11 @@ const styles = StyleSheet.create({
   qrBody: { color: colors.textMuted, textAlign: 'center', fontSize: typography.label, lineHeight: 20, maxWidth: 390 },
   qrStatus: { textAlign: 'center', fontSize: typography.label, fontWeight: '800', lineHeight: 20 },
   qrStatusPaid: { color: colors.primary },
+  qrStatusReconcile: { color: colors.warning },
   qrStatusError: { color: colors.danger },
   qrStatusVerification: { color: colors.warning },
   qrError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.caption, lineHeight: 18, textAlign: 'center' },
+  qrFailureReason: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
   qrActions: { alignSelf: 'stretch', gap: spacing.sm },
   fullButton: { alignSelf: 'stretch' },
   secureRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },

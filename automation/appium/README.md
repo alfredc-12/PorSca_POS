@@ -32,11 +32,11 @@ The staging specs in `test/smoke.e2e.ts` cover:
 - barcode scan → cash checkout;
 - insufficient-stock rejection;
 - insufficient-cash rejection;
-- QR Ph creation and status verification through Laravel;
+- QR Ph creation and provider-verified status refresh through Laravel, including leave-payment (never a cancel) and `paid_unfulfilled` reconciliation without a new payment;
 - history showing a successful sale; and
 - exactly-once inventory deduction when a payment is retried/duplicated.
 
-Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. The test never simulates a provider result in the mobile app.
+Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `paid_unfulfilled` it additionally asserts that no new payment is offered. The test never simulates a provider result in the mobile app.
 
 The last assertion is backed by the API `Idempotency-Key` contract and must compare the inventory delta with the cart quantity. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
 

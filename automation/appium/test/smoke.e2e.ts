@@ -115,18 +115,32 @@ describe('PorSca required cashier smoke flows', () => {
     await byId('qr-payment-status').waitForDisplayed();
     await expect(byId('qr-payment-status')).toHaveText(qrExpectedStatus === 'paid'
       ? 'Payment confirmed by Laravel. Inventory and history refreshed.'
-      : qrExpectedStatus === 'failed'
-        ? 'Payment failed. No sale was recorded and stock was not changed.'
-        : qrExpectedStatus === 'cancelled'
-          ? 'Payment was cancelled. No sale was recorded and stock was not changed.'
-          : qrExpectedStatus === 'expired'
-            ? 'Payment expired. Start a new QR Ph payment; stock was not changed.'
-            : 'Payment pending…');
+      : qrExpectedStatus === 'paid_unfulfilled'
+        ? 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.'
+        : qrExpectedStatus === 'failed'
+          ? 'Payment failed. No sale was recorded and stock was not changed.'
+          : qrExpectedStatus === 'cancelled'
+            ? 'Payment was cancelled. No sale was recorded and stock was not changed.'
+            : qrExpectedStatus === 'expired'
+              ? 'Payment expired. Start a new QR Ph payment; stock was not changed.'
+              : 'Payment pending…');
     if (qrExpectedStatus === 'paid') {
       await byText('Payment recorded').waitForDisplayed();
       await byText('Done').click();
       await byText('Completed').waitForDisplayed();
+      return;
     }
+    if (qrExpectedStatus === 'paid_unfulfilled') {
+      // Money was received, so no new payment is offered: a retry could
+      // double-charge. Leaving keeps the cart for operator reconciliation.
+      await expect(byId('leave-qr-payment')).toBeDisplayed();
+      expect(await byId('retry-qr-payment').isDisplayed().catch(() => false)).toBe(false);
+      return;
+    }
+    // Laravel exposes no cashier cancel action. Leaving never cancels the
+    // attempt; the cashier returns to the POS with the cart kept.
+    await tap('leave-qr-payment');
+    await byId('pos-search-input').waitForDisplayed();
   });
 
   smoke('shows a successful cash sale in transaction history', async () => {
