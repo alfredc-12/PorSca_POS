@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "PorSca POS",
+    "name": "PorSca",
     "slug": "porsca-app",
     "version": "0.1.0",
+    "icon": "./assets/images/icon.png",
     "orientation": "portrait",
     "scheme": "porsca",
     "userInterfaceStyle": "automatic",
@@ -15,13 +16,30 @@
           "barcodeScannerEnabled": true
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/icon.png",
+          "imageWidth": 200,
+          "backgroundColor": "#111936",
+          "dark": {
+            "image": "./assets/images/icon.png",
+            "backgroundColor": "#111936"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "android": {
       "package": "com.porsca.pos",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon-foreground.png",
+        "backgroundColor": "#111936",
+        "monochromeImage": "./assets/images/adaptive-icon-mono.png"
+      },
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
