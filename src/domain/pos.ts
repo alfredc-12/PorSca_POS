@@ -111,6 +111,8 @@ export function paymentError(status: PaymentStatus) {
       return 'Payment failed. No sale was recorded and stock was not changed.';
     case 'cancelled':
       return 'Payment was cancelled. No sale was recorded and stock was not changed.';
+    case 'paid_unfulfilled':
+      return 'Payment was received but stock could not be fulfilled. No sale was recorded. Reconcile with the operator before refunding.';
     case 'expired':
       return 'Payment expired. Start a new QR Ph payment; stock was not changed.';
     case 'paid':

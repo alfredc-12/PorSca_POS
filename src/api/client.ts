@@ -125,6 +125,7 @@ type ApiPayment = {
   status?: string;
   amount?: number | string;
   currency?: string;
+  provider_payment_id?: string | null;
   qr_payload?: string | null;
   qrCode?: string | null;
   checkout_url?: string | null;
@@ -133,6 +134,8 @@ type ApiPayment = {
   saleId?: string | number | null;
   failure_reason?: string | null;
   failureReason?: string | null;
+  reservation_expires_at?: string | null;
+  reservationExpiresAt?: string | null;
 };
 
 export type Payment = {
@@ -141,12 +144,15 @@ export type Payment = {
   /** Amount as returned by Laravel (integer PHP centavos). */
   amount: number;
   currency?: string;
+  providerPaymentId?: string;
   qrPayload?: string;
   /** Legacy alias kept for callers that render a QR code directly. */
   qrCode?: string;
   checkoutUrl?: string;
   saleId?: string;
   failureReason?: string;
+  /** ISO timestamp when the server-side stock reservation lapses. */
+  reservationExpiresAt?: string;
 };
 
 export type ApiErrorBody = {
@@ -294,12 +300,19 @@ export class ApiClient {
     }).then(normalizePayment);
   }
 
+  /** Stored-state read; it does not ask the provider for a newer outcome. */
   getPaymentStatus(paymentId: string) {
     return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}`)).then(normalizePayment);
   }
 
-  cancelPayment(paymentId: string) {
-    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/status`), { method: 'POST' }).then(normalizePayment);
+  /**
+   * Authoritative provider-verified check. Laravel inspects the PayMongo
+   * sandbox and settles a verified outcome before responding. This endpoint
+   * never cancels a payment; leaving a pending attempt alone lets the
+   * server-side reservation expire on its own.
+   */
+  refreshPayment(paymentId: string) {
+    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/refresh`), { method: 'POST' }).then(normalizePayment);
   }
 
   private versionedPath(path: string) {
@@ -427,21 +440,27 @@ function normalizePayment(payment: ApiPayment): Payment {
   const checkoutUrl = payment.checkout_url ?? payment.checkoutUrl ?? undefined;
   const saleId = payment.sale_id ?? payment.saleId;
   const failureReason = payment.failure_reason ?? payment.failureReason ?? undefined;
+  const providerPaymentId = payment.provider_payment_id ?? undefined;
+  const reservationExpiresAt = payment.reservation_expires_at ?? payment.reservationExpiresAt ?? undefined;
 
   return {
     id: String(payment.id),
     status: normalizePaymentStatus(payment.status ?? 'pending'),
     amount: Number(payment.amount ?? 0),
     ...(payment.currency ? { currency: payment.currency } : {}),
+    ...(providerPaymentId ? { providerPaymentId } : {}),
     ...(qrPayload ? { qrPayload, qrCode: qrPayload } : {}),
     ...(checkoutUrl ? { checkoutUrl } : {}),
     ...(saleId === null || saleId === undefined ? {} : { saleId: String(saleId) }),
     ...(failureReason ? { failureReason } : {}),
+    ...(reservationExpiresAt ? { reservationExpiresAt } : {}),
   };
 }
 
 function normalizePaymentStatus(status: string): PaymentStatus {
-  return status === 'pending' || status === 'paid' || status === 'failed' || status === 'cancelled' || status === 'expired'
+  // `paid_unfulfilled` means the provider took the money but Laravel could not
+  // fulfil stock. It is terminal and must never read as pending or paid.
+  return status === 'pending' || status === 'paid' || status === 'paid_unfulfilled' || status === 'failed' || status === 'cancelled' || status === 'expired'
     ? status
     : 'pending';
 }

@@ -60,7 +60,7 @@ Run the following gate and record the evidence before any `eas build --profile p
 4. Laravel migrations have run and staging data has been seeded with the recorded data/seed version.
 5. PayMongo sandbox credentials are configured server-side, sandbox callbacks/webhooks are reachable, and webhook verification is enabled.
 6. API-track backend automation checks (Postman/Newman) are green.
-7. The required mobile smoke flows are green on the Android/Appium staging seam: search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/cancel with no sale, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
+7. The required mobile smoke flows are green on the Android/Appium staging seam: search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 8. The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context.
 
 Only after all eight checks are green may the release owner manually build the preview candidate:

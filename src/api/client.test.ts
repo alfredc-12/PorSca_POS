@@ -45,6 +45,41 @@ describe('ApiClient', () => {
     });
   });
 
+  it('checks payment status through the authoritative provider-verified refresh endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-9', status: 'paid', amount: 3500, sale_id: 42 } }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.refreshPayment('pay-9')).resolves.toMatchObject({ id: 'pay-9', status: 'paid', saleId: '42' });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://staging-api.example.test/api/v1/payments/pay-9/refresh',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('keeps paid_unfulfilled terminal with its settlement fields instead of reading it as pending', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: {
+      id: 'pay-11',
+      status: 'paid_unfulfilled',
+      amount: 3500,
+      currency: 'PHP',
+      provider_payment_id: 'pi_test_123',
+      sale_id: null,
+      failure_reason: 'stock_reconciliation_required',
+      reservation_expires_at: '2026-09-25T16:30:00.000000Z',
+    } }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.refreshPayment('pay-11')).resolves.toEqual({
+      id: 'pay-11',
+      status: 'paid_unfulfilled',
+      amount: 3500,
+      currency: 'PHP',
+      providerPaymentId: 'pi_test_123',
+      failureReason: 'stock_reconciliation_required',
+      reservationExpiresAt: '2026-09-25T16:30:00.000000Z',
+    });
+  });
+
   it('surfaces server errors without exposing or accepting provider secrets', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ error: 'Payment failed.' }, false, 422));
     const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });

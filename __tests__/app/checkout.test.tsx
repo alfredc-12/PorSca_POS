@@ -49,7 +49,6 @@ function setContext(overrides: Record<string, unknown> = {}) {
     resetCart: jest.fn(),
     startQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     refreshQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
-    cancelQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status: 'cancelled' }),
     confirmQrPhPayment: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   });
@@ -157,7 +156,22 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('qr-payment-image')).toBeTruthy();
     expect(view.getByText('Payment pending…')).toBeTruthy();
     expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
-    expect(view.getByTestId('cancel-qr-payment')).toBeTruthy();
+    expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
+    expect(view.queryByTestId('retry-qr-payment')).toBeNull();
+  });
+
+  it('leaves a pending payment without cancelling it and keeps the cart', async () => {
+    const mockBack = router.back as jest.Mock;
+    const startQrPhPayment = jest.fn().mockResolvedValue(pendingQrPayment);
+    setContext({ startQrPhPayment });
+    const view = await openQrCheckout();
+
+    fireEvent.press(view.getByTestId('leave-qr-payment'));
+
+    // There is no cashier cancel endpoint: leaving never settles or voids the
+    // attempt, so no further payment request is made and the cart is kept.
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(startQrPhPayment).toHaveBeenCalledTimes(1);
   });
 
   it.each<[Payment['status'], string]>([
@@ -174,6 +188,23 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(resetCart).not.toHaveBeenCalled();
   });
 
+  it('shows paid_unfulfilled for reconciliation without starting a new payment', async () => {
+    const unfulfilled = { ...pendingQrPayment, status: 'paid_unfulfilled' as const, failureReason: 'stock_reconciliation_required' };
+    const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
+    const resetCart = jest.fn();
+    setContext({ startQrPhPayment: jest.fn().mockResolvedValue(unfulfilled), confirmQrPhPayment, resetCart });
+    const view = await openQrCheckout();
+
+    expect(confirmQrPhPayment).toHaveBeenCalledWith(unfulfilled);
+    expect(resetCart).not.toHaveBeenCalled();
+    expect(view.getByText('Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.')).toBeTruthy();
+    expect(view.getByTestId('qr-payment-failure-reason')).toHaveTextContent(/stock_reconciliation_required/);
+    // A new payment could double-charge money already received.
+    expect(view.queryByTestId('retry-qr-payment')).toBeNull();
+    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
+    expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
+    expect(alertSpy).toHaveBeenCalledWith('Payment needs reconciliation', expect.stringContaining('No sale was recorded'));
+  });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
     const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
@@ -198,6 +229,6 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('qr-payment-status')).toHaveTextContent(/Payment verification needs attention/);
     expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Retry verification/);
     expect(view.getByTestId('retry-qr-verification')).toBeTruthy();
-    expect(view.getByTestId('cancel-qr-payment')).toBeTruthy();
+    expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
   });
 });

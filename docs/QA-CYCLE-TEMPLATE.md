@@ -74,7 +74,7 @@ Record a result and evidence for each behavior. Record stock before and after ev
 3. Reject insufficient stock without creating a sale or negative stock.
 4. Reject insufficient cash without creating a sale or changing stock.
 5. Complete a successful QR Ph sandbox payment.
-6. Complete a failed or cancelled QR Ph payment without creating a sale or changing stock.
+6. Complete a failed or expired QR Ph payment without creating a sale or changing stock, and leave a pending payment without cancelling it (leaving keeps the cart; the reservation expires server-side).
 7. Show a successful sale in transaction history.
 8. Retry the same payment or idempotency key and verify one sale and one inventory deduction.
 

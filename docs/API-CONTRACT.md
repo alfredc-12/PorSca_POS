@@ -25,8 +25,8 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v1` and expects J
 | Transactions | GET | `/transactions` | `listTransactions()` |
 | Transaction | GET | `/transactions/:id` | `getTransaction()` |
 | QR Ph payment | POST | `/payments` | `createQrPhPayment()` |
-| Payment status | GET | `/payments/:id` | `getPaymentStatus()` |
-| Cancel payment | POST | `/payments/:id/status` | `cancelPayment()` |
+| Payment status (stored read) | GET | `/payments/:id` | `getPaymentStatus()` |
+| Payment refresh (provider-verified) | POST | `/payments/:id/refresh` | `refreshPayment()` |
 
 Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `category`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI and converts them back to centavos for product writes. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
 
@@ -45,7 +45,7 @@ Completed cash sales are loaded for the Transactions screen with `GET /sales?per
 - **Pre-checkout revalidation.** Before a cart is handed to checkout the client re-reads each line with `GET /products/:id` and compares price and stock with the cart snapshot. A `404` marks that line as no longer in the catalog. Each result carries a cart signature: if the cart changes while the lines are being read (or while the review is open) the client re-reads the cart and never applies a stale review. Laravel remains the pricing authority, and `POST /sales/checkout` is still the only way a sale is recorded.
 - **Cash retry safety.** An idempotency key is bound to the exact mobile payload, per-line price included. A plain retry after a transport failure reuses the key. If the payload changed after an unacknowledged attempt, the client looks the earlier idempotency key up in `GET /sales` and refuses to send a revised sale until that receipt is resolved, so a repriced retry can never replay the earlier sale.
 
-QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`); Laravel recomputes the amount from current prices. Payment responses contain `id`, `status` (`pending`, `paid`, `failed`, `cancelled`, or `expired`), `amount`, and the provider QR payload when available.
+QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`); Laravel recomputes the amount from current prices. Payment responses contain `id`, `status` (`pending`, `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired`), `amount`, the provider QR payload when available, and settlement fields (`failure_reason`, `reservation_expires_at`). `GET /payments/:id` returns the stored state only. `POST /payments/:id/refresh` asks the PayMongo sandbox for the latest verified outcome and settles it server-side; it is never a cancellation. Laravel exposes no cashier cancel action (`cancelled` remains readable for legacy attempts), so the app offers Leave Payment instead of Cancel: leaving keeps the cart and the pending attempt expires server-side. A `paid_unfulfilled` payment received money but could not fulfil stock, so the app refreshes inventory and history, keeps the cart, and offers no new payment until the operator reconciles.
 
 ## Safety rules
 
