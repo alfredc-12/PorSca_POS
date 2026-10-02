@@ -11,7 +11,10 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test:fast": "jest --runInBand --passWithNoTests",
-    "verify": "npm run lint && npm run typecheck && npm run test:fast"
+    "verify": "npm run lint && npm run typecheck && npm run test:fast",
+    "e2e": "agent-device test .agent-device/flows",
+    "e2e:flow": "agent-device replay",
+    "e2e:doctor": "agent-device doctor"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

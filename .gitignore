@@ -16,3 +16,11 @@ yarn-error.log*
 
 expo-env.d.ts
 # @end expo-cli
+
+# >>> AkiDev project-local runtime >>>
+.akidev/cache/
+.akidev/home/
+.akidev/tools/
+.akidev/tmp/
+.akidev/conflicts/
+# <<< AkiDev project-local runtime <<<
