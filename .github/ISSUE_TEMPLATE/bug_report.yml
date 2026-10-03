@@ -1,0 +1,91 @@
+name: Bug Report
+description: File a defect found while testing the staging app.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Feature
+      description: Which feature is affected? (e.g. 2.2 Barcode & Cart)
+      placeholder: e.g. 2.2 Barcode & Cart
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Staging app build plus API revision under test.
+      placeholder: App build ... + API rev ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that trigger the bug.
+      placeholder: |
+        1. Go to ...
+        2. Tap ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshot, recording, or relevant logs.
+      placeholder: Attach screenshot/recording or paste log excerpt.
+    validations:
+      required: false
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+  - type: dropdown
+    id: retest
+    attributes:
+      label: Retest result
+      options:
+        - Pending
+        - Passed
+        - Failed
+    validations:
+      required: true
+  - type: input
+    id: cycle
+    attributes:
+      label: Cycle ID
+      description: QA test cycle identifier (e.g. Week 6 staging).
+      placeholder: e.g. Week 6 staging
+    validations:
+      required: true
+  - type: input
+    id: requirement
+    attributes:
+      label: Requirement ID
+      description: Spec requirement this defect relates to.
+      placeholder: e.g. REQ-2.2-03
+    validations:
+      required: true
