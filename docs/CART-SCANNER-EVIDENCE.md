@@ -181,6 +181,27 @@ these defects. Each is fixed on this branch with the tests listed.
   staging-seed value supplied by the device lab, not one of this repo's
   fixtures; it is left to the captain-owned device run.
 - Resolving an uncertain cash attempt reads `GET /sales?per_page=100` and
-  matches the echoed idempotency key. A receipt older than the first page, or an
-  unreachable sales list, keeps the client in the safe "needs checking" state
-  rather than sending a duplicate sale.
+  matches the echoed idempotency key. A found receipt blocks another charge.
+  Absence is conclusive only when pagination identifies a complete first page
+  (`current_page = last_page = 1`, with `total` equal to the returned item count).
+  An older-than-first-page receipt, missing/inconsistent pagination, or an
+  unreachable sales list leaves the attempt unresolved and keeps the client in
+  the safe "needs checking" state rather than sending a fresh sale key. The
+  earlier implementation discarded pagination and incorrectly allowed a revised
+  sale after any page-1 miss; the client/provider regressions now cover that gap.
+- A paid QR attempt is retired only after authoritative inventory and history
+  verification succeeds. A later identical basket then gets a new pending
+  payment/key; concurrent or transport retries within an attempt keep its key.
+  Verification failures and `paid_unfulfilled` retain the original attempt for
+  recovery/reconciliation. Provider tests cover consecutive identical purchases
+  and both retention cases.
+- The demo-catalog default uses a direct public environment member reference
+  so Expo can inline it. `src/config/offline.production.test.ts` transforms the
+  actual policy module with Expo's production env plugin and executes it without
+  a build-machine public env object; injected policy tests alone do not prove
+  bundled behavior.
+
+These follow-ups do not change barcode fixtures, Appium defaults, or the API
+seed. Aligning the printable fixture values with a versioned API QA baseline
+remains a coordinated mobile/API follow-up, not evidence that the native printed
+card was executed.

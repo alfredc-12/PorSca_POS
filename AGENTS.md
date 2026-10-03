@@ -26,7 +26,7 @@
 
 - The live contract name is `porsca-mobile-api-v2`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Treat that document as authoritative and reconcile any mismatch with this map before proceeding.
 - Before formal QA, compare the exact mobile and API `staging` revisions with the human-created cycle record; repository setup does not create that record.
-- Cash checkout/history wire fields and authoritative Laravel routes are defined in [docs/API-CONTRACT.md](docs/API-CONTRACT.md); local API pairing uses the isolated `/tmp` procedure in [docs/SETUP.md](docs/SETUP.md).
+- Cash checkout/history wire fields, receipt-completeness checks, QR attempt lifecycle, and authoritative Laravel routes are defined in [docs/API-CONTRACT.md](docs/API-CONTRACT.md); local API pairing uses the isolated `/tmp` procedure in [docs/SETUP.md](docs/SETUP.md).
 - Promote matching mobile and API revisions together only after human QA approval; never promote one side alone.
 
 ## Boundaries
