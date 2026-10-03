@@ -125,6 +125,14 @@ export type ApiSale = {
   items?: ApiSaleItem[];
 };
 
+/** Whether the original cash receipt was found or conclusively absent. */
+export type CashSaleAttemptResolution = 'found' | 'not-found' | 'unknown';
+
+type ApiSalesPage = {
+  items?: ApiSale[];
+  pagination?: { current_page?: number; last_page?: number; total?: number };
+};
+
 export type ApiTransaction = {
   id: string | number;
   payment_id?: string | number | null;
@@ -338,10 +346,29 @@ export class ApiClient {
   }
 
   listSales() {
-    return this.request<ApiSale[] | { items?: ApiSale[] }>(this.versionedPath('/sales?per_page=100')).then((payload) => {
+    return this.readSalesPage().then((payload) => {
       const items = Array.isArray(payload) ? payload : payload.items ?? [];
       return items.map(normalizeSale);
     });
+  }
+
+  /** A missing receipt on an incomplete history page is never proof of absence. */
+  async resolveCashSaleAttempt(idempotencyKey: string): Promise<CashSaleAttemptResolution> {
+    const payload = await this.readSalesPage();
+    const items = Array.isArray(payload) ? payload : payload.items ?? [];
+    if (items.some((sale) => (sale.idempotency_key ?? sale.idempotencyKey) === idempotencyKey)) return 'found';
+
+    if (!Array.isArray(payload) && Array.isArray(payload.items)) {
+      const pagination = payload.pagination;
+      if (pagination?.current_page === 1 && pagination.last_page === 1 && pagination.total === items.length) {
+        return 'not-found';
+      }
+    }
+    return 'unknown';
+  }
+
+  private readSalesPage() {
+    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath('/sales?per_page=100'));
   }
 
   listTransactions() {

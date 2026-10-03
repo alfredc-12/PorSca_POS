@@ -487,13 +487,12 @@ export function PosProvider({
   }, [client, demoCatalogEnabled]);
   /**
    * Resolve whether an earlier uncertain cash attempt actually became a sale.
-   * Laravel echoes the idempotency key on each sale, so the receipt can be
-   * found without resending the uncertain request.
+   * Laravel echoes the idempotency key on each sale. The client preserves the
+   * history pagination evidence: only a complete first page can prove absence.
    */
   const resolveCashAttempt = useCallback(async (idempotencyKey: string): Promise<'found' | 'not-found' | 'unknown'> => {
     try {
-      const sales = await client.listSales();
-      return sales.some((sale) => sale.idempotencyKey === idempotencyKey) ? 'found' : 'not-found';
+      return await client.resolveCashSaleAttempt(idempotencyKey);
     } catch {
       return 'unknown';
     }
@@ -654,7 +653,13 @@ export function PosProvider({
       // the cart is kept for operator reconciliation.
       if (payment.status !== 'paid') return;
       const completedSignature = [...qrPayments.current.entries()].find(([, known]) => known.id === payment.id)?.[0];
-      if (completedSignature && qrCartSignature(cartRef.current.lines) === completedSignature) {
+      if (!completedSignature) return;
+      // This attempt fulfilled its sale. Retire its basket identity only after
+      // verification succeeds, so the next identical basket is a new payment,
+      // while pending, uncertain and paid-unfulfilled retries keep their key.
+      qrPayments.current.delete(completedSignature);
+      qrKeys.current.delete(completedSignature);
+      if (qrCartSignature(cartRef.current.lines) === completedSignature) {
         commitCart({ type: 'reset' });
       }
     });

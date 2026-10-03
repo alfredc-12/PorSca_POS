@@ -247,6 +247,23 @@ describe('ApiClient', () => {
     );
   });
 
+  it.each([
+    ['an absent key on a complete empty first page', { items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }, 'not-found'],
+    ['an absent key on an incomplete first page', { items: [], pagination: { current_page: 1, last_page: 2, total: 101 } }, 'unknown'],
+    ['an absent key without pagination', { items: [] }, 'unknown'],
+    ['an absent key in a legacy array response', [], 'unknown'],
+    ['an absent key on a non-first page', { items: [], pagination: { current_page: 2, last_page: 2, total: 101 } }, 'unknown'],
+    ['inconsistent single-page metadata', { items: [], pagination: { current_page: 1, last_page: 1, total: 1 } }, 'unknown'],
+    ['the original receipt on an incomplete page', { items: [{ id: 42, status: 'completed', idempotency_key: 'cash-original' }], pagination: { current_page: 1, last_page: 2, total: 101 } }, 'found'],
+    ['the original receipt in a legacy response', [{ id: 42, status: 'completed', idempotencyKey: 'cash-original' }], 'found'],
+  ])('resolves %s without treating an incomplete read as proof of absence', async (_name, page, expected) => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: page }));
+    const client = new ApiClient({ baseUrl: 'https://api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.resolveCashSaleAttempt('cash-original')).resolves.toBe(expected);
+    expect(fetchImpl).toHaveBeenCalledWith('https://api.example.test/api/v1/sales?per_page=100', expect.objectContaining({ method: 'GET' }));
+  });
+
   it('lists users, creates a fixed-role cashier, updates active state, and deactivates through the admin routes', async () => {
     const admin = { id: 1, name: 'Store Admin', email: 'admin@example.test', role: 'admin', is_active: true, created_at: '2026-10-01T09:00:00Z' };
     const cashier = { id: 2, name: 'Counter One', email: 'cashier@example.test', role: 'cashier', is_active: true, created_at: '2026-10-01T09:01:00Z' };
