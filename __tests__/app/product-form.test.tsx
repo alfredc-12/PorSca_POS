@@ -185,7 +185,8 @@ describe('ProductFormScreen', () => {
     fireEvent.press(screen.getByTestId('save-product-button'));
 
     await waitFor(() => expect(screen.getByTestId('product-form-error')).toBeTruthy());
-    expect(screen.getByText('Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.')).toBeTruthy();
+    expect(screen.getByText('Check the connection, then save again.')).toBeTruthy();
+    expect(screen.queryByText(/Unable to reach PorSca API/)).toBeNull();
     expect(mockRouter.back).not.toHaveBeenCalled();
   });
 

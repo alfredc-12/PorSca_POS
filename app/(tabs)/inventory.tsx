@@ -74,19 +74,19 @@ export default function InventoryScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryUsingFallback ? 'Offline • Demo fallback' : inventoryState === 'unavailable' ? 'Offline • Laravel required' : inventoryState === 'loading' ? 'Checking Laravel…' : 'Laravel inventory'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryUsingFallback ? 'Offline • Saved stock' : inventoryState === 'unavailable' ? 'Offline • Server required' : inventoryState === 'loading' ? 'Checking…' : 'Stock ready'}</Text>
         </View>
       </View>
 
       {inventoryState === 'loading' ? (
-        <DataState kind="loading" title="Loading inventory from Laravel" message="Fetching authoritative product and stock information." />
+        <DataState kind="loading" title="Loading inventory" message="Fetching current product and stock information." />
       ) : null}
 
       {inventoryState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel inventory unavailable"
-          message={inventoryError ?? 'The API could not be reached. Inventory is unchanged; nothing was substituted.'}
+          title="Shop server unavailable"
+          message={inventoryError ?? 'We cannot reach the shop server. Inventory is unchanged.'}
           actionLabel="Retry inventory"
           onAction={() => void refreshInventory()}
         />
@@ -121,7 +121,7 @@ export default function InventoryScreen() {
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.26, 190, 250) }]}>
             <Ionicons name="search-outline" size={responsive.s(34)} color={colors.textMuted} />
             <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>{inventoryProducts.length ? 'No products match your search' : 'No inventory products returned'}</Text>
-            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>{inventoryProducts.length ? 'Try a product name, barcode, or category.' : 'Laravel has no active inventory records yet.'}</Text>
+            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>{inventoryProducts.length ? 'Try a product name, barcode, or category.' : 'There are no active inventory records yet.'}</Text>
           </View>
         )}
       </View> : null}

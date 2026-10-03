@@ -253,7 +253,7 @@ describe('PosProvider Laravel cash checkout', () => {
       fireEvent.press(getByTestId('complete-sale'));
     });
 
-    await waitFor(() => expect(getByText(/already recorded by Laravel/)).toBeTruthy());
+    await waitFor(() => expect(getByText(/already recorded on the shop server/)).toBeTruthy());
     // The old-price sale was never replayed and no second sale was sent.
     expect(createSale).toHaveBeenCalledTimes(1);
     expect(getByText(/cart:1 sales:0/)).toBeTruthy();

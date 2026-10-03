@@ -56,6 +56,7 @@ export default function ProductFormScreen() {
   const [category, setCategory] = useState<ProductCategory>(existing?.category ?? 'General');
   const [fieldErrors, setFieldErrors] = useState<ProductDraftErrors>({});
   const [formError, setFormError] = useState<string>();
+  const [formReference, setFormReference] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [retryingRefresh, setRetryingRefresh] = useState(false);
@@ -71,7 +72,7 @@ export default function ProductFormScreen() {
   };
   const dirty = name !== initial.name || barcode !== initial.barcode || price !== initial.price || stock !== initial.stock || category !== initial.category;
 
-  const discardMessage = 'Your edits have not been saved to Laravel yet. Going back now will lose them.';
+  const discardMessage = 'Your edits have not been saved to the shop server yet. Going back now will lose them.';
   const confirmDiscard = () => {
     if (!dirty) {
       router.back();
@@ -87,6 +88,7 @@ export default function ProductFormScreen() {
     setter(value);
     setFieldErrors((current) => current[field] ? { ...current, [field]: undefined } : current);
     setFormError(undefined);
+    setFormReference(undefined);
     setNeedsRefresh(false);
   };
 
@@ -96,6 +98,7 @@ export default function ProductFormScreen() {
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       setFormError('Check the highlighted fields and try again.');
+      setFormReference(undefined);
       setNeedsRefresh(false);
       return;
     }
@@ -106,12 +109,14 @@ export default function ProductFormScreen() {
     if (duplicate) {
       setFieldErrors({ barcode: 'Barcode already exists. Use a different barcode.' });
       setFormError('Barcode already exists. Use a different barcode, then try again.');
+      setFormReference(undefined);
       setNeedsRefresh(false);
       return;
     }
 
     setSaving(true);
     setFormError(undefined);
+    setFormReference(undefined);
     setFieldErrors({});
     setNeedsRefresh(false);
 
@@ -134,6 +139,7 @@ export default function ProductFormScreen() {
 
     setFieldErrors(result.fieldErrors ?? {});
     setFormError(result.message);
+    setFormReference(result.status === 'refresh-failed' ? undefined : result.reference);
     setNeedsRefresh(result.status === 'refresh-failed');
   };
 
@@ -147,6 +153,7 @@ export default function ProductFormScreen() {
       return;
     }
     setFormError('The inventory is still unavailable. Keep this form open and retry the refresh again.');
+    setFormReference(undefined);
   };
 
   if (!isAdmin) return <Redirect href="/(tabs)/inventory" />;
@@ -172,7 +179,7 @@ export default function ProductFormScreen() {
           <View style={styles.heroIcon}><Ionicons name={existing ? 'create-outline' : 'cube-outline'} size={30} color={colors.primary} /></View>
           <View style={styles.heroCopy}>
             <Text style={styles.heroTitle}>{existing ? existing.name : 'New inventory item'}</Text>
-            <Text style={styles.heroBody}>{existing ? 'Changes are saved to Laravel and reflected in inventory.' : 'Scan or enter the barcode printed on the package.'}</Text>
+            <Text style={styles.heroBody}>{existing ? 'Changes are saved to the shop server and reflected in stock.' : 'Scan or enter the barcode printed on the package.'}</Text>
           </View>
         </View>
 
@@ -189,6 +196,7 @@ export default function ProductFormScreen() {
             <View style={styles.errorCopy}>
               <Text style={styles.errorTitle}>{needsRefresh ? 'Saved, refresh still needed' : 'Unable to save product'}</Text>
               <Text style={styles.errorMessage}>{formError}</Text>
+              {formReference ? <Text selectable style={styles.errorCode}>Support code: {formReference}</Text> : null}
               <Pressable
                 testID={needsRefresh ? 'retry-inventory-refresh' : 'retry-product-save'}
                 accessibilityRole="button"
@@ -250,7 +258,7 @@ export default function ProductFormScreen() {
         {dirty && !saving ? (
           <AppButton testID="discard-product-button" label="Discard changes" variant="secondary" onPress={confirmDiscard} />
         ) : null}
-        <Text style={styles.footerHint}>Product details and stock are saved by Laravel. A successful save refreshes the authoritative inventory before leaving this screen.</Text>
+        <Text style={styles.footerHint}>Product details and stock are saved on the shop server. A successful save refreshes current stock before leaving this screen.</Text>
       </Screen>
     </KeyboardAvoidingView>
   );
@@ -286,6 +294,7 @@ const styles = StyleSheet.create({
   errorCopy: { flex: 1, minWidth: 0, gap: 4 },
   errorTitle: { color: colors.text, fontSize: typography.label, fontWeight: '900' },
   errorMessage: { color: colors.text, fontSize: typography.caption, lineHeight: 18 },
+  errorCode: { color: colors.text, fontSize: typography.caption, fontWeight: '800', letterSpacing: 0.5 },
   retryButton: { alignSelf: 'flex-start', minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', marginTop: 3 },
   retryText: { color: colors.white, fontSize: typography.caption, fontWeight: '900' },
   formCard: { gap: spacing.lg, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, padding: spacing.lg, shadowColor: colors.shadow, shadowOpacity: 0.05, shadowRadius: 13, shadowOffset: { width: 0, height: 5 }, elevation: 2 },

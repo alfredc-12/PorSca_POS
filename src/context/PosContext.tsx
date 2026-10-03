@@ -7,6 +7,7 @@ import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/rev
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CartLine, Product, Sale } from '@/src/types';
+import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
 export type { BarcodeLookupResult };
 
@@ -19,6 +20,8 @@ export type ProductMutationResult = {
   product?: Product;
   status: 'created' | 'updated' | 'validation' | 'unavailable' | 'error' | 'refresh-failed';
   message: string;
+  /** Support code that maps this failure to the on-device diagnostics record. */
+  reference?: string;
   fieldErrors?: Partial<Record<ProductField, string>>;
 };
 
@@ -172,8 +175,8 @@ export function PosProvider({
       }
       const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
       return fallbackProduct
-        ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
-        : { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable. Retry when connected before looking up this barcode.', usingFallback: true };
+        ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
+        : { ok: false, status: 'unavailable', message: 'We cannot reach the shop server. Retry when connected before looking up this barcode.', usingFallback: true };
     }
 
     // iOS reports UPC-A as EAN-13 with a leading zero and Android may report the
@@ -195,12 +198,12 @@ export function PosProvider({
         if (error instanceof ApiClientError && error.status === 404) continue;
 
         if (!demoCatalogEnabled) {
-          return { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable, so this barcode could not be checked against the catalog. Check the connection and try again.' };
+          return { ok: false, status: 'unavailable', message: 'We cannot reach the shop server, so this barcode could not be checked against the catalog. Check the connection and try again.' };
         }
         const fallbackProduct = productsRef.current.find((item) => item.barcode === normalizedBarcode);
         return fallbackProduct
-          ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found in the offline demo catalog.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
-          : { ok: false, status: 'unavailable', message: 'The Laravel API is unavailable. Retry when connected before looking up this barcode.', usingFallback: true };
+          ? { ok: true, product: fallbackProduct, status: 'found', message: `${fallbackProduct.name} found.`, usingFallback: true, matchedBarcode: fallbackProduct.barcode }
+          : { ok: false, status: 'unavailable', message: 'We cannot reach the shop server. Retry when connected before looking up this barcode.', usingFallback: true };
       }
     }
 
@@ -278,7 +281,7 @@ export function PosProvider({
       }
 
       if (!client.isConfigured) {
-        return unchanged('offline', 'Prices and stock cannot be confirmed because the Laravel API is not configured. Connect to the API and try again; the cart is unchanged.');
+        return unchanged('offline', 'Prices and stock cannot be confirmed because the shop server is not configured. Connect to the server and try again; the cart is unchanged.');
       }
 
       try {
@@ -299,13 +302,13 @@ export function PosProvider({
         });
 
         if (unreachable) {
-          return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+          return unchanged('unavailable', 'Prices and stock could not be confirmed because the shop server could not be reached. Check the connection and try again; the cart is unchanged.');
         }
 
         rememberProducts(authoritative);
         return reconcileCart(lines, authoritative);
       } catch {
-        return unchanged('unavailable', 'Prices and stock could not be confirmed because the Laravel API could not be reached. Check the connection and try again; the cart is unchanged.');
+        return unchanged('unavailable', 'Prices and stock could not be confirmed because the shop server could not be reached. Check the connection and try again; the cart is unchanged.');
       }
     };
 
@@ -371,7 +374,7 @@ export function PosProvider({
       }
       setSearchResults(searchLocalProducts(productsRef.current, normalizedQuery));
       setCatalogState('unavailable');
-      setCatalogError('Laravel API is unavailable. Showing the offline demo catalog.');
+      setCatalogError('We cannot reach the shop server. Showing items saved on this device.');
       setCatalogUsingFallback(true);
       return;
     }
@@ -388,7 +391,7 @@ export function PosProvider({
       if (currentRequest !== requestId.current) return;
       setSearchResults(demoCatalogEnabled ? searchLocalProducts(productsRef.current, normalizedQuery) : []);
       setCatalogState('unavailable');
-      setCatalogError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo catalog.' : OFFLINE_COPY.catalogUnavailable);
+      setCatalogError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing items saved on this device.' : OFFLINE_COPY.catalogUnavailable);
       setCatalogUsingFallback(demoCatalogEnabled);
     } finally {
       if (inFlightQuery.current === normalizedQuery) inFlightQuery.current = undefined;
@@ -411,7 +414,7 @@ export function PosProvider({
       return true;
     } catch {
       setCatalogState('unavailable');
-      setCatalogError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo catalog.' : OFFLINE_COPY.catalogUnavailable);
+      setCatalogError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing items saved on this device.' : OFFLINE_COPY.catalogUnavailable);
       setCatalogUsingFallback(demoCatalogEnabled);
       return false;
     }
@@ -425,7 +428,7 @@ export function PosProvider({
     if (!client.isConfigured) {
       setInventoryProducts(demoCatalogEnabled ? seedProducts : []);
       setInventoryState('unavailable');
-      setInventoryError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo inventory.' : OFFLINE_COPY.inventoryNotConfigured);
+      setInventoryError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing stock saved on this device.' : OFFLINE_COPY.inventoryNotConfigured);
       setInventoryUsingFallback(demoCatalogEnabled);
       return false;
     }
@@ -458,7 +461,7 @@ export function PosProvider({
     } catch {
       setInventoryProducts((current) => current.length ? current : demoCatalogEnabled ? seedProducts : []);
       setInventoryState('unavailable');
-      setInventoryError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing the offline demo inventory.' : OFFLINE_COPY.inventoryUnavailable);
+      setInventoryError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing stock saved on this device.' : OFFLINE_COPY.inventoryUnavailable);
       setInventoryUsingFallback(demoCatalogEnabled);
       return false;
     }
@@ -470,7 +473,7 @@ export function PosProvider({
 
     if (!client.isConfigured) {
       setSalesState('unavailable');
-      setSalesError(demoCatalogEnabled ? 'Laravel API is unavailable. Showing locally recorded demo sales.' : OFFLINE_COPY.salesNotConfigured);
+      setSalesError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing sales saved on this device.' : OFFLINE_COPY.salesNotConfigured);
       return false;
     }
 
@@ -481,7 +484,7 @@ export function PosProvider({
       return true;
     } catch {
       setSalesState('unavailable');
-      setSalesError('Laravel API is unavailable. Showing the last known transaction history.');
+      setSalesError('We cannot reach the shop server. Showing the last known transaction history.');
       return false;
     }
   }, [client, demoCatalogEnabled]);
@@ -527,7 +530,7 @@ export function PosProvider({
       if (resolution !== 'not-found') {
         throw new ApiClientError(
           resolution === 'found'
-            ? 'An earlier cash attempt for this cart was already recorded by Laravel. Nothing new was sent; check Transactions before taking payment again.'
+            ? 'An earlier cash attempt for this cart was already recorded on the shop server. Nothing new was sent; check Transactions before taking payment again.'
             : 'An earlier cash attempt could not be confirmed. Check Transactions for a completed sale before taking payment again; nothing new was sent.',
           undefined,
           'cash_attempt_unresolved',
@@ -593,7 +596,7 @@ export function PosProvider({
       throw new ApiClientError('The cart is empty. Add a product before starting QR Ph payment.');
     }
     if (!client.isConfigured) {
-      throw new ApiClientError('Laravel API is not configured. QR Ph payment requires the backend; no sale was recorded.');
+      throw new ApiClientError('The shop server is not configured. QR Ph payment needs it; no sale was recorded.');
     }
 
     const signature = qrCartSignature(lines);
@@ -627,7 +630,7 @@ export function PosProvider({
 
   const refreshQrPhPayment = useCallback(async (paymentId: string) => {
     if (!client.isConfigured) {
-      throw new ApiClientError('Laravel API is not configured. Payment verification is unavailable.');
+      throw new ApiClientError('The shop server is not configured. Payment verification is unavailable.');
     }
     // The refresh endpoint asks the PayMongo sandbox for the latest verified
     // outcome and settles it server-side. There is no cashier cancel action:
@@ -647,7 +650,7 @@ export function PosProvider({
 
     const settlement = Promise.all([refreshInventory(), refreshSales()]).then(([inventoryRefreshed, salesRefreshed]) => {
       if (!inventoryRefreshed || !salesRefreshed) {
-        throw new ApiClientError('Laravel confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
+        throw new ApiClientError('The shop server confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
       }
       // A `paid_unfulfilled` payment took money without recording a sale, so
       // the cart is kept for operator reconciliation.
@@ -676,10 +679,11 @@ export function PosProvider({
     status: 'created' | 'updated',
   ): Promise<ProductMutationResult> => {
     if (!client.isConfigured) {
+      const failure = localFailure('We could not save this product', 'Check the connection, then save again; your changes are still on this form.', { action: 'retry', actionLabel: 'Try again' });
       return {
         ok: false,
         status: 'unavailable',
-        message: 'The Laravel API is not configured. Connect to the API and try again; no local product was saved.',
+        message: failure.body,
       };
     }
 
@@ -692,7 +696,7 @@ export function PosProvider({
           ok: false,
           status: 'refresh-failed',
           product: saved,
-          message: 'Product saved, but the authoritative inventory could not be refreshed. Retry the inventory refresh before leaving this screen.',
+          message: 'Product saved, but current stock could not be refreshed. Retry the inventory refresh before leaving this screen.',
         };
       }
       return {
@@ -766,54 +770,41 @@ export function PosProvider({
 
 function productMutationFailure(error: unknown): ProductMutationResult {
   if (!(error instanceof ApiClientError)) {
+    const failure = localFailure('We could not save this product', 'Check the connection, then save again; your changes are still on this form.', { action: 'retry', actionLabel: 'Try again' });
     return {
       ok: false,
       status: 'unavailable',
-      message: 'Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.',
+      message: failure.body,
     };
   }
 
   const fieldErrors = extractFieldErrors(error.details);
   const barcodeError = fieldErrors.barcode?.toLowerCase() ?? '';
-  if (error.status === 422) {
-    if (barcodeError.includes('taken') || barcodeError.includes('already') || barcodeError.includes('unique')) {
-      return {
-        ok: false,
-        status: 'validation',
-        fieldErrors: { ...fieldErrors, barcode: 'Barcode already exists. Use a different barcode.' },
-        message: 'Barcode already exists. Use a different barcode, then try again.',
-      };
-    }
+  if (error.status === 422 && (barcodeError.includes('taken') || barcodeError.includes('already') || barcodeError.includes('unique'))) {
     return {
       ok: false,
       status: 'validation',
-      fieldErrors,
-      message: error.message || 'The API rejected these product details. Check the highlighted fields and try again.',
+      fieldErrors: { ...fieldErrors, barcode: 'Barcode already exists. Use a different barcode.' },
+      message: 'Barcode already exists. Use a different barcode, then try again.',
     };
   }
 
-  if (error.status === undefined) {
-    return {
-      ok: false,
-      status: 'unavailable',
-      message: 'Could not reach the Laravel API. Check the connection and try again; your changes are still on this form.',
-    };
+  // The API's own message and field details are recorded for support, never
+  // printed: the shared describer owns every visible sentence.
+  const failure = describeAndRecordFailure(
+    { status: error.status, code: error.code, message: error.message, details: error.details },
+    { screen: 'product-save' },
+  );
+
+  if (error.status === 422) {
+    return { ok: false, status: 'validation', fieldErrors, message: failure.body, reference: failure.reference };
   }
 
-  if (error.status >= 500) {
-    return {
-      ok: false,
-      status: 'unavailable',
-      message: 'Could not save the product because the Laravel API is unavailable. Check the connection and try again.',
-    };
+  if (error.status === undefined || error.status >= 500) {
+    return { ok: false, status: 'unavailable', message: failure.body, reference: failure.reference };
   }
 
-  return {
-    ok: false,
-    status: 'error',
-    fieldErrors,
-    message: error.message || 'The Laravel API rejected the product. Check the details and try again.',
-  };
+  return { ok: false, status: 'error', fieldErrors, message: failure.body, reference: failure.reference };
 }
 
 function extractFieldErrors(details: unknown): Partial<Record<ProductField, string>> {

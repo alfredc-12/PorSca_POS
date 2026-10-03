@@ -4,11 +4,14 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
+import { FailureNotice } from '@/src/components/FailureNotice';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { cashChange, paymentError } from '@/src/domain/pos';
 import { saleFailureCopy } from '@/src/domain/checkout';
+import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
+import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentStatus } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
@@ -31,13 +34,15 @@ export default function CheckoutScreen() {
   const [cash, setCash] = useState('');
   const [qrStatus, setQrStatus] = useState<QrViewStatus>('idle');
   const [qrPayment, setQrPayment] = useState<Payment>();
-  const [qrError, setQrError] = useState<string>();
-  const [cashError, setCashError] = useState<string>();
+  const [qrError, setQrError] = useState<DescribedFailure>();
+  const [qrFailure, setQrFailure] = useState<DescribedFailure>();
+  const [cashError, setCashError] = useState<DescribedFailure>();
   const [cashSubmitting, setCashSubmitting] = useState(false);
   const [qrBusy, setQrBusy] = useState(false);
   const cashBusyRef = useRef(false);
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
+  const recordedTerminalStatus = useRef<string | undefined>(undefined);
 
   const received = Number(cash) || 0;
   const cashResult = useMemo(() => cashChange(total, received), [received, total]);
@@ -48,15 +53,15 @@ export default function CheckoutScreen() {
     // Strict online: no sale can be recorded without Laravel, so a stale or
     // deep-linked checkout can never fall through to a local sale (defect F1).
     if (!apiConfigured) {
-      const message = OFFLINE_COPY.checkoutNotConfigured;
-      setCashError(message);
-      Alert.alert('Unable to complete sale', message);
+      const failure = localFailure('The sale was not saved', OFFLINE_COPY.checkoutNotConfigured, { action: 'retry', actionLabel: 'Try again' });
+      setCashError(failure);
+      Alert.alert(failure.title, failure.body);
       return;
     }
     if (!cashResult.sufficient) {
-      const message = `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`;
-      setCashError(message);
-      Alert.alert('Insufficient cash', message);
+      const failure = localFailure('Not enough cash', `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`, { action: 'retry', actionLabel: 'Confirm again' });
+      setCashError(failure);
+      Alert.alert(failure.title, failure.body);
       return;
     }
     // Single-submit guard: the disabled button state commits a render later,
@@ -67,9 +72,9 @@ export default function CheckoutScreen() {
     try {
       const sale = await completeCashSale(received);
       if (!sale) {
-        const message = 'The cart is empty. Return to the POS and add a product before trying again.';
-        setCashError(message);
-        Alert.alert('Unable to complete sale', message);
+        const failure = localFailure('The sale was not saved', 'The cart is empty. Return to the POS and add a product before trying again.', { action: 'retry', actionLabel: 'Try again' });
+        setCashError(failure);
+        Alert.alert(failure.title, failure.body);
         return;
       }
       Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
@@ -81,8 +86,8 @@ export default function CheckoutScreen() {
         message: apiError?.message,
         details: apiError?.details,
       });
-      setCashError(failure.message);
-      Alert.alert(failure.title, failure.message);
+      setCashError(failure);
+      Alert.alert(failure.title, alertBody(failure));
     } finally {
       cashBusyRef.current = false;
       setCashSubmitting(false);
@@ -93,21 +98,25 @@ export default function CheckoutScreen() {
     setQrPayment(payment);
     setQrStatus(payment.status);
     setQrError(undefined);
+    const terminal = payment.status === 'failed' || payment.status === 'cancelled' || payment.status === 'expired';
+    if (terminal && recordedTerminalStatus.current !== payment.status) {
+      recordedTerminalStatus.current = payment.status;
+      setQrFailure(describeAndRecordFailure({ code: payment.status }, { screen: 'qr-payment' }));
+    }
 
     if (payment.status === 'paid_unfulfilled') {
+      const failure = describeAndRecordFailure({ code: 'paid_unfulfilled' }, { screen: 'qr-payment' });
+      setQrFailure(failure);
       try {
         await confirmQrPhPayment(payment);
         setQrStatus('paid_unfulfilled');
         if (handledPaidPayment.current !== payment.id) {
           handledPaidPayment.current = payment.id;
-          Alert.alert(
-            'Payment needs reconciliation',
-            'Laravel received the money but could not fulfil stock. No sale was recorded; reconcile with the operator before refunding.',
-          );
+          Alert.alert(failure.title, alertBody(failure));
         }
       } catch (error) {
         setQrStatus('verification');
-        setQrError(verificationMessage(error));
+        setQrError(describeQrVerification(error));
       }
       return;
     }
@@ -122,13 +131,13 @@ export default function CheckoutScreen() {
         resetCart();
         Alert.alert(
           'Payment recorded',
-          `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by Laravel.`,
+          `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by the shop server.`,
           [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }],
         );
       }
     } catch (error) {
       setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      setQrError(describeQrVerification(error));
     }
   }, [confirmQrPhPayment, resetCart]);
 
@@ -138,12 +147,14 @@ export default function CheckoutScreen() {
     setQrBusy(true);
     setQrStatus('creating');
     setQrError(undefined);
+    setQrFailure(undefined);
+    recordedTerminalStatus.current = undefined;
     try {
       const payment = await startQrPhPayment(forceNew);
       await showQrPayment(payment);
     } catch (error) {
       setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      setQrError(describeQrVerification(error));
     } finally {
       qrBusyRef.current = false;
       setQrBusy(false);
@@ -159,7 +170,7 @@ export default function CheckoutScreen() {
       await showQrPayment(payment);
     } catch (error) {
       setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      setQrError(describeQrVerification(error));
     } finally {
       qrBusyRef.current = false;
       setQrBusy(false);
@@ -200,12 +211,12 @@ export default function CheckoutScreen() {
   // checkout path exists without Laravel (defect F1).
   if (!apiConfigured) {
     return (
-      <Screen title="Checkout" subtitle="Laravel is not reachable." back>
+      <Screen title="Checkout" subtitle="The shop server is not reachable." back>
         <View style={styles.emptyCard}>
           <View style={styles.emptyIcon}><Ionicons name="cloud-offline-outline" size={36} color={colors.warning} /></View>
           <Text style={styles.emptyTitle}>No sale can be recorded</Text>
           <Text testID="checkout-offline-notice" accessibilityRole="alert" style={styles.emptyBody}>
-            {OFFLINE_COPY.checkoutNotConfigured} The cart has been kept; return to the POS, connect to the Laravel API, and start payment again.
+            {OFFLINE_COPY.checkoutNotConfigured} The cart has been kept; return to the POS, connect to the shop server, and start payment again.
           </Text>
           <AppButton testID="return-to-pos-offline" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
@@ -280,7 +291,7 @@ export default function CheckoutScreen() {
                 <Text style={styles.changeLabel}>Change to customer</Text>
                 <Text style={styles.changeValue}>₱{cashResult.change.toFixed(2)}</Text>
               </View>
-              {cashError ? <Text testID="checkout-cash-error" accessibilityRole="alert" style={styles.cashError}>{cashError}</Text> : null}
+              {cashError ? <FailureNotice testID="checkout-cash-error" failure={cashError} /> : null}
               <AppButton
                 testID="confirm-cash-payment"
                 label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
@@ -296,17 +307,15 @@ export default function CheckoutScreen() {
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
               )}
-              <Text style={styles.qrTitle}>Laravel QR Ph payment</Text>
-              <Text style={styles.qrBody}>Laravel creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending payment stays payable until the provider settles it or the reservation expires.</Text>
+              <Text style={styles.qrTitle}>QR Ph payment</Text>
+              <Text style={styles.qrBody}>The shop server creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending payment stays payable until the provider settles it or the reservation expires.</Text>
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
                   {qrStatusText(qrStatus)}
                 </Text>
               ) : null}
-              {qrError ? <Text testID="qr-payment-error" accessibilityRole="alert" style={styles.qrError}>{qrError}</Text> : null}
-              {qrPayment?.failureReason && (qrTerminal || qrStatus === 'paid_unfulfilled') ? (
-                <Text testID="qr-payment-failure-reason" style={styles.qrFailureReason}>Reference: {qrPayment.failureReason}</Text>
-              ) : null}
+              {qrError ? <FailureNotice testID="qr-payment-error" failure={qrError} /> : null}
+              {qrFailure ? <FailureNotice testID="qr-payment-failure" failure={qrFailure} /> : null}
               {qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment ? (
                 <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy} style={styles.fullButton} />
               ) : null}
@@ -315,7 +324,7 @@ export default function CheckoutScreen() {
               ) : null}
               {qrStatus === 'pending' && qrPayment ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
@@ -327,7 +336,7 @@ export default function CheckoutScreen() {
               ) : null}
               {qrStatus === 'paid_unfulfilled' && qrPayment ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
@@ -342,7 +351,7 @@ export default function CheckoutScreen() {
 
           <View style={styles.secureRow}>
             <Ionicons name="shield-checkmark" size={16} color={colors.primary} />
-            <Text style={styles.secureText}>Only a Laravel-confirmed payment can update stock or transaction history.</Text>
+            <Text style={styles.secureText}>Only a payment confirmed by the shop server can update stock or transaction history.</Text>
           </View>
         </View>
       </Screen>
@@ -367,9 +376,9 @@ function QrPayload({ payload }: { payload: string }) {
 
 function qrStatusText(status: QrViewStatus) {
   switch (status) {
-    case 'creating': return 'Creating a Laravel payment…';
+    case 'creating': return 'Creating a QR Ph payment…';
     case 'pending': return 'Payment pending…';
-    case 'paid': return 'Payment confirmed by Laravel. Inventory and history refreshed.';
+    case 'paid': return 'Payment confirmed by the shop server. Inventory and history refreshed.';
     case 'paid_unfulfilled': return 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.';
     case 'failed':
     case 'cancelled':
@@ -379,9 +388,19 @@ function qrStatusText(status: QrViewStatus) {
   }
 }
 
-function verificationMessage(error: unknown) {
-  const detail = error instanceof ApiClientError ? error.message : 'Laravel could not be reached.';
-  return `Payment status could not be verified. ${detail} Retry verification; do not treat this payment as complete yet.`;
+function describeQrVerification(error: unknown): DescribedFailure {
+  const apiError = error instanceof ApiClientError ? error : undefined;
+  return apiError
+    ? describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'qr-verification' },
+      )
+    : localFailure('We cannot check this payment yet', 'Do not hand over the goods. Check the connection and check again.', { action: 'check-payment', actionLabel: 'Check again' });
+}
+
+/** The alert body: the visible copy, plus the support code when one was issued. */
+function alertBody(failure: DescribedFailure): string {
+  return failure.reference ? `${failure.body}\n\nSupport code: ${failure.reference}` : failure.body;
 }
 
 const styles = StyleSheet.create({
@@ -415,7 +434,6 @@ const styles = StyleSheet.create({
   changeBox: { minHeight: 68, borderRadius: radius.md, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   changeLabel: { color: colors.textMuted, fontSize: typography.label, fontWeight: '600' },
   changeValue: { color: colors.primary, fontSize: typography.heading, fontWeight: '900' },
-  cashError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.label, lineHeight: 20, fontWeight: '700' },
   qrPanel: { gap: spacing.md, alignItems: 'center', paddingTop: spacing.sm },
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
   qrImage: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white },
@@ -429,8 +447,6 @@ const styles = StyleSheet.create({
   qrStatusReconcile: { color: colors.warning },
   qrStatusError: { color: colors.danger },
   qrStatusVerification: { color: colors.warning },
-  qrError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.caption, lineHeight: 18, textAlign: 'center' },
-  qrFailureReason: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
   qrActions: { alignSelf: 'stretch', gap: spacing.sm },
   fullButton: { alignSelf: 'stretch' },
   secureRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },

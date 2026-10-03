@@ -100,7 +100,7 @@ export default function ScannerScreen() {
               <View style={styles.scanLine} />
             </View>
             <Text style={styles.title}>{busy ? 'Looking up barcode…' : !cameraReady ? 'Starting the camera…' : 'Place the barcode inside the frame'}</Text>
-            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? isAdmin ? 'We will open the matching product or prepare a new item.' : 'View the matching product and stock. Inventory is read-only.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+            <Text style={styles.caption}>{busy ? 'Checking the current catalog.' : inventoryMode ? isAdmin ? 'We will open the matching product or prepare a new item.' : 'View the matching product and stock. Inventory is read-only.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
             {busy || !cameraReady ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
           </View>
         )}
@@ -166,7 +166,7 @@ function ScanOutcomeCard({
         ) : null}
         <Text testID="scanner-outcome-message" style={styles.resultMessage}>{outcome.message}</Text>
         {outcome.usingFallback ? (
-          <Text style={styles.resultWarning}>The offline demo catalog was used. Laravel was not consulted.</Text>
+          <Text style={styles.resultWarning}>Showing an item saved on this device. The shop server was not consulted.</Text>
         ) : null}
       </Pressable>
 

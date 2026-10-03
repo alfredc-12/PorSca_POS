@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { apiClient, ApiClient, AuthUser } from '@/src/api/client';
+import { ApiClientError, apiClient, ApiClient, AuthUser } from '@/src/api/client';
 import { TokenStore, tokenStore } from '@/src/auth/tokenStore';
+import { DescribedFailure, describeFailure, localFailure } from '@/src/domain/userFacingError';
+import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
 type AuthState =
   | { status: 'loading'; user?: undefined }
@@ -9,7 +11,7 @@ type AuthState =
 
 type AuthContextValue = AuthState & {
   isAdmin: boolean;
-  sessionError?: string;
+  sessionFailure?: DescribedFailure;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   retrySession: () => Promise<void>;
@@ -29,7 +31,7 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
   store?: TokenStore;
 }) {
   const [state, setState] = useState<AuthState>({ status: 'loading' });
-  const [sessionError, setSessionError] = useState<string>();
+  const [sessionFailure, setSessionFailure] = useState<DescribedFailure>();
   const generation = useRef(0);
   // Serialize writes/deletes so a late storage operation cannot resurrect an
   // expired token, or remove a newer login's token.
@@ -40,16 +42,18 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
     return next;
   }, []);
 
-  const clearSession = useCallback(async () => {
+  const clearSession = useCallback(async (reason?: 'expired') => {
     const current = ++generation.current;
     client.setToken(null);
     setState({ status: 'signed-out' });
-    setSessionError(undefined);
+    // A mid-use 401 lands the cashier back on the sign-in screen; say why
+    // instead of dropping them there silently.
+    setSessionFailure(reason === 'expired' ? describeFailure({ status: 401 }, { screen: 'session-expired' }) : undefined);
     try {
       await persist(() => store.remove());
     } catch {
       if (current === generation.current) {
-        setSessionError('Signed out, but the saved session could not be removed. Try signing out again before sharing this device.');
+        setSessionFailure(localFailure('Signed out with a warning', 'The saved session could not be removed. Try signing out again before sharing this device.'));
       }
     }
   }, [client, persist, store]);
@@ -57,7 +61,7 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
   const retrySession = useCallback(async () => {
     const current = ++generation.current;
     setState({ status: 'loading' });
-    setSessionError(undefined);
+    setSessionFailure(undefined);
     client.setToken(null);
     try {
       await storageQueue.current.catch(() => undefined);
@@ -78,12 +82,17 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
       if (current !== generation.current) return;
       client.setToken(null);
       setState({ status: 'signed-out' });
-      setSessionError(error instanceof Error ? error.message : 'Unable to restore your session. Retry or sign in again.');
+      setSessionFailure(error instanceof ApiClientError
+        ? describeAndRecordFailure(
+            { status: error.status, code: error.code, message: error.message, details: error.details },
+            { screen: 'session-restore' },
+          )
+        : localFailure('We could not open your saved session', error instanceof Error ? error.message : 'Sign in again to keep selling.', { action: 'sign-in', actionLabel: 'Sign in again' }));
     }
   }, [client, store]);
 
   useEffect(() => {
-    client.setUnauthorizedHandler(() => { void clearSession(); });
+    client.setUnauthorizedHandler(() => { void clearSession('expired'); });
     // Restoration is asynchronous; the initial render is already loading.
     let active = true;
     void Promise.resolve().then(() => { if (active) void retrySession(); });
@@ -97,7 +106,7 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
 
   const signIn = useCallback(async (email: string, password: string) => {
     const current = ++generation.current;
-    setSessionError(undefined);
+    setSessionFailure(undefined);
     const result = await client.login(email.trim(), password);
     if (current !== generation.current) throw new Error('Your session changed. Please sign in again.');
     assertActiveUser(result.user);
@@ -122,7 +131,7 @@ export function AuthProvider({ children, client = apiClient, store = tokenStore 
   }, [clearSession, client]);
 
   return (
-    <AuthContext.Provider value={{ ...state, isAdmin: state.user?.role === 'admin', sessionError, signIn, signOut, retrySession }}>
+    <AuthContext.Provider value={{ ...state, isAdmin: state.user?.role === 'admin', sessionFailure, signIn, signOut, retrySession }}>
       {children}
     </AuthContext.Provider>
   );
