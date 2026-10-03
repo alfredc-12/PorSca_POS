@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Redirect } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, ApiClientError, CashierInput, ManagedUser } from '@/src/api/client';
 import { AppButton } from '@/src/components/AppButton';
 import { DataState } from '@/src/components/DataState';
 import { Screen } from '@/src/components/Screen';
 import { useAuth } from '@/src/context/AuthContext';
+import { DescribedFailure, localFailure, supportCodeLine } from '@/src/domain/userFacingError';
+import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 type CashierField = keyof CashierInput;
@@ -30,25 +32,25 @@ export default function UsersScreen() {
   const { isAdmin } = useAuth();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string>();
+  const [loadFailure, setLoadFailure] = useState<DescribedFailure>();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<CashierFieldErrors>({});
-  const [formError, setFormError] = useState<string>();
+  const [formFailure, setFormFailure] = useState<DescribedFailure>();
   const [saving, setSaving] = useState(false);
   const [confirmingUserId, setConfirmingUserId] = useState<string>();
   const [busyUserId, setBusyUserId] = useState<string>();
-  const [actionError, setActionError] = useState<string>();
+  const [actionFailure, setActionFailure] = useState<DescribedFailure>();
 
   const loadUsers = useCallback(async () => {
     if (!isAdmin) return;
     setLoading(true);
-    setLoadError(undefined);
+    setLoadFailure(undefined);
     try {
       setUsers(await apiClient.listUsers());
     } catch (error) {
-      setLoadError(errorMessage(error, 'Unable to load users. Check the connection and try again.'));
+      setLoadFailure(staffFailure(error, 'staff-list'));
     } finally {
       setLoading(false);
     }
@@ -63,7 +65,7 @@ export default function UsersScreen() {
   const updateDraft = (field: CashierField, value: string) => {
     const clearFieldError = (current: CashierFieldErrors) => current[field] ? { ...current, [field]: undefined } : current;
     setFieldErrors(clearFieldError);
-    setFormError(undefined);
+    setFormFailure(undefined);
     if (field === 'name') setName(value);
     if (field === 'email') setEmail(value);
     if (field === 'password') setPassword(value);
@@ -75,13 +77,13 @@ export default function UsersScreen() {
     const errors = validateCashierDraft(draft);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      setFormError('Check the highlighted fields and try again.');
+      setFormFailure(localFailure('Unable to create cashier', 'Check the highlighted fields and try again.', { action: 'fix-fields', actionLabel: 'Fix fields' }));
       return;
     }
 
     setSaving(true);
     setFieldErrors({});
-    setFormError(undefined);
+    setFormFailure(undefined);
     try {
       const created = await apiClient.createCashier({ name: name.trim(), email: email.trim(), password });
       setUsers((current) => [...current, created]);
@@ -90,7 +92,7 @@ export default function UsersScreen() {
       setPassword('');
     } catch (error) {
       setFieldErrors(extractCashierFieldErrors(error));
-      setFormError(errorMessage(error, 'Unable to create the cashier. Review the details and try again.'));
+      setFormFailure(staffFailure(error, 'staff-save'));
     } finally {
       setSaving(false);
     }
@@ -99,13 +101,13 @@ export default function UsersScreen() {
   const deactivateUser = async (user: ManagedUser) => {
     if (!isAdmin || user.role !== 'cashier' || busyUserId) return;
     setBusyUserId(user.id);
-    setActionError(undefined);
+    setActionFailure(undefined);
     try {
       await apiClient.deactivateUser(user.id);
       setUsers((current) => current.map((item) => item.id === user.id ? { ...item, is_active: false } : item));
       setConfirmingUserId(undefined);
     } catch (error) {
-      setActionError(errorMessage(error, `Unable to deactivate ${user.name}. Try again.`));
+      setActionFailure(staffFailure(error, 'staff-save'));
     } finally {
       setBusyUserId(undefined);
     }
@@ -114,12 +116,12 @@ export default function UsersScreen() {
   const reactivateUser = async (user: ManagedUser) => {
     if (!isAdmin || user.role !== 'cashier' || busyUserId) return;
     setBusyUserId(user.id);
-    setActionError(undefined);
+    setActionFailure(undefined);
     try {
       const updated = await apiClient.updateUser(user.id, { is_active: true });
       setUsers((current) => current.map((item) => item.id === user.id ? updated : item));
     } catch (error) {
-      setActionError(errorMessage(error, `Unable to reactivate ${user.name}. Try again.`));
+      setActionFailure(staffFailure(error, 'staff-save'));
     } finally {
       setBusyUserId(undefined);
     }
@@ -142,12 +144,13 @@ export default function UsersScreen() {
           <Text style={styles.sectionTitle}>Create a cashier</Text>
           <Text style={styles.sectionHint}>Name, email, and a password of at least 8 characters are required.</Text>
         </View>
-        {formError ? (
+        {formFailure ? (
           <View testID="users-create-error" style={styles.errorCard} accessibilityLiveRegion="polite">
             <Ionicons name="alert-circle-outline" size={21} color={colors.danger} />
             <View style={styles.errorCopy}>
-              <Text style={styles.errorTitle}>Unable to create cashier</Text>
-              <Text style={styles.errorMessage}>{formError}</Text>
+              <Text style={styles.errorTitle}>{formFailure.title}</Text>
+              <Text style={styles.errorMessage}>{formFailure.body}</Text>
+              {formFailure.reference ? <Text selectable style={styles.errorCode}>Support code: {formFailure.reference}</Text> : null}
             </View>
           </View>
         ) : null}
@@ -211,27 +214,42 @@ export default function UsersScreen() {
             <Ionicons name="refresh-outline" size={19} color={colors.primary} />
             <Text style={styles.refreshText}>Refresh</Text>
           </Pressable>
+          <Pressable
+            testID="open-diagnostics"
+            accessibilityRole="button"
+            accessibilityLabel="Open diagnostics"
+            onPress={() => router.push('/diagnostics')}
+            style={styles.refreshButton}
+          >
+            <Ionicons name="medkit-outline" size={19} color={colors.primary} />
+            <Text style={styles.refreshText}>Diagnostics</Text>
+          </Pressable>
         </View>
 
-        {actionError ? <Text testID="users-action-error" style={styles.actionError} accessibilityLiveRegion="polite">{actionError}</Text> : null}
-        {loading ? <DataState kind="loading" title="Loading accounts" message="Fetching the latest user accounts from the API." /> : null}
-        {!loading && loadError ? (
-          <DataState kind="unavailable" title="Could not load accounts" message={loadError} actionLabel="Retry users" onAction={() => void loadUsers()} />
+        {actionFailure ? (
+          <View testID="users-action-error" accessibilityLiveRegion="polite" style={styles.actionErrorCard}>
+            <Text style={styles.actionError}>{actionFailure.body}</Text>
+            {actionFailure.reference ? <Text selectable style={styles.errorCode}>Support code: {actionFailure.reference}</Text> : null}
+          </View>
         ) : null}
-        {!loading && !loadError && users.length === 0 ? (
+        {loading ? <DataState kind="loading" title="Loading accounts" message="Fetching the latest user accounts from the API." /> : null}
+        {!loading && loadFailure ? (
+          <DataState kind="unavailable" title="Could not load accounts" message={loadFailure.body} supportCode={supportCodeLine(loadFailure)} actionLabel="Retry users" onAction={() => void loadUsers()} />
+        ) : null}
+        {!loading && !loadFailure && users.length === 0 ? (
           <View style={styles.emptyCard}>
             <Ionicons name="people-outline" size={28} color={colors.textMuted} />
             <Text style={styles.emptyTitle}>No user accounts found</Text>
             <Text style={styles.emptyBody}>Create the first cashier account with the form above.</Text>
           </View>
         ) : null}
-        {!loading && !loadError && users.map((user) => (
+        {!loading && !loadFailure && users.map((user) => (
           <UserCard
             key={user.id}
             user={user}
             confirming={confirmingUserId === user.id}
             busy={busyUserId === user.id}
-            onRequestDeactivate={() => { setActionError(undefined); setConfirmingUserId(user.id); }}
+            onRequestDeactivate={() => { setActionFailure(undefined); setConfirmingUserId(user.id); }}
             onCancelDeactivate={() => setConfirmingUserId(undefined)}
             onConfirmDeactivate={() => void deactivateUser(user)}
             onReactivate={() => void reactivateUser(user)}
@@ -353,8 +371,20 @@ function extractCashierFieldErrors(error: unknown): CashierFieldErrors {
   return errors;
 }
 
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+/** Every staff-screen failure is described and recorded in one place. */
+function staffFailure(error: unknown, screen: 'staff-list' | 'staff-save'): DescribedFailure {
+  const apiError = error instanceof ApiClientError ? error : undefined;
+  if (apiError) {
+    return describeAndRecordFailure(
+      { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+      { screen },
+    );
+  }
+  return localFailure(
+    screen === 'staff-list' ? 'We could not load the staff list' : 'We could not save this account',
+    'Check the connection, then try again.',
+    { action: 'retry', actionLabel: 'Try again' },
+  );
 }
 
 const styles = StyleSheet.create({
@@ -383,6 +413,8 @@ const styles = StyleSheet.create({
   refreshButton: { minHeight: 44, paddingHorizontal: spacing.sm, flexDirection: 'row', alignItems: 'center', gap: 4 },
   refreshText: { color: colors.primary, fontSize: typography.caption, fontWeight: '800' },
   actionError: { color: colors.danger, fontSize: typography.caption, lineHeight: 18 },
+  actionErrorCard: { gap: 2, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.dangerSoft },
+  errorCode: { color: colors.text, fontSize: typography.caption, fontWeight: '800', letterSpacing: 0.5, marginTop: 2 },
   emptyCard: { minHeight: 124, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.surface },
   emptyTitle: { color: colors.text, fontSize: typography.label, fontWeight: '900' },
   emptyBody: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },

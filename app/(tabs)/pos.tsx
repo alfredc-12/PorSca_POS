@@ -162,19 +162,19 @@ export default function PosScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Demo fallback' : 'Offline • Laravel required') : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Saved items' : 'Offline • Server required') : catalogState === 'loading' ? 'Checking…' : 'Catalog ready'}</Text>
         </View>
       </View>
 
       {(searchPending || (query.trim() && catalogState === 'loading')) ? (
-        <DataState kind="loading" title="Searching the Laravel catalog" message="Checking current product and stock information." />
+        <DataState kind="loading" title="Searching the catalog" message="Checking current product and stock information." />
       ) : null}
 
       {query.trim() && catalogState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel catalog unavailable"
-          message={catalogError ?? 'The API could not be reached. No demo catalog is in use.'}
+          title="Shop server unavailable"
+          message={catalogError ?? 'We cannot reach the shop server. Check the connection and try again.'}
           actionLabel="Retry search"
           onAction={retrySearch}
         />
@@ -334,7 +334,7 @@ export default function PosScreen() {
           <View testID="offline-checkout-notice" accessibilityRole="alert" style={styles.offlineNotice}>
             <Ionicons name="cloud-offline-outline" size={responsive.s(19)} color={colors.warning} />
             <Text style={[styles.offlineNoticeText, { fontSize: responsive.font(12.5) }]}>
-              Connect to the Laravel API to complete a sale. The cart stays editable and nothing is recorded locally.
+              Connect to the shop server to complete a sale. The cart stays editable and nothing is recorded locally.
             </Text>
           </View>
         ) : null}

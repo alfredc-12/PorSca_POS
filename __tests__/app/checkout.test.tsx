@@ -77,7 +77,7 @@ describe('CheckoutScreen cash states', () => {
 
     expect(getByText('You are ₱15.00 short. Enter at least ₱35.00 and confirm again.')).toBeTruthy();
     expect(completeCashSale).not.toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalledWith('Insufficient cash', expect.stringContaining('confirm again.'));
+    expect(alertSpy).toHaveBeenCalledWith('Not enough cash', expect.stringContaining('confirm again.'));
   });
 
   it('surfaces Laravel stock conflicts with a recovery action and preserves the cart', async () => {
@@ -90,8 +90,8 @@ describe('CheckoutScreen cash states', () => {
       fireEvent.press(getByTestId('confirm-cash-payment'));
     });
 
-    expect(getByText(/Refresh inventory and remove the unavailable item/)).toBeTruthy();
-    expect(alertSpy).toHaveBeenCalledWith('Insufficient stock', expect.stringContaining('try again.'));
+    expect(getByText(/Some items are no longer available/)).toBeTruthy();
+    expect(alertSpy).toHaveBeenCalledWith('Stock changed', expect.stringContaining('try again.'));
   });
 
   it('records a successful cash response and offers the authoritative history route', async () => {
@@ -212,12 +212,13 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(confirmQrPhPayment).toHaveBeenCalledWith(unfulfilled);
     expect(resetCart).not.toHaveBeenCalled();
     expect(view.getByText('Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.')).toBeTruthy();
-    expect(view.getByTestId('qr-payment-failure-reason')).toHaveTextContent(/stock_reconciliation_required/);
+    expect(view.getByTestId('qr-payment-failure')).toHaveTextContent(/Payment received, sale not recorded/);
+    expect(view.getByText(/Support code: PRS-/)).toBeTruthy();
     // A new payment could double-charge money already received.
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
     expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
-    expect(alertSpy).toHaveBeenCalledWith('Payment needs reconciliation', expect.stringContaining('No sale was recorded'));
+    expect(alertSpy).toHaveBeenCalledWith('Payment received, sale not recorded', expect.stringContaining('reconcile'));
   });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
@@ -228,7 +229,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(paidPayment);
     expect(resetCart).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by Laravel'), expect.any(Array));
+    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
   });
 
   it('shows a recoverable verification state after a Laravel status error', async () => {
@@ -241,7 +242,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     });
 
     expect(view.getByTestId('qr-payment-status')).toHaveTextContent(/Payment verification needs attention/);
-    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Retry verification/);
+    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Do not hand over the goods/);
+    expect(view.getByText(/Support code: PRS-/)).toBeTruthy();
     expect(view.getByTestId('retry-qr-verification')).toBeTruthy();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
   });

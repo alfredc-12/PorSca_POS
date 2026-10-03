@@ -96,13 +96,13 @@ export default function TransactionsScreen() {
       ) : null}
 
       {salesState === 'loading' ? (
-        <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from Laravel." />
+        <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from the shop server." />
       ) : null}
       {salesState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel history unavailable"
-          message={salesError ?? 'The API could not be reached. Showing the last known transaction history.'}
+          title="Shop server unavailable"
+          message={salesError ?? 'We cannot reach the shop server. Showing the last known transaction history.'}
           actionLabel="Retry history"
           onAction={() => void refreshSales()}
         />

@@ -2,15 +2,16 @@ import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import LoginScreen from '@/app/login';
 import { ApiClientError } from '@/src/api/client';
+import { DescribedFailure } from '@/src/domain/userFacingError';
 
 const mockSignIn = jest.fn();
 const mockRetry = jest.fn();
 const mockSignOut = jest.fn();
 let mockStatus = 'signed-out';
-let mockSessionError: string | undefined;
+let mockSessionFailure: DescribedFailure | undefined;
 
 jest.mock('@/src/context/AuthContext', () => ({
-  useAuth: () => ({ status: mockStatus, signIn: mockSignIn, sessionError: mockSessionError, retrySession: mockRetry, signOut: mockSignOut }),
+  useAuth: () => ({ status: mockStatus, signIn: mockSignIn, sessionFailure: mockSessionFailure, retrySession: mockRetry, signOut: mockSignOut }),
 }));
 jest.mock('expo-router', () => ({
   Redirect: ({ href }: { href: string }) => {
@@ -28,7 +29,7 @@ function fill(screen: ReturnType<typeof render>) {
 describe('login screen', () => {
   beforeEach(() => {
     mockStatus = 'signed-out';
-    mockSessionError = undefined;
+    mockSessionFailure = undefined;
     mockSignIn.mockReset().mockResolvedValue(undefined);
     mockRetry.mockReset();
     mockSignOut.mockReset();
@@ -56,19 +57,42 @@ describe('login screen', () => {
     expect(screen.getByLabelText('Password').props.value).toBe('');
   });
 
-  it.each(['The provided credentials are incorrect.', 'Too many requests.', 'Unable to reach PorSca API: offline'])('shows a recoverable login failure: %s', async (message) => {
-    mockSignIn.mockRejectedValue(new Error(message));
+  it.each<[string, Error, RegExp]>([
+    ['rejected credentials', new ApiClientError('Invalid credentials.', 401, 'invalid_credentials'), /The provided credentials are incorrect/],
+    ['too many attempts', new ApiClientError('Too many requests.', 429), /Wait a moment, then try signing in again/],
+    ['a lost connection', new ApiClientError('Unable to reach PorSca API: offline'), /We cannot reach the shop server/],
+  ])('shows a recoverable login failure: %s', async (_label, failure, expected) => {
+    mockSignIn.mockRejectedValue(failure);
     const screen = render(<LoginScreen />);
     fill(screen);
     fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
+    // The wire message must never reach the cashier.
+    expect(screen.queryByText(/Unable to reach PorSca API/)).toBeNull();
     expect(screen.getByLabelText('Email').props.value).toBe('cashier@example.test');
     expect(screen.getByLabelText('Password').props.editable).toBe(true);
   });
 
-  it('offers retry/forget for failed session restoration', () => {
-    mockSessionError = 'Network unavailable';
+  it('shows a support code for a failure while signed out', async () => {
+    mockSignIn.mockRejectedValue(new ApiClientError('Unable to reach PorSca API: offline'));
     const screen = render(<LoginScreen />);
+    fill(screen);
+    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(screen.getByTestId('login-failure')).toBeTruthy());
+    expect(screen.getByText(/Support code: PRS-/)).toBeTruthy();
+  });
+
+  it('offers retry/forget for failed session restoration and shows its support code', () => {
+    mockSessionFailure = {
+      title: 'We cannot reach the shop server',
+      body: 'Check the connection, then try again.',
+      action: 'retry',
+      actionLabel: 'Try again',
+      reference: 'PRS-4K7Q2M',
+      internal: {},
+    };
+    const screen = render(<LoginScreen />);
+    expect(screen.getByText('Support code: PRS-4K7Q2M')).toBeTruthy();
     fireEvent.press(screen.getByRole('button', { name: 'Retry saved session' }));
     expect(mockRetry).toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: 'Forget saved session' }));

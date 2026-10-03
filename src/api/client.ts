@@ -412,7 +412,7 @@ export class ApiClient {
 
   private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown; authenticated?: boolean } = {}) {
     if (!this.baseUrl) {
-      throw new ApiClientError('API URL is not configured. Set EXPO_PUBLIC_API_URL before using the backend.');
+      throw new ApiClientError('The shop server address is not set up on this device.', undefined, 'server_not_configured');
     }
 
     // A late 401 from a previous session must not sign out a newly logged-in user.

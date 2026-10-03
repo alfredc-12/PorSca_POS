@@ -4,23 +4,26 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/src/components/AppButton';
+import { FailureNotice } from '@/src/components/FailureNotice';
 import { SessionLoading } from '@/src/components/SessionLoading';
 import { ApiClientError } from '@/src/api/client';
+import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
+import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALIDATION_SUMMARY = 'Enter a valid email address and your password.';
-const WRONG_CREDENTIALS = 'The provided credentials are incorrect. Check your email and password, then try again.';
 
 export default function LoginScreen() {
-  const { status, signIn, sessionError, retrySession, signOut } = useAuth();
+  const { status, signIn, sessionFailure, retrySession, signOut } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [emailError, setEmailError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [formError, setFormError] = useState<string>();
+  const [formFailure, setFormFailure] = useState<DescribedFailure>();
   const [submitting, setSubmitting] = useState(false);
   const pending = useRef(false);
 
@@ -28,12 +31,14 @@ export default function LoginScreen() {
     setEmail(value);
     if (emailError) setEmailError(undefined);
     if (formError) setFormError(undefined);
+    if (formFailure) setFormFailure(undefined);
   };
 
   const editPassword = (value: string) => {
     setPassword(value);
     if (passwordError) setPasswordError(undefined);
     if (formError) setFormError(undefined);
+    if (formFailure) setFormFailure(undefined);
   };
 
   const submit = async () => {
@@ -51,17 +56,21 @@ export default function LoginScreen() {
     setEmailError(undefined);
     setPasswordError(undefined);
     setFormError(undefined);
+    setFormFailure(undefined);
     try {
       await signIn(email, password);
       setPassword('');
     } catch (failure) {
-      // A 401 means the email/password pair was rejected. Report one generic
-      // message instead of naming which field was wrong. Transport failures
-      // keep the API wording so the cashier knows it is a connection problem.
+      // A 401 means the email/password pair was rejected; the shared describer
+      // reports one generic message instead of naming which field was wrong.
+      // Transport failures get plain connection copy plus a support code.
       const apiError = failure instanceof ApiClientError ? failure : undefined;
-      setFormError(apiError?.status === 401
-        ? WRONG_CREDENTIALS
-        : failure instanceof Error ? failure.message : 'Unable to sign in. Please try again.');
+      setFormFailure(apiError
+        ? describeAndRecordFailure(
+            { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+            { screen: 'sign-in' },
+          )
+        : localFailure('We could not sign you in', failure instanceof Error ? failure.message : 'Try again.', { action: 'retry', actionLabel: 'Try again' }));
     } finally {
       pending.current = false;
       setSubmitting(false);
@@ -70,8 +79,6 @@ export default function LoginScreen() {
 
   if (status === 'loading') return <SessionLoading />;
   if (status === 'signed-in') return <Redirect href="/(tabs)/pos" />;
-
-  const alert = formError ?? sessionError;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
@@ -148,10 +155,12 @@ export default function LoginScreen() {
                 {passwordError ? <Text style={styles.fieldError}>{passwordError}</Text> : null}
               </View>
 
-              {alert ? <Text accessibilityRole="alert" style={styles.error}>{alert}</Text> : null}
+              {formError ? <Text accessibilityRole="alert" style={styles.error}>{formError}</Text> : null}
+              {!formError && formFailure ? <FailureNotice testID="login-failure" failure={formFailure} /> : null}
+              {!formError && !formFailure && sessionFailure ? <FailureNotice testID="login-session-failure" failure={sessionFailure} /> : null}
 
               <AppButton testID="login-submit" label={submitting ? 'Signing in…' : 'Sign in'} onPress={() => void submit()} disabled={submitting} />
-              {sessionError ? (
+              {sessionFailure ? (
                 <>
                   <AppButton label="Retry saved session" variant="secondary" onPress={() => void retrySession()} disabled={submitting} />
                   <AppButton label="Forget saved session" variant="secondary" onPress={() => void signOut()} disabled={submitting} />
