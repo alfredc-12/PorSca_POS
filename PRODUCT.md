@@ -27,14 +27,17 @@ The cashier uses one phone during normal in-person retail transactions. Product 
 - Scan product barcodes with the phone camera.
 - Add scanned products to a cart and calculate totals.
 - Prevent quantities beyond available stock.
-- Manage product name, barcode, price, and stock quantity.
+- Sign in with an individual API-managed admin or cashier account; native sessions use secure token storage.
+- Admins manage product name, barcode, price, and stock quantity; cashiers view inventory read-only.
+- Admins manage cashier accounts from the phone Users screen: create accounts, review roles and active state, deactivate, and reactivate cashiers. Cashiers cannot access this screen; the API remains the authorization authority.
+- Both roles can read all sales. Cashier permissions are fixed by role; there is no permission editor.
 - Record cash received and calculate change.
 - Support a PayMongo sandbox QR Ph integration through a backend.
 - Deduct inventory only after successful payment confirmation.
 - Record completed transactions.
 - Avoid duplicate inventory deduction for the same paid transaction.
 - Keep PayMongo secret keys out of the mobile application.
-- Offline in-memory data can support a catalog/cash UI demonstration, but only behind an off-by-default flag (`EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1`). While that flag is off, an unreachable API produces an explicit offline state, no substituted products, and no locally recorded sale. QR Ph completion always requires Laravel confirmation.
+- After sign-in, offline in-memory data can support a catalog/cash UI demonstration, but only behind an off-by-default flag (`EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1`). While that flag is off, an unreachable API produces an explicit offline state, no substituted products, and no locally recorded sale. QR Ph completion always requires Laravel confirmation.
 
 ## Brand Commitments
 

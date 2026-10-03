@@ -4,7 +4,7 @@ This is the formal native Android frontend automation seam. It is deliberately n
 
 ## Run exactly
 
-From a fresh preview APK/install and the recorded staging seed, connect an Android emulator/device, install the UiAutomator2 driver, and run:
+From a freshly rebuilt contract-v2 preview APK/install (with `expo-secure-store`) and the recorded staging seed, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active staging cashier/admin account; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
 
 ```bash
 cd automation/appium
@@ -14,7 +14,7 @@ APPIUM_DEVICE_NAME="<connected Android device or emulator>" \
 APPIUM_APP_PACKAGE=com.porsca.pos \
 APPIUM_PRODUCT_SEARCH="Sinandomeng Rice" \
 APPIUM_PRODUCT_TEXT="Sinandomeng Rice 5kg" \
-APPIUM_BARCODE_FIXTURE=4800000000010 \
+APPIUM_BARCODE_FIXTURE=4800000000019 \
 APPIUM_CASH_AMOUNT=400 \
 APPIUM_STOCK_SEARCH="Sinandomeng Rice" \
 APPIUM_STOCK_ATTEMPTS=25 \
@@ -22,21 +22,33 @@ APPIUM_QR_EXPECTED_STATUS=pending \
 npm run smoke
 ```
 
-`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different staging fixture. The defaults match the Laravel `qa-baseline-2026-02` seed. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
+`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different staging fixture. The defaults match the Laravel `qa-baseline-2026-10` seed. Its printable product labels are aligned as follows:
+
+| Product | Barcode (EAN-13) |
+| --- | --- |
+| Sinandomeng Rice 5kg | `4800000000019` |
+| Barako Coffee 250g | `4800000000026` |
+| Laundry Soap 500g | `4800000000033` |
+| Mineral Water 1L | `4800000000040` |
+
+`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
 
 For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. Appium cannot synthesize a camera image. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
 The staging specs in `test/smoke.e2e.ts` cover:
 
+- individual account login after each app reset;
 - search → cash checkout;
 - barcode scan → cash checkout;
 - insufficient-stock rejection;
 - insufficient-cash rejection;
-- QR Ph creation and status verification through Laravel;
+- QR Ph creation and provider-verified status refresh through Laravel, including leave-payment (never a cancel) and `paid_unfulfilled` reconciliation without a new payment;
 - history showing a successful sale; and
 - exactly-once inventory deduction when a payment is retried/duplicated.
 
-Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. The test never simulates a provider result in the mobile app.
+Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `paid_unfulfilled` it additionally asserts that no new payment is offered. The test never simulates a provider result in the mobile app.
+
+Separately record native session restart/restoration, sign-out, expired/revoked-token redirect, and admin-versus-cashier inventory controls in the QA cycle. Fast Jest/RNTL tests cover these boundaries without claiming native secure-storage/device execution.
 
 The last assertion is backed by the API `Idempotency-Key` contract and must compare the inventory delta with the cart quantity. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
 

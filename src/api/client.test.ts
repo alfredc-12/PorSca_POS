@@ -7,7 +7,8 @@ function response(body: unknown, ok = true, status = 200) {
 describe('ApiClient', () => {
   it('uses the configured API URL and idempotency key for QR payments', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-1', status: 'pending', amount: 63 } }));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createQrPhPayment({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] })).resolves.toEqual({
       id: 'pay-1',
@@ -18,7 +19,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/payments',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'Idempotency-Key': 'TX-1', Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ 'Idempotency-Key': 'TX-1', Authorization: 'Bearer session-token' }),
         body: JSON.stringify({ idempotencyKey: 'TX-1', items: [{ productId: '1', quantity: 1 }] }),
       }),
     );
@@ -42,6 +43,41 @@ describe('ApiClient', () => {
       currency: 'PHP',
       qrPayload: 'data:image/png;base64,qr',
       qrCode: 'data:image/png;base64,qr',
+    });
+  });
+
+  it('checks payment status through the authoritative provider-verified refresh endpoint', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-9', status: 'paid', amount: 3500, sale_id: 42 } }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.refreshPayment('pay-9')).resolves.toMatchObject({ id: 'pay-9', status: 'paid', saleId: '42' });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://staging-api.example.test/api/v1/payments/pay-9/refresh',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('keeps paid_unfulfilled terminal with its settlement fields instead of reading it as pending', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: {
+      id: 'pay-11',
+      status: 'paid_unfulfilled',
+      amount: 3500,
+      currency: 'PHP',
+      provider_payment_id: 'pi_test_123',
+      sale_id: null,
+      failure_reason: 'stock_reconciliation_required',
+      reservation_expires_at: '2026-09-25T16:30:00.000000Z',
+    } }));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.refreshPayment('pay-11')).resolves.toEqual({
+      id: 'pay-11',
+      status: 'paid_unfulfilled',
+      amount: 3500,
+      currency: 'PHP',
+      providerPaymentId: 'pi_test_123',
+      failureReason: 'stock_reconciliation_required',
+      reservationExpiresAt: '2026-09-25T16:30:00.000000Z',
     });
   });
 
@@ -87,7 +123,7 @@ describe('ApiClient', () => {
     }]);
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://staging-api.example.test/api/v1/products?search=coffee&per_page=100',
-      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v1' }) }),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v2' }) }),
     );
   });
 
@@ -131,7 +167,8 @@ describe('ApiClient', () => {
         stock: { quantity: 8, reorder_level: 2, status: 'in_stock' },
       },
     }, true, 201));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createProduct({ barcode: '4800000000012', name: 'House Blend Coffee', category: 'Beverages', price: 185, stock: 8, reorderLevel: 2 })).resolves.toMatchObject({
       id: '12',
@@ -143,7 +180,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/products',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer session-token' }),
         body: JSON.stringify({ barcode: '4800000000012', name: 'House Blend Coffee', category: 'Beverages', price: 18500, stock: 8, reorder_level: 2 }),
       }),
     );
@@ -163,7 +200,8 @@ describe('ApiClient', () => {
         items: [{ product_id: 4, sku: 'WATER-001', name: 'Mineral Water 1L', quantity: 1, unit_price: 3700 }],
       },
     }, true, 201));
-    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', apiToken: 'local-api-token', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('session-token');
 
     await expect(client.createSale({
       idempotencyKey: 'cash-42',
@@ -184,7 +222,7 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/sales/checkout',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ 'Idempotency-Key': 'cash-42', Authorization: 'Bearer local-api-token' }),
+        headers: expect.objectContaining({ 'Idempotency-Key': 'cash-42', Authorization: 'Bearer session-token' }),
         body: JSON.stringify({
           idempotencyKey: 'cash-42',
           items: [{ productId: '4', quantity: 1, unitPrice: 3700 }],
@@ -207,6 +245,63 @@ describe('ApiClient', () => {
       'https://staging-api.example.test/api/v1/sales?per_page=100',
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+
+  it.each([
+    ['an absent key on a complete empty first page', { items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }, 'not-found'],
+    ['an absent key on an incomplete first page', { items: [], pagination: { current_page: 1, last_page: 2, total: 101 } }, 'unknown'],
+    ['an absent key without pagination', { items: [] }, 'unknown'],
+    ['an absent key in a legacy array response', [], 'unknown'],
+    ['an absent key on a non-first page', { items: [], pagination: { current_page: 2, last_page: 2, total: 101 } }, 'unknown'],
+    ['inconsistent single-page metadata', { items: [], pagination: { current_page: 1, last_page: 1, total: 1 } }, 'unknown'],
+    ['the original receipt on an incomplete page', { items: [{ id: 42, status: 'completed', idempotency_key: 'cash-original' }], pagination: { current_page: 1, last_page: 2, total: 101 } }, 'found'],
+    ['the original receipt in a legacy response', [{ id: 42, status: 'completed', idempotencyKey: 'cash-original' }], 'found'],
+  ])('resolves %s without treating an incomplete read as proof of absence', async (_name, page, expected) => {
+    const fetchImpl = jest.fn().mockResolvedValue(response({ data: page }));
+    const client = new ApiClient({ baseUrl: 'https://api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(client.resolveCashSaleAttempt('cash-original')).resolves.toBe(expected);
+    expect(fetchImpl).toHaveBeenCalledWith('https://api.example.test/api/v1/sales?per_page=100', expect.objectContaining({ method: 'GET' }));
+  });
+
+  it('lists users, creates a fixed-role cashier, updates active state, and deactivates through the admin routes', async () => {
+    const admin = { id: 1, name: 'Store Admin', email: 'admin@example.test', role: 'admin', is_active: true, created_at: '2026-10-01T09:00:00Z' };
+    const cashier = { id: 2, name: 'Counter One', email: 'cashier@example.test', role: 'cashier', is_active: true, created_at: '2026-10-01T09:01:00Z' };
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response({ data: { items: [admin, cashier] } }))
+      .mockResolvedValueOnce(response({ data: { user: cashier } }, true, 201))
+      .mockResolvedValueOnce(response({ data: { user: { ...cashier, is_active: false } } }))
+      .mockResolvedValueOnce(response(undefined, true, 204));
+    const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    client.setToken('admin-session');
+
+    await expect(client.listUsers()).resolves.toEqual([
+      { ...admin, id: '1' },
+      { ...cashier, id: '2' },
+    ]);
+    await expect(client.createCashier({ name: 'Counter One', email: 'cashier@example.test', password: 'cashier-password' })).resolves.toEqual({
+      ...cashier,
+      id: '2',
+    });
+    await expect(client.updateUser('2', { is_active: false })).resolves.toMatchObject({ id: '2', is_active: false });
+    await expect(client.deactivateUser('2')).resolves.toBeUndefined();
+
+    expect(fetchImpl.mock.calls[0]).toEqual([
+      'https://staging-api.example.test/api/v1/users',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer admin-session' }) }),
+    ]);
+    expect(fetchImpl.mock.calls[1]).toEqual([
+      'https://staging-api.example.test/api/v1/users',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Counter One', email: 'cashier@example.test', password: 'cashier-password' }) }),
+    ]);
+    expect(fetchImpl.mock.calls[2]).toEqual([
+      'https://staging-api.example.test/api/v1/users/2',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ is_active: false }) }),
+    ]);
+    expect(fetchImpl.mock.calls[3]).toEqual([
+      'https://staging-api.example.test/api/v1/users/2/deactivate',
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    ]);
   });
 
   it('edits supported product fields and updates stock through the documented endpoints', async () => {

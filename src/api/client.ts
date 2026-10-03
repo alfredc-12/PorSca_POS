@@ -1,12 +1,34 @@
 import { PaymentMethod, PaymentStatus, Product, Sale, StockStatus } from '@/src/types';
 
 /** The mobile/API contract version promoted with the staging workflow. */
-export const API_CONTRACT_VERSION = 'porsca-mobile-api-v1';
+export const API_CONTRACT_VERSION = 'porsca-mobile-api-v2';
+
+export type AuthUser = {
+  id: string | number;
+  name: string;
+  email: string;
+  role: 'admin' | 'cashier';
+  is_active: boolean;
+};
+
+export type ManagedUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'cashier';
+  is_active: boolean;
+  created_at?: string | null;
+};
+
+export type CashierInput = { name: string; email: string; password: string };
+export type UserUpdate = Partial<CashierInput> & { is_active?: boolean };
+
+type ApiUser = Omit<ManagedUser, 'id'> & { id: string | number };
+
+export type LoginResponse = { token: string; token_type: 'Bearer'; user: AuthUser };
 
 export type ApiClientOptions = {
   baseUrl?: string;
-  /** Staging/local API bearer token. Production credentials must not be bundled. */
-  apiToken?: string;
   fetchImpl?: typeof fetch;
 };
 
@@ -103,6 +125,14 @@ export type ApiSale = {
   items?: ApiSaleItem[];
 };
 
+/** Whether the original cash receipt was found or conclusively absent. */
+export type CashSaleAttemptResolution = 'found' | 'not-found' | 'unknown';
+
+type ApiSalesPage = {
+  items?: ApiSale[];
+  pagination?: { current_page?: number; last_page?: number; total?: number };
+};
+
 export type ApiTransaction = {
   id: string | number;
   payment_id?: string | number | null;
@@ -125,6 +155,7 @@ type ApiPayment = {
   status?: string;
   amount?: number | string;
   currency?: string;
+  provider_payment_id?: string | null;
   qr_payload?: string | null;
   qrCode?: string | null;
   checkout_url?: string | null;
@@ -133,6 +164,8 @@ type ApiPayment = {
   saleId?: string | number | null;
   failure_reason?: string | null;
   failureReason?: string | null;
+  reservation_expires_at?: string | null;
+  reservationExpiresAt?: string | null;
 };
 
 export type Payment = {
@@ -141,12 +174,15 @@ export type Payment = {
   /** Amount as returned by Laravel (integer PHP centavos). */
   amount: number;
   currency?: string;
+  providerPaymentId?: string;
   qrPayload?: string;
   /** Legacy alias kept for callers that render a QR code directly. */
   qrCode?: string;
   checkoutUrl?: string;
   saleId?: string;
   failureReason?: string;
+  /** ISO timestamp when the server-side stock reservation lapses. */
+  reservationExpiresAt?: string;
 };
 
 export type ApiErrorBody = {
@@ -174,11 +210,6 @@ function configuredBaseUrl() {
   return value ? value.replace(/\/+$/, '') : undefined;
 }
 
-function configuredApiToken() {
-  const value = process.env.EXPO_PUBLIC_API_TOKEN?.trim();
-  return value || undefined;
-}
-
 export function isDeviceSafeApiUrl(value: string | undefined) {
   if (!value) return false;
   try {
@@ -202,17 +233,63 @@ function unwrapData<T>(payload: T | { data: T }) {
  */
 export class ApiClient {
   readonly baseUrl?: string;
-  private readonly apiToken?: string;
+  private token?: string;
+  private tokenRevision = 0;
+  private onUnauthorized?: () => void;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? configuredBaseUrl())?.replace(/\/+$/, '');
-    this.apiToken = options.apiToken?.trim() || configuredApiToken();
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   get isConfigured() {
     return Boolean(this.baseUrl);
+  }
+
+  /** Tokens are runtime session state, never build-time public configuration. */
+  setToken(token: string | null) {
+    this.token = token?.trim() || undefined;
+    this.tokenRevision += 1;
+  }
+
+  setUnauthorizedHandler(handler?: () => void) {
+    this.onUnauthorized = handler;
+  }
+
+  login(email: string, password: string) {
+    return this.request<LoginResponse>(this.versionedPath('/auth/login'), {
+      method: 'POST', body: { email, password, device_name: 'PorSca POS' }, authenticated: false,
+    });
+  }
+
+  me() {
+    return this.request<{ user: AuthUser }>(this.versionedPath('/auth/me'));
+  }
+
+  logout() {
+    return this.request<void>(this.versionedPath('/auth/logout'), { method: 'POST' });
+  }
+
+  listUsers() {
+    return this.request<ApiUser[] | { items?: ApiUser[] }>(this.versionedPath('/users')).then((payload) => {
+      const users = Array.isArray(payload) ? payload : payload.items ?? [];
+      return users.map(normalizeManagedUser);
+    });
+  }
+
+  createCashier(user: CashierInput) {
+    return this.request<{ user: ApiUser }>(this.versionedPath('/users'), { method: 'POST', body: user })
+      .then((payload) => normalizeManagedUser(payload.user));
+  }
+
+  updateUser(userId: string, update: UserUpdate) {
+    return this.request<{ user: ApiUser }>(this.versionedPath(`/users/${encodeURIComponent(userId)}`), { method: 'PATCH', body: update })
+      .then((payload) => normalizeManagedUser(payload.user));
+  }
+
+  deactivateUser(userId: string) {
+    return this.request<void>(this.versionedPath(`/users/${encodeURIComponent(userId)}/deactivate`), { method: 'POST' });
   }
 
   async health() {
@@ -269,10 +346,29 @@ export class ApiClient {
   }
 
   listSales() {
-    return this.request<ApiSale[] | { items?: ApiSale[] }>(this.versionedPath('/sales?per_page=100')).then((payload) => {
+    return this.readSalesPage().then((payload) => {
       const items = Array.isArray(payload) ? payload : payload.items ?? [];
       return items.map(normalizeSale);
     });
+  }
+
+  /** A missing receipt on an incomplete history page is never proof of absence. */
+  async resolveCashSaleAttempt(idempotencyKey: string): Promise<CashSaleAttemptResolution> {
+    const payload = await this.readSalesPage();
+    const items = Array.isArray(payload) ? payload : payload.items ?? [];
+    if (items.some((sale) => (sale.idempotency_key ?? sale.idempotencyKey) === idempotencyKey)) return 'found';
+
+    if (!Array.isArray(payload) && Array.isArray(payload.items)) {
+      const pagination = payload.pagination;
+      if (pagination?.current_page === 1 && pagination.last_page === 1 && pagination.total === items.length) {
+        return 'not-found';
+      }
+    }
+    return 'unknown';
+  }
+
+  private readSalesPage() {
+    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath('/sales?per_page=100'));
   }
 
   listTransactions() {
@@ -294,12 +390,19 @@ export class ApiClient {
     }).then(normalizePayment);
   }
 
+  /** Stored-state read; it does not ask the provider for a newer outcome. */
   getPaymentStatus(paymentId: string) {
     return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}`)).then(normalizePayment);
   }
 
-  cancelPayment(paymentId: string) {
-    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/status`), { method: 'POST' }).then(normalizePayment);
+  /**
+   * Authoritative provider-verified check. Laravel inspects the PayMongo
+   * sandbox and settles a verified outcome before responding. This endpoint
+   * never cancels a payment; leaving a pending attempt alone lets the
+   * server-side reservation expire on its own.
+   */
+  refreshPayment(paymentId: string) {
+    return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/refresh`), { method: 'POST' }).then(normalizePayment);
   }
 
   private versionedPath(path: string) {
@@ -307,11 +410,14 @@ export class ApiClient {
     return /\/api\/v1$/i.test(baseUrl) ? path : `/api/v1${path}`;
   }
 
-  private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown } = {}) {
+  private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown; authenticated?: boolean } = {}) {
     if (!this.baseUrl) {
       throw new ApiClientError('API URL is not configured. Set EXPO_PUBLIC_API_URL before using the backend.');
     }
 
+    // A late 401 from a previous session must not sign out a newly logged-in user.
+    const revision = this.tokenRevision;
+    const token = options.authenticated === false ? undefined : this.token;
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
@@ -319,7 +425,7 @@ export class ApiClient {
         headers: {
           Accept: 'application/json',
           'X-PorSca-Contract-Version': API_CONTRACT_VERSION,
-          ...(this.apiToken ? { Authorization: `Bearer ${this.apiToken}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...options.headers,
         },
@@ -328,6 +434,11 @@ export class ApiClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Network request failed.';
       throw new ApiClientError(`Unable to reach PorSca API: ${message}`);
+    }
+
+    if (response.status === 401 && revision === this.tokenRevision) {
+      this.setToken(null);
+      this.onUnauthorized?.();
     }
 
     const payload = await response.json().catch(() => undefined) as ApiErrorBody | T | undefined;
@@ -368,6 +479,17 @@ function serializeProductPatch(product: Partial<ProductInput>) {
 
 function toApiPrice(price: number) {
   return Math.round(price * 100);
+}
+
+function normalizeManagedUser(user: ApiUser): ManagedUser {
+  return {
+    id: String(user.id),
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    is_active: Boolean(user.is_active),
+    ...(user.created_at === undefined ? {} : { created_at: user.created_at }),
+  };
 }
 
 function normalizeProduct(product: ApiProduct): Product {
@@ -427,21 +549,27 @@ function normalizePayment(payment: ApiPayment): Payment {
   const checkoutUrl = payment.checkout_url ?? payment.checkoutUrl ?? undefined;
   const saleId = payment.sale_id ?? payment.saleId;
   const failureReason = payment.failure_reason ?? payment.failureReason ?? undefined;
+  const providerPaymentId = payment.provider_payment_id ?? undefined;
+  const reservationExpiresAt = payment.reservation_expires_at ?? payment.reservationExpiresAt ?? undefined;
 
   return {
     id: String(payment.id),
     status: normalizePaymentStatus(payment.status ?? 'pending'),
     amount: Number(payment.amount ?? 0),
     ...(payment.currency ? { currency: payment.currency } : {}),
+    ...(providerPaymentId ? { providerPaymentId } : {}),
     ...(qrPayload ? { qrPayload, qrCode: qrPayload } : {}),
     ...(checkoutUrl ? { checkoutUrl } : {}),
     ...(saleId === null || saleId === undefined ? {} : { saleId: String(saleId) }),
     ...(failureReason ? { failureReason } : {}),
+    ...(reservationExpiresAt ? { reservationExpiresAt } : {}),
   };
 }
 
 function normalizePaymentStatus(status: string): PaymentStatus {
-  return status === 'pending' || status === 'paid' || status === 'failed' || status === 'cancelled' || status === 'expired'
+  // `paid_unfulfilled` means the provider took the money but Laravel could not
+  // fulfil stock. It is terminal and must never read as pending or paid.
+  return status === 'pending' || status === 'paid' || status === 'paid_unfulfilled' || status === 'failed' || status === 'cancelled' || status === 'expired'
     ? status
     : 'pending';
 }

@@ -1,9 +1,12 @@
 import React from 'react';
-import { Pressable, StyleSheet } from 'react-native';
-import { Tabs } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Redirect, router, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { useAuth } from '@/src/context/AuthContext';
+import { SessionLoading } from '@/src/components/SessionLoading';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 function TabButton({ children, accessibilityState, style, ...props }: any) {
   const selected = accessibilityState?.selected;
@@ -21,8 +24,24 @@ function TabButton({ children, accessibilityState, style, ...props }: any) {
 export default function TabsLayout() {
   const responsive = useResponsive();
   const iconSize = responsive.s(responsive.short ? 21 : 23);
+  const { status, user, isAdmin, signOut } = useAuth();
+  if (status === 'loading') return <SessionLoading />;
+  if (status !== 'signed-in') return <Redirect href="/login" />;
 
   return (
+    <View style={styles.container}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={styles.accountRow}>
+        <Text numberOfLines={1} style={styles.accountName}>{user.name} • {user.role === 'admin' ? 'Admin' : 'Cashier'}</Text>
+        {isAdmin ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Manage users" onPress={() => router.push('/users')} style={styles.usersButton}>
+            <Ionicons name="people-outline" size={18} color={colors.primary} />
+            <Text style={styles.usersButtonText}>Users</Text>
+          </Pressable>
+        ) : null}
+        <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={() => void signOut()} style={styles.signOut}>
+          <Text style={styles.signOutText}>Sign out</Text>
+        </Pressable>
+      </SafeAreaView>
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -65,10 +84,18 @@ export default function TabsLayout() {
         }}
       />
     </Tabs>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: { flex: 1 },
+  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, backgroundColor: colors.surface },
+  accountName: { flex: 1, color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+  usersButton: { minHeight: 48, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
+  usersButtonText: { color: colors.primary, fontWeight: '800' },
+  signOut: { minHeight: 48, minWidth: 64, justifyContent: 'center', alignItems: 'center' },
+  signOutText: { color: colors.primary, fontWeight: '800' },
   tabBar: {
     backgroundColor: colors.surface,
     borderTopWidth: 0,

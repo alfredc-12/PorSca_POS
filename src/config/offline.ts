@@ -12,7 +12,12 @@
 export const DEMO_CATALOG_ENV_VAR = 'EXPO_PUBLIC_ALLOW_DEMO_CATALOG';
 
 /** Only the exact value `1` enables the demo catalog. Absent, empty or anything else keeps strict online mode. */
-export function isDemoCatalogEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function isDemoCatalogEnabled(
+  env: Record<string, string | undefined> = {
+    // Expo can inline this direct reference into production client bundles.
+    EXPO_PUBLIC_ALLOW_DEMO_CATALOG: process.env.EXPO_PUBLIC_ALLOW_DEMO_CATALOG,
+  },
+): boolean {
   return env[DEMO_CATALOG_ENV_VAR] === '1';
 }
 

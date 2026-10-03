@@ -1,0 +1,4 @@
+# Managed by AkiDev. Values are intentionally plain text; no shell evaluation is required.
+profile=react-native-expo
+overlays=
+tools=expo-skills,agent-device,context7

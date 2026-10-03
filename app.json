@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "PorSca POS",
-    "slug": "porsca-pos",
+    "name": "PorSca",
+    "slug": "porsca-app",
     "version": "0.1.0",
+    "icon": "./assets/images/icon.png",
     "orientation": "portrait",
     "scheme": "porsca",
     "userInterfaceStyle": "automatic",
@@ -14,13 +15,35 @@
           "cameraPermission": "Allow PorSca POS to use the camera to scan product barcodes.",
           "barcodeScannerEnabled": true
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/icon.png",
+          "imageWidth": 200,
+          "backgroundColor": "#111936",
+          "dark": {
+            "image": "./assets/images/icon.png",
+            "backgroundColor": "#111936"
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
     },
     "android": {
-      "package": "com.porsca.pos"
+      "package": "com.porsca.pos",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon-foreground.png",
+        "backgroundColor": "#111936",
+        "monochromeImage": "./assets/images/adaptive-icon-mono.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "ios": {
       "bundleIdentifier": "com.porsca.pos",
@@ -28,6 +51,21 @@
     },
     "web": {
       "bundler": "metro"
-    }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/27ef9713-4c08-4815-bf6c-48368dd2b260",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "27ef9713-4c08-4815-bf6c-48368dd2b260"
+      }
+    },
+    "owner": "porscapos"
   }
 }

@@ -64,8 +64,8 @@ type PosContextValue = {
   refreshInventory: () => Promise<boolean>;
   refreshSales: () => Promise<boolean>;
   startQrPhPayment: (forceNew?: boolean) => Promise<Payment>;
+  /** Authoritative provider-verified check; never cancels the payment. */
   refreshQrPhPayment: (paymentId: string) => Promise<Payment>;
-  cancelQrPhPayment: (paymentId: string) => Promise<Payment>;
   confirmQrPhPayment: (payment: Payment) => Promise<void>;
 };
 
@@ -487,13 +487,12 @@ export function PosProvider({
   }, [client, demoCatalogEnabled]);
   /**
    * Resolve whether an earlier uncertain cash attempt actually became a sale.
-   * Laravel echoes the idempotency key on each sale, so the receipt can be
-   * found without resending the uncertain request.
+   * Laravel echoes the idempotency key on each sale. The client preserves the
+   * history pagination evidence: only a complete first page can prove absence.
    */
   const resolveCashAttempt = useCallback(async (idempotencyKey: string): Promise<'found' | 'not-found' | 'unknown'> => {
     try {
-      const sales = await client.listSales();
-      return sales.some((sale) => sale.idempotencyKey === idempotencyKey) ? 'found' : 'not-found';
+      return await client.resolveCashSaleAttempt(idempotencyKey);
     } catch {
       return 'unknown';
     }
@@ -630,22 +629,19 @@ export function PosProvider({
     if (!client.isConfigured) {
       throw new ApiClientError('Laravel API is not configured. Payment verification is unavailable.');
     }
-    const payment = await client.getPaymentStatus(paymentId);
-    rememberQrPayment(qrPayments.current, payment);
-    return payment;
-  }, [client]);
-
-  const cancelQrPhPayment = useCallback(async (paymentId: string) => {
-    if (!client.isConfigured) {
-      throw new ApiClientError('Laravel API is not configured. Payment cancellation is unavailable.');
-    }
-    const payment = await client.cancelPayment(paymentId);
+    // The refresh endpoint asks the PayMongo sandbox for the latest verified
+    // outcome and settles it server-side. There is no cashier cancel action:
+    // leaving a pending attempt alone lets the reservation expire on its own.
+    const payment = await client.refreshPayment(paymentId);
     rememberQrPayment(qrPayments.current, payment);
     return payment;
   }, [client]);
 
   const confirmQrPhPayment = useCallback(async (payment: Payment) => {
-    if (payment.status !== 'paid') return;
+    // Only settled money is verified. `paid` completes the sale and clears the
+    // cart; `paid_unfulfilled` refreshes authoritative state but keeps the cart
+    // because no sale was recorded and a new payment could double-charge.
+    if (payment.status !== 'paid' && payment.status !== 'paid_unfulfilled') return;
     const existingSettlement = qrSettlements.current.get(payment.id);
     if (existingSettlement) return existingSettlement;
 
@@ -653,8 +649,17 @@ export function PosProvider({
       if (!inventoryRefreshed || !salesRefreshed) {
         throw new ApiClientError('Laravel confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
       }
+      // A `paid_unfulfilled` payment took money without recording a sale, so
+      // the cart is kept for operator reconciliation.
+      if (payment.status !== 'paid') return;
       const completedSignature = [...qrPayments.current.entries()].find(([, known]) => known.id === payment.id)?.[0];
-      if (completedSignature && qrCartSignature(cartRef.current.lines) === completedSignature) {
+      if (!completedSignature) return;
+      // This attempt fulfilled its sale. Retire its basket identity only after
+      // verification succeeds, so the next identical basket is a new payment,
+      // while pending, uncertain and paid-unfulfilled retries keep their key.
+      qrPayments.current.delete(completedSignature);
+      qrKeys.current.delete(completedSignature);
+      if (qrCartSignature(cartRef.current.lines) === completedSignature) {
         commitCart({ type: 'reset' });
       }
     });
@@ -751,7 +756,6 @@ export function PosProvider({
         refreshSales,
         startQrPhPayment,
         refreshQrPhPayment,
-        cancelQrPhPayment,
         confirmQrPhPayment,
       }}
     >

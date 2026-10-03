@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/src/components/AppButton';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
+import { useAuth } from '@/src/context/AuthContext';
 import { BarcodeScanOutcome, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
@@ -19,6 +20,7 @@ export const ADDED_CONFIRMATION_MS = 1200;
 export default function ScannerScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const inventoryMode = mode === 'inventory';
+  const { isAdmin } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
@@ -29,10 +31,10 @@ export default function ScannerScreen() {
 
   // An inventory scan opens the matching product, which is the existing path.
   useEffect(() => {
-    if (inventoryMode && foundProduct) {
+    if (inventoryMode && isAdmin && foundProduct) {
       router.replace({ pathname: '/product-form', params: { id: foundProduct.id } });
     }
-  }, [foundProduct, inventoryMode]);
+  }, [foundProduct, inventoryMode, isAdmin]);
 
   // A POS scan adds the product immediately and confirms it in place.
   useEffect(() => {
@@ -56,7 +58,7 @@ export default function ScannerScreen() {
     );
   }
 
-  const card = inventoryMode && outcome?.kind === 'found' ? undefined : outcome;
+  const card = inventoryMode && isAdmin && outcome?.kind === 'found' ? undefined : outcome;
 
   return (
     <View style={styles.root}>
@@ -70,7 +72,7 @@ export default function ScannerScreen() {
       <View style={styles.tint} pointerEvents="none" />
       <SafeAreaView style={styles.safeOverlay} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Pressable accessibilityLabel="Close scanner" onPress={() => router.back()} style={styles.closeButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close scanner" onPress={() => router.back()} style={styles.closeButton}>
             <Ionicons name="close" size={25} color={colors.white} />
           </Pressable>
           <View style={styles.modePill}>
@@ -84,6 +86,7 @@ export default function ScannerScreen() {
           <ScanOutcomeCard
             outcome={card}
             inventoryMode={inventoryMode}
+            canManageProducts={isAdmin}
             onScanAgain={rearm}
             onClose={() => router.back()}
           />
@@ -97,7 +100,7 @@ export default function ScannerScreen() {
               <View style={styles.scanLine} />
             </View>
             <Text style={styles.title}>{busy ? 'Looking up barcode…' : !cameraReady ? 'Starting the camera…' : 'Place the barcode inside the frame'}</Text>
-            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? 'We will open the matching product or prepare a new item.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
+            <Text style={styles.caption}>{busy ? 'Checking the authoritative Laravel catalog.' : inventoryMode ? isAdmin ? 'We will open the matching product or prepare a new item.' : 'View the matching product and stock. Inventory is read-only.' : 'The product is added to the cart as soon as it is recognized.'}</Text>
             {busy || !cameraReady ? <ActivityIndicator color={colors.white} size="large" style={styles.lookupIndicator} /> : null}
           </View>
         )}
@@ -114,11 +117,13 @@ export default function ScannerScreen() {
 function ScanOutcomeCard({
   outcome,
   inventoryMode,
+  canManageProducts,
   onScanAgain,
   onClose,
 }: {
   outcome: BarcodeScanOutcome;
   inventoryMode: boolean;
+  canManageProducts: boolean;
   onScanAgain: () => void;
   onClose: () => void;
 }) {
@@ -169,13 +174,13 @@ function ScanOutcomeCard({
         {inventoryMissing ? (
           <>
             <AppButton testID="scanner-scan-again" label="Scan again" onPress={onScanAgain} style={styles.resultButton} />
-            <AppButton
+            {canManageProducts ? <AppButton
               testID="scanner-add-product"
               label="Add product"
               variant="secondary"
               onPress={() => router.replace({ pathname: '/product-form', params: { barcode: outcome.barcode } })}
               style={styles.resultButton}
-            />
+            /> : <AppButton label="Back to inventory" variant="secondary" onPress={onClose} style={styles.resultButton} />}
           </>
         ) : (
           <>
@@ -203,8 +208,8 @@ const styles = StyleSheet.create({
   tint: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(8,19,15,0.24)' },
   safeOverlay: { flex: 1, paddingHorizontal: spacing.lg, justifyContent: 'space-between' },
   topBar: { minHeight: 66, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  closeButton: { width: 46, height: 46, borderRadius: 15, backgroundColor: 'rgba(10,13,11,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
-  closeSpacer: { width: 46 },
+  closeButton: { width: 48, height: 48, borderRadius: 15, backgroundColor: 'rgba(10,13,11,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
+  closeSpacer: { width: 48 },
   modePill: { minHeight: 42, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: 'rgba(7,131,81,0.84)', flexDirection: 'row', alignItems: 'center', gap: 7 },
   modeText: { color: colors.white, fontSize: 13, fontWeight: '800' },
   centerArea: { alignItems: 'center', paddingHorizontal: spacing.md },
@@ -229,7 +234,7 @@ const styles = StyleSheet.create({
   resultProduct: { color: colors.text, fontSize: typography.title, fontWeight: '800', textAlign: 'center' },
   resultMeta: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
   resultMessage: { color: colors.text, fontSize: typography.label, lineHeight: 21, textAlign: 'center', marginTop: spacing.xs },
-  resultWarning: { color: colors.warning, fontSize: typography.caption, fontWeight: '700', textAlign: 'center', marginTop: spacing.xs },
+  resultWarning: { color: colors.text, fontSize: typography.caption, fontWeight: '700', textAlign: 'center', marginTop: spacing.xs },
   resultActions: { gap: spacing.sm },
   resultButton: { alignSelf: 'stretch' },
   resultHint: { color: '#E8ECE9', fontSize: typography.caption, textAlign: 'center', fontWeight: '600' },

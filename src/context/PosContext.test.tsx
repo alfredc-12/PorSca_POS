@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, Text, View } from 'react-native';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Sale } from '@/src/types';
@@ -58,8 +58,9 @@ function SearchHarness() {
 }
 
 function QrHarness() {
-  const { products, addProductChecked, startQrPhPayment } = usePos();
+  const { products, cart, addProductChecked, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment } = usePos();
   const [result, setResult] = useState('');
+  const [status, setStatus] = useState('');
 
   return (
     <View>
@@ -71,7 +72,24 @@ function QrHarness() {
           void startQrPhPayment().then(() => setResult('created')).catch((error: Error) => setResult(error.message));
         }}
       />
+      <Button
+        testID="refresh-qr"
+        title="Refresh QR"
+        onPress={() => {
+          void refreshQrPhPayment('payment-1').then((payment) => setStatus(payment.status)).catch((error: Error) => setStatus(error.message));
+        }}
+      />
+      <Button
+        testID="confirm-qr"
+        title="Confirm QR"
+        onPress={() => {
+          void confirmQrPhPayment({ id: 'payment-1', status: 'paid_unfulfilled', amount: 2500 })
+            .then(() => setResult('confirmed')).catch((error: Error) => setResult(error.message));
+        }}
+      />
       <Text>{`qr-result:${result}`}</Text>
+      <Text>{`qr-status:${status}`}</Text>
+      <Text>{`qr-cart:${cart.length}`}</Text>
     </View>
   );
 }
@@ -94,6 +112,7 @@ function makeClient(createSale: jest.Mock) {
   return {
     isConfigured: true,
     createSale,
+    resolveCashSaleAttempt: jest.fn().mockResolvedValue('unknown'),
     listInventory: jest.fn().mockResolvedValue([{
       productId: 'prd-001',
       sku: 'COLA-001',
@@ -119,6 +138,18 @@ function makeQrClient(createQrPhPayment: jest.Mock) {
   return {
     isConfigured: true,
     createQrPhPayment,
+  } as unknown as ApiClient;
+}
+
+function makeQrStageClient(overrides: Record<string, jest.Mock> = {}) {
+  return {
+    isConfigured: true,
+    createQrPhPayment: jest.fn(),
+    refreshPayment: jest.fn(),
+    listInventory: jest.fn().mockResolvedValue([]),
+    listProducts: jest.fn().mockResolvedValue([]),
+    listSales: jest.fn().mockResolvedValue([]),
+    ...overrides,
   } as unknown as ApiClient;
 }
 
@@ -214,7 +245,7 @@ describe('PosProvider Laravel cash checkout', () => {
     // Laravel actually recorded the first sale, but the response was lost.
     const attemptedKey = createSale.mock.calls[0][0].idempotencyKey;
     expect(attemptedKey).toMatch(/^mobile-cash-/);
-    client.listSales = jest.fn().mockResolvedValue([{ ...sale, idempotencyKey: attemptedKey }]);
+    client.resolveCashSaleAttempt = jest.fn().mockResolvedValue('found');
 
     // The cashier revalidates, accepts the new price, and retries the sale.
     fireEvent.press(getByTestId('reprice-product'));
@@ -238,9 +269,10 @@ describe('PosProvider Laravel cash checkout', () => {
       .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
       .mockResolvedValueOnce(revisedSale);
     const client = makeClient(createSale);
-    // No sale carries the uncertain key, so Laravel never recorded it. The
-    // second read feeds the post-sale history refresh.
-    client.listSales = jest.fn().mockResolvedValueOnce([]).mockResolvedValue([revisedSale]);
+    // A complete receipt read confirms the uncertain key is absent; the
+    // ordinary history read is still used for the post-sale refresh.
+    client.resolveCashSaleAttempt = jest.fn().mockResolvedValue('not-found');
+    client.listSales = jest.fn().mockResolvedValue([revisedSale]);
     const { getByTestId, getByText } = render(
       <PosProvider client={client} demoCatalogEnabled><Harness /></PosProvider>,
     );
@@ -354,4 +386,158 @@ describe('PosProvider Laravel QR Ph checkout', () => {
     expect(createQrPhPayment).toHaveBeenCalledTimes(2);
     expect(createQrPhPayment.mock.calls[0][0].idempotencyKey).toBe(createQrPhPayment.mock.calls[1][0].idempotencyKey);
   });
+
+  it('verifies status through the provider-verified refresh endpoint instead of a stored read', async () => {
+    const refreshPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'paid', saleId: 'sale-9' });
+    const client = makeQrStageClient({ refreshPayment });
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><QrHarness /></PosProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('refresh-qr'));
+    });
+
+    await waitFor(() => expect(getByText('qr-status:paid')).toBeTruthy());
+    expect(refreshPayment).toHaveBeenCalledWith('payment-1');
+    expect(refreshPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes authoritative state after paid_unfulfilled without clearing the cart', async () => {
+    const client = makeQrStageClient();
+    const { getByTestId, getByText } = render(
+      <PosProvider client={client} demoCatalogEnabled><QrHarness /></PosProvider>,
+    );
+
+    fireEvent.press(getByTestId('add-qr-product'));
+    await act(async () => {
+      fireEvent.press(getByTestId('confirm-qr'));
+    });
+
+    // Money was received but no sale was recorded, so inventory and history
+    // are re-read while the cart is kept for operator reconciliation.
+    await waitFor(() => expect(getByText('qr-result:confirmed')).toBeTruthy());
+    expect(client.listInventory).toHaveBeenCalled();
+    expect(client.listSales).toHaveBeenCalled();
+    expect(getByText('qr-cart:1')).toBeTruthy();
+  });
+
+  it('starts a fresh pending payment for each fulfilled identical basket, retaining same-attempt retries', async () => {
+    const secondPayment = { ...pendingPayment, id: 'payment-2' };
+    const createQrPhPayment = jest.fn()
+      .mockResolvedValueOnce(pendingPayment)
+      .mockResolvedValueOnce(secondPayment);
+    const refreshPayment = jest.fn()
+      .mockResolvedValueOnce({ ...pendingPayment, status: 'paid', saleId: 'sale-1' })
+      .mockResolvedValueOnce({ ...secondPayment, status: 'paid', saleId: 'sale-2' });
+    const client = makeQrStageClient({ createQrPhPayment, refreshPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => {
+      await result.current.startQrPhPayment();
+      await result.current.confirmQrPhPayment(await result.current.refreshQrPhPayment(pendingPayment.id));
+    });
+    expect(result.current.cart).toHaveLength(0);
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => {
+      const attempts = await Promise.all([result.current.startQrPhPayment(), result.current.startQrPhPayment()]);
+      expect(attempts).toEqual([secondPayment, secondPayment]);
+      await result.current.confirmQrPhPayment(attempts[0]);
+    });
+    expect(result.current.cart).toHaveLength(1);
+    expect(createQrPhPayment).toHaveBeenCalledTimes(2);
+    expect(createQrPhPayment.mock.calls[1][0].idempotencyKey).not.toBe(createQrPhPayment.mock.calls[0][0].idempotencyKey);
+
+    await act(async () => {
+      await result.current.confirmQrPhPayment(await result.current.refreshQrPhPayment(secondPayment.id));
+    });
+    expect(result.current.cart).toHaveLength(0);
+    expect(client.listInventory).toHaveBeenCalledTimes(2);
+    expect(client.listSales).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the paid attempt available while fulfillment verification is unavailable', async () => {
+    const paid = { ...pendingPayment, status: 'paid' as const, saleId: 'sale-1' };
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const listInventory = jest.fn().mockRejectedValueOnce(new ApiClientError('Offline')).mockResolvedValue([]);
+    const client = makeQrStageClient({ createQrPhPayment, listInventory, refreshPayment: jest.fn().mockResolvedValue(paid) });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    await act(async () => {
+      await result.current.startQrPhPayment();
+      await result.current.refreshQrPhPayment(pendingPayment.id);
+      await expect(result.current.confirmQrPhPayment(paid)).rejects.toThrow('verification is unavailable');
+    });
+    expect(result.current.cart).toHaveLength(1);
+    await act(async () => {
+      expect(await result.current.startQrPhPayment()).toEqual(paid);
+      await result.current.confirmQrPhPayment(paid);
+    });
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+    expect(result.current.cart).toHaveLength(0);
+  });
+
+  it('never retires a paid-unfulfilled attempt or creates another payment for its basket', async () => {
+    const unfulfilled = { ...pendingPayment, status: 'paid_unfulfilled' as const };
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = makeQrStageClient({ createQrPhPayment, refreshPayment: jest.fn().mockResolvedValue(unfulfilled) });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    await act(async () => {
+      await result.current.startQrPhPayment();
+      await result.current.confirmQrPhPayment(await result.current.refreshQrPhPayment(pendingPayment.id));
+      expect(await result.current.startQrPhPayment()).toEqual(unfulfilled);
+    });
+    expect(result.current.cart).toHaveLength(1);
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('refuses a changed cash retry when its lost receipt may be beyond the first history page', async () => {
+  const createRequests: unknown[] = [];
+  const fetchImpl = jest.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith('/sales/checkout')) {
+      createRequests.push(JSON.parse(options!.body as string));
+      throw new Error('Response lost after commit');
+    }
+    if (url.endsWith('/sales?per_page=100')) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({ data: {
+          items: Array.from({ length: 100 }, (_, index) => ({ id: index + 2, status: 'completed', idempotency_key: `other-${index}`, total_amount: 2500 })),
+          pagination: { current_page: 1, last_page: 2, per_page: 100, total: 101 },
+        } }),
+      } as Response;
+    }
+    throw new Error(`Unexpected API read: ${url}`);
+  });
+  const client = new ApiClient({ baseUrl: 'https://api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+  const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+  const { result } = renderHook(() => usePos(), { wrapper });
+  const product = sale.items[0].product;
+  act(() => { result.current.addProductChecked(product); });
+  await act(async () => {
+    await expect(result.current.completeCashSale(100)).rejects.toThrow('Response lost after commit');
+  });
+  act(() => { result.current.replaceCartLines([{ product: { ...product, price: 30 }, quantity: 1 }]); });
+  await act(async () => {
+    await expect(result.current.completeCashSale(100)).rejects.toMatchObject({ code: 'cash_attempt_unresolved' });
+  });
+  expect(createRequests).toHaveLength(1);
+  expect(result.current.cart).toHaveLength(1);
+
+  // The unresolved attempt survives a blocked retry, so it cannot be bypassed
+  // by changing the cash amount and asking again.
+  await act(async () => {
+    await expect(result.current.completeCashSale(200)).rejects.toMatchObject({ code: 'cash_attempt_unresolved' });
+  });
+  expect(createRequests).toHaveLength(1);
 });

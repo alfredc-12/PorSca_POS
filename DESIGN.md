@@ -7,7 +7,7 @@ The September 5 mockups are now the visual authority for the mobile application.
 The three primary tab views must read as one system:
 
 - **POS** — search/scan, online status, cart, totals, payment selection, and checkout action.
-- **Inventory** — the same PorSca header/search language, inventory health summary, product rows, stock states, and Add Product action.
+- **Inventory** — the same PorSca header/search language, inventory health summary, product rows, stock states, and an admin-only Add Product action. Cashiers see read-only inventory.
 - **Transactions** — the same header language, search/filter tools, sales summary, payment filters, and receipt-style transaction rows.
 
 The bottom navigation is intentionally identical across all three screens. It has exactly three destinations — POS, Inventory, Transactions — and the selected destination sits inside a pale-green rounded rectangular highlight.
@@ -59,7 +59,7 @@ Tab navigation lives in `app/(tabs)/_layout.tsx` and must remain visually consis
 - Primary touch targets are at least ~48 dp high.
 - System back navigation remains functional on Android and iOS.
 - Scanning from POS adds a recognized product to the cart and confirms it in place before returning.
-- Scanning from Inventory opens the existing product editor or prepares a new product with the scanned barcode.
+- For admins, scanning from Inventory opens the existing product editor or prepares a new product with the scanned barcode. Cashiers inspect the scanned product without edit/add actions.
 - Inventory is deducted only after a successful cash confirmation or QR Ph payment confirmation.
 - Search controls provide real filtering rather than decorative fields.
 - Payment-method controls communicate selection with icon, text, border/state, and a check indicator — never color alone.
@@ -67,6 +67,10 @@ Tab navigation lives in `app/(tabs)/_layout.tsx` and must remain visually consis
 - A rejected cart add, a stock limit, and a resolved scan all report in place, in the surface the cashier is already looking at, instead of in a dialog that has to be dismissed while a customer waits.
 
 ## Screen details
+
+### Login
+
+Login uses the same cream/green PorSca shell, labeled email/password inputs, a masked password, and an in-place recoverable error. Disable submission while the request is pending. Session restoration shows a loading state, never a flash of protected content. The signed-in tab header identifies the account role and offers Sign out; admins also see a Users entry for cashier account management.
 
 ### POS
 
@@ -81,7 +85,7 @@ Cart states added in week 6:
 
 ### Inventory
 
-Search and inventory scanning sit above a four-part health summary: total products, healthy stock, low stock, out of stock. Product rows expose name, category/SKU, stock condition, price, and edit affordance. Stock states use green, amber, and red text/badges.
+Search and inventory scanning sit above a four-part health summary: total products, healthy stock, low stock, out of stock. Product rows expose name, category/SKU, stock condition, price, and an admin-only edit affordance. Stock states use green, amber, and red text/badges.
 
 ### Transactions
 
@@ -93,7 +97,11 @@ Checkout inherits the same cream/green visual system. It presents amount due, or
 
 ### Product editor
 
-Product create/edit uses the same surface and form system and includes product category. Inventory barcode scanning can pre-fill a new product barcode.
+Admin-only product create/edit uses the same surface and form system and includes product category. Inventory barcode scanning can pre-fill a new product barcode.
+
+### Users
+
+The admin-only Users screen lists account name, email, role, and active state. Admins can create a cashier with name, email, and password, with field-level validation and recoverable API errors. Deactivation requires an explicit confirmation and explains that sign-in is disabled and API sessions are revoked. Inactive cashiers can be reactivated; role and permissions remain fixed. Cashiers do not see the Users navigation entry and cannot open the protected route.
 
 ### Scanner
 
@@ -107,7 +115,7 @@ Scanner states added in week 6. Each is a light card on the dark surface with an
 - **Product not found** — names the code, notes that both the UPC-A and EAN-13 forms were tried, and flags a failing check digit as a possible misread.
 - **Not a product barcode** — a non-numeric, too short, or over-long code, answered without a request, pointing the cashier at Search.
 - **API unavailable** — the lookup could not reach Laravel, with **Scan again** and **Back to cart**.
-- **Inventory: not in inventory** — **Scan again** or **Add product** with the scanned barcode pre-filled.
+- **Inventory: not in inventory** — **Scan again** or, for admins only, **Add product** with the scanned barcode pre-filled. Cashiers can return to read-only inventory.
 - **Starting the camera** — scanning stays disarmed until the camera reports ready.
 
 ## Accessibility and resilience

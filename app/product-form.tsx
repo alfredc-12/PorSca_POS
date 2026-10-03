@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { DataState } from '@/src/components/DataState';
 import { ProductField, usePos } from '@/src/context/PosContext';
 import { ProductCategory } from '@/src/types';
+import { useAuth } from '@/src/context/AuthContext';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 const categories: ProductCategory[] = ['Beverages', 'Noodles', 'Milk', 'Snacks', 'Personal Care', 'Household', 'General'];
@@ -40,6 +41,7 @@ export function validateProductDraft(draft: { name: string; barcode: string; pri
 }
 
 export default function ProductFormScreen() {
+  const { isAdmin } = useAuth();
   const { id, barcode: scannedBarcode } = useLocalSearchParams<{ id?: string; barcode?: string }>();
   const { products, inventoryProducts, updateProduct, createProduct, refreshInventory } = usePos();
   const existing = useMemo(
@@ -58,6 +60,29 @@ export default function ProductFormScreen() {
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [retryingRefresh, setRetryingRefresh] = useState(false);
 
+  // Loss prevention: leaving with unsent edits asks first, so a stray tap on
+  // back cannot silently drop a half-entered product.
+  const initial = {
+    name: existing?.name ?? '',
+    barcode: existing?.barcode ?? scannedBarcode ?? '',
+    price: existing ? String(existing.price) : '',
+    stock: existing ? String(existing.stock) : '',
+    category: existing?.category ?? 'General' as ProductCategory,
+  };
+  const dirty = name !== initial.name || barcode !== initial.barcode || price !== initial.price || stock !== initial.stock || category !== initial.category;
+
+  const discardMessage = 'Your edits have not been saved to Laravel yet. Going back now will lose them.';
+  const confirmDiscard = () => {
+    if (!dirty) {
+      router.back();
+      return;
+    }
+    Alert.alert('Discard unsaved changes?', discardMessage, [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: () => router.back() },
+    ]);
+  };
+
   const updateField = (field: ProductField, setter: (value: string) => void, value: string) => {
     setter(value);
     setFieldErrors((current) => current[field] ? { ...current, [field]: undefined } : current);
@@ -66,7 +91,7 @@ export default function ProductFormScreen() {
   };
 
   const save = async () => {
-    if (saving || retryingRefresh) return;
+    if (!isAdmin || saving || retryingRefresh) return;
     const errors = validateProductDraft({ name, barcode, price, stock });
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -124,6 +149,8 @@ export default function ProductFormScreen() {
     setFormError('The inventory is still unavailable. Keep this form open and retry the refresh again.');
   };
 
+  if (!isAdmin) return <Redirect href="/(tabs)/inventory" />;
+
   if (id && !existing) {
     return (
       <Screen title="Product unavailable" subtitle="This product is not present in the current inventory." back>
@@ -140,7 +167,7 @@ export default function ProductFormScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title={existing ? 'Edit Product' : 'Add Product'} subtitle="Keep barcode, price, category, and stock information accurate." back>
+      <Screen title={existing ? 'Edit Product' : 'Add Product'} subtitle="Keep barcode, price, category, and stock information accurate." back backConfirm={{ when: dirty && !saving, title: 'Discard unsaved changes?', message: discardMessage, confirmLabel: 'Discard' }}>
         <View style={styles.heroCard}>
           <View style={styles.heroIcon}><Ionicons name={existing ? 'create-outline' : 'cube-outline'} size={30} color={colors.primary} /></View>
           <View style={styles.heroCopy}>
@@ -220,6 +247,9 @@ export default function ProductFormScreen() {
           onPress={() => void save()}
           disabled={saving || retryingRefresh}
         />
+        {dirty && !saving ? (
+          <AppButton testID="discard-product-button" label="Discard changes" variant="secondary" onPress={confirmDiscard} />
+        ) : null}
         <Text style={styles.footerHint}>Product details and stock are saved by Laravel. A successful save refreshes the authoritative inventory before leaving this screen.</Text>
       </Screen>
     </KeyboardAvoidingView>
@@ -256,7 +286,7 @@ const styles = StyleSheet.create({
   errorCopy: { flex: 1, minWidth: 0, gap: 4 },
   errorTitle: { color: colors.text, fontSize: typography.label, fontWeight: '900' },
   errorMessage: { color: colors.text, fontSize: typography.caption, lineHeight: 18 },
-  retryButton: { alignSelf: 'flex-start', minHeight: 44, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', marginTop: 3 },
+  retryButton: { alignSelf: 'flex-start', minHeight: 48, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.danger, alignItems: 'center', justifyContent: 'center', marginTop: 3 },
   retryText: { color: colors.white, fontSize: typography.caption, fontWeight: '900' },
   formCard: { gap: spacing.lg, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, padding: spacing.lg, shadowColor: colors.shadow, shadowOpacity: 0.05, shadowRadius: 13, shadowOffset: { width: 0, height: 5 }, elevation: 2 },
   field: { gap: spacing.sm },
