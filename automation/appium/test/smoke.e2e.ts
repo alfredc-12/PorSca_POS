@@ -13,8 +13,8 @@ const smoke: SmokeTest = process.env.APPIUM_RUN === 'true' ? it : (name) => {
 };
 
 const productSearch = process.env.APPIUM_PRODUCT_SEARCH ?? 'Sinandomeng Rice';
-const productText = process.env.APPIUM_PRODUCT_TEXT ?? productSearch;
-const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000010';
+const productText = process.env.APPIUM_PRODUCT_TEXT ?? 'Sinandomeng Rice 5kg';
+const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000019';
 const cashReceived = process.env.APPIUM_CASH_AMOUNT ?? '400';
 const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);

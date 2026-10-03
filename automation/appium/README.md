@@ -14,7 +14,7 @@ APPIUM_DEVICE_NAME="<connected Android device or emulator>" \
 APPIUM_APP_PACKAGE=com.porsca.pos \
 APPIUM_PRODUCT_SEARCH="Sinandomeng Rice" \
 APPIUM_PRODUCT_TEXT="Sinandomeng Rice 5kg" \
-APPIUM_BARCODE_FIXTURE=4800000000010 \
+APPIUM_BARCODE_FIXTURE=4800000000019 \
 APPIUM_CASH_AMOUNT=400 \
 APPIUM_STOCK_SEARCH="Sinandomeng Rice" \
 APPIUM_STOCK_ATTEMPTS=25 \
@@ -22,7 +22,16 @@ APPIUM_QR_EXPECTED_STATUS=pending \
 npm run smoke
 ```
 
-`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different staging fixture. The defaults match the Laravel `qa-baseline-2026-02` seed. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
+`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different staging fixture. The defaults match the Laravel `qa-baseline-2026-10` seed. Its printable product labels are aligned as follows:
+
+| Product | Barcode (EAN-13) |
+| --- | --- |
+| Sinandomeng Rice 5kg | `4800000000019` |
+| Barako Coffee 250g | `4800000000026` |
+| Laundry Soap 500g | `4800000000033` |
+| Mineral Water 1L | `4800000000040` |
+
+`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
 
 For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. Appium cannot synthesize a camera image. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
