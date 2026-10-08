@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
@@ -10,11 +9,15 @@ import { useAuth } from '@/src/context/AuthContext';
 import { Product } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { BarcodeScanner } from '@/src/components/BarcodeScanner';
+import { ProductEditorModal } from '@/src/components/ProductEditorModal';
 
 export default function InventoryScreen() {
   const { inventoryProducts, inventoryState, inventoryError, inventoryUsingFallback, refreshInventory } = usePos();
   const { isAdmin } = useAuth();
   const [query, setQuery] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [editor, setEditor] = useState<{ product?: Product; scannedBarcode?: string }>();
   const responsive = useResponsive();
 
   const filtered = useMemo(() => {
@@ -60,7 +63,7 @@ export default function InventoryScreen() {
           ]}
           accessibilityRole="button"
           accessibilityLabel="Scan product barcode"
-          onPress={() => router.push({ pathname: '/scanner', params: { mode: 'inventory' } })}
+          onPress={() => setScanning(true)}
         >
           <Ionicons name="barcode-outline" size={responsive.s(25)} color={colors.white} />
           {!responsive.veryNarrow ? <Text style={[styles.scanText, { fontSize: responsive.font(16) }]}>Scan</Text> : null}
@@ -116,7 +119,7 @@ export default function InventoryScreen() {
 
       {inventoryState !== 'loading' ? <View style={styles.listCard}>
         {filtered.length ? filtered.map((product, index) => (
-          <ProductRow key={product.id} product={product} first={index === 0} editable={isAdmin} />
+          <ProductRow key={product.id} product={product} first={index === 0} editable={isAdmin} onEdit={() => setEditor({ product })} />
         )) : (
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.26, 190, 250) }]}>
             <Ionicons name="search-outline" size={responsive.s(34)} color={colors.textMuted} />
@@ -136,7 +139,7 @@ export default function InventoryScreen() {
               width: responsive.veryNarrow ? '100%' : undefined,
             },
           ]}
-          onPress={() => router.push('/product-form')}
+          onPress={() => setEditor({})}
           accessibilityRole="button"
           accessibilityLabel="Add product"
         >
@@ -144,6 +147,13 @@ export default function InventoryScreen() {
           <Text style={[styles.addText, { fontSize: responsive.font(16) }]}>Add Product</Text>
         </Pressable>
       </View> : null}
+      {scanning ? <Modal visible animationType="fade" onRequestClose={() => setScanning(false)}>
+        <BarcodeScanner inventoryMode onClose={() => setScanning(false)} onInventoryResult={(outcome) => {
+          setScanning(false);
+          setEditor(outcome.product ? { product: outcome.product } : { scannedBarcode: outcome.barcode });
+        }} />
+      </Modal> : null}
+      {isAdmin && editor ? <ProductEditorModal product={editor.product} scannedBarcode={editor.scannedBarcode} onClose={() => setEditor(undefined)} /> : null}
     </Screen>
   );
 }
@@ -171,7 +181,7 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
   );
 }
 
-function ProductRow({ product, first, editable }: { product: Product; first: boolean; editable: boolean }) {
+function ProductRow({ product, first, editable, onEdit }: { product: Product; first: boolean; editable: boolean; onEdit: () => void }) {
   const responsive = useResponsive();
   const low = product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10);
   const out = product.stockStatus === 'out_of_stock' || product.stock === 0;
@@ -185,7 +195,7 @@ function ProductRow({ product, first, editable }: { product: Product; first: boo
       accessibilityRole={editable ? 'button' : undefined}
       accessibilityLabel={editable ? `Edit ${product.name}` : product.name}
       disabled={!editable}
-      onPress={() => router.push({ pathname: '/product-form', params: { id: product.id } })}
+      onPress={onEdit}
       style={({ pressed }) => [
         styles.productRow,
         !first && styles.rowBorder,
@@ -215,7 +225,7 @@ function ProductRow({ product, first, editable }: { product: Product; first: boo
             <Text style={[styles.badgeText, { color: badgeColor, fontSize: responsive.font(10.5) }]}>{badgeText}</Text>
           </View>
         ) : null}
-        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{product.price > 0 ? `₱${product.price.toFixed(2)}` : 'Price unavailable'}</Text>
+        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{`₱${product.price.toFixed(2)}`}</Text>
       </View>
       {editable ? <Ionicons name="ellipsis-vertical" size={responsive.s(20)} color={colors.textMuted} /> : null}
     </Pressable>

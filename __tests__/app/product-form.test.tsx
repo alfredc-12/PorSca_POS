@@ -1,9 +1,10 @@
 import React from 'react';
-import { Alert } from 'react-native';
+
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ApiClient } from '@/src/api/client';
 import ProductFormScreen from '@/app/product-form';
 import { PosProvider } from '@/src/context/PosContext';
+import { colors } from '@/src/theme/tokens';
 
 const mockRouter = { back: jest.fn() };
 let mockIsAdmin = true;
@@ -90,6 +91,7 @@ describe('ProductFormScreen', () => {
     const screen = renderForm(client);
 
     fireEvent.changeText(screen.getByTestId('product-name-input'), 'House Blend Coffee');
+    fireEvent.press(screen.getByTestId('edit-barcode-button'));
     fireEvent.changeText(screen.getByTestId('product-barcode-input'), authoritativeProduct.barcode);
     fireEvent.changeText(screen.getByTestId('product-price-input'), '185');
     fireEvent.changeText(screen.getByTestId('product-stock-input'), '12');
@@ -122,14 +124,16 @@ describe('ProductFormScreen', () => {
     const screen = renderForm(client);
 
     fireEvent.changeText(screen.getByTestId('product-name-input'), updated.name);
+    fireEvent.press(screen.getByTestId('edit-barcode-button'));
     fireEvent.changeText(screen.getByTestId('product-barcode-input'), updated.barcode);
-    fireEvent.changeText(screen.getByTestId('product-price-input'), '27.50');
+    fireEvent.changeText(screen.getByTestId('product-price-input'), '27');
+    fireEvent.changeText(screen.getByTestId('product-price-decimal-input'), '50');
     fireEvent.changeText(screen.getByTestId('product-stock-input'), '60');
     fireEvent.press(screen.getByTestId('save-product-button'));
 
     await waitFor(() => expect(mockRouter.back).toHaveBeenCalledTimes(1));
     const updateCall = fetchImpl.mock.calls.find(([url, options]) => url.endsWith('/products/prd-001') && options?.method === 'PATCH');
-    expect(updateCall?.[1]?.body).toBe(JSON.stringify({ barcode: updated.barcode, name: updated.name, category: 'Beverages', price: 2750, stock: 60 }));
+    expect(updateCall?.[1]?.body).toBe(JSON.stringify({ barcode: updated.barcode, name: updated.name, price: 2750, stock: 60 }));
   });
 
   it('keeps invalid price and stock editable and explains how to recover', () => {
@@ -138,15 +142,95 @@ describe('ProductFormScreen', () => {
     const screen = renderForm(client);
 
     fireEvent.changeText(screen.getByTestId('product-name-input'), 'Invalid Product');
+    fireEvent.press(screen.getByTestId('edit-barcode-button'));
     fireEvent.changeText(screen.getByTestId('product-barcode-input'), '4800000000088');
     fireEvent.changeText(screen.getByTestId('product-price-input'), '12.345');
     fireEvent.changeText(screen.getByTestId('product-stock-input'), '2.5');
-    fireEvent.press(screen.getByTestId('save-product-button'));
-
     expect(screen.getByText('Enter a non-negative price with up to 2 decimal places.')).toBeTruthy();
     expect(screen.getByText('Enter a whole-number stock quantity of 0 or more.')).toBeTruthy();
+    expect(screen.getByTestId('product-price-input')).toHaveStyle({ borderColor: colors.danger });
+    expect(screen.getByTestId('product-price-decimal-input')).toHaveStyle({ borderColor: colors.danger });
+    expect(screen.getByTestId('product-stock-input').props['aria-invalid']).toBe(true);
+    fireEvent.press(screen.getByTestId('save-product-button'));
     expect(screen.getByText('Check the highlighted fields and try again.')).toBeTruthy();
     expect(fetchImpl).not.toHaveBeenCalled();
+    fireEvent.changeText(screen.getByTestId('product-price-input'), '12');
+    fireEvent.changeText(screen.getByTestId('product-stock-input'), '2');
+    expect(screen.getByTestId('product-price-input')).not.toHaveStyle({ borderColor: colors.danger });
+    expect(screen.getByTestId('product-stock-input').props['aria-invalid']).toBe(false);
+  });
+
+  it('shows required and category validation on blur with red field borders', () => {
+    const screen = renderForm(new ApiClient({ baseUrl: undefined }));
+    fireEvent(screen.getByTestId('product-name-input'), 'blur');
+    expect(screen.getByText('Enter a product name.')).toBeTruthy();
+    expect(screen.getByTestId('product-name-input')).toHaveStyle({ borderColor: colors.danger });
+    fireEvent.changeText(screen.getByTestId('product-category-input'), 'x'.repeat(101));
+    expect(screen.getByText('Enter a category with 1–100 characters.')).toBeTruthy();
+    expect(screen.getByTestId('product-category-input').props['aria-invalid']).toBe(true);
+  });
+
+  it('edits centavos independently and submits the correct price without resending stock', async () => {
+    mockRouteParams = { id: 'prd-001' };
+    const fetchImpl = jest.fn(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'PATCH') return response({ data: authoritativeProduct });
+      if (url.endsWith('/inventory')) return response(refreshResponses());
+      return response({ data: { items: [authoritativeProduct] } });
+    });
+    const screen = renderForm(new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch }));
+    fireEvent.changeText(screen.getByTestId('product-price-input'), '27');
+    fireEvent.changeText(screen.getByTestId('product-price-decimal-input'), '5');
+    fireEvent(screen.getByTestId('product-price-decimal-input'), 'blur');
+    expect(screen.getByTestId('product-price-decimal-input').props.value).toBe('05');
+    fireEvent.press(screen.getByTestId('save-product-button'));
+    await waitFor(() => expect(mockRouter.back).toHaveBeenCalledTimes(1));
+    const write = fetchImpl.mock.calls.find(([, options]) => options?.method === 'PATCH');
+    expect(JSON.parse(write?.[1]?.body as string)).toEqual({ price: 2705 });
+  });
+
+  it('uses whole-number stock steps and never decrements below zero', () => {
+    const screen = renderForm(new ApiClient({ baseUrl: undefined }));
+    fireEvent.changeText(screen.getByTestId('product-stock-input'), '0');
+    expect(screen.getByRole('button', { name: 'Decrease stock quantity' })).toBeDisabled();
+    fireEvent.press(screen.getByRole('button', { name: 'Increase stock quantity' }));
+    expect(screen.getByTestId('product-stock-input').props.value).toBe('1');
+    fireEvent.press(screen.getByRole('button', { name: 'Decrease stock quantity' }));
+    expect(screen.getByTestId('product-stock-input').props.value).toBe('0');
+    fireEvent.changeText(screen.getByTestId('product-stock-input'), '4294967295');
+    expect(screen.getByRole('button', { name: 'Increase stock quantity' })).toBeDisabled();
+    fireEvent.changeText(screen.getByTestId('product-stock-input'), '2.5');
+    fireEvent.press(screen.getByRole('button', { name: 'Increase stock quantity' }));
+    expect(screen.getByTestId('product-stock-input').props.value).toBe('2.5');
+    expect(screen.getByText('Enter a whole-number stock quantity of 0 or more.')).toBeTruthy();
+  });
+
+  it('offers categories in a closed-by-default combo box and keeps custom names', () => {
+    const screen = renderForm(new ApiClient({ baseUrl: undefined }));
+    expect(screen.queryByRole('list')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'Show categories' }));
+    expect(screen.getByRole('list', { name: 'Categories' })).toBeTruthy();
+    fireEvent.press(screen.getByRole('option', { name: 'Noodles' }));
+    expect(screen.getByTestId('product-category-input').props.value).toBe('Noodles');
+    expect(screen.queryByRole('list')).toBeNull();
+    fireEvent.changeText(screen.getByTestId('product-category-input'), 'Frozen Food');
+    expect(screen.getByText('Use “Frozen Food” as a custom category.')).toBeTruthy();
+    fireEvent(screen.getByTestId('product-category-input'), 'blur');
+    expect(screen.getByTestId('product-category-input').props.value).toBe('Frozen Food');
+    expect(screen.queryByRole('list')).toBeNull();
+  });
+
+  it('supports choosing and dismissing category suggestions with the keyboard', () => {
+    const screen = renderForm(new ApiClient({ baseUrl: undefined }));
+    const key = (key: string) => ({ nativeEvent: { key }, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+    fireEvent(screen.getByTestId('product-category-input'), 'keyPress', key('ArrowDown'));
+    fireEvent(screen.getByTestId('product-category-input'), 'keyPress', key('Enter'));
+    expect(screen.getByTestId('product-category-input').props.value).toBe('Beverages');
+    fireEvent(screen.getByTestId('product-category-input'), 'keyPress', key('ArrowDown'));
+    const escape = key('Escape');
+    fireEvent(screen.getByTestId('product-category-input'), 'keyPress', escape);
+    expect(escape.stopPropagation).toHaveBeenCalled();
+    expect(screen.queryByRole('list')).toBeNull();
+    expect(screen.queryByTestId('discard-confirmation')).toBeNull();
   });
 
   it('shows a duplicate-barcode API error without losing the draft or leaving the form', async () => {
@@ -161,6 +245,7 @@ describe('ProductFormScreen', () => {
     const screen = renderForm(client);
 
     fireEvent.changeText(screen.getByTestId('product-name-input'), 'Duplicate Product');
+    fireEvent.press(screen.getByTestId('edit-barcode-button'));
     fireEvent.changeText(screen.getByTestId('product-barcode-input'), '4800000000088');
     fireEvent.changeText(screen.getByTestId('product-price-input'), '10');
     fireEvent.changeText(screen.getByTestId('product-stock-input'), '2');
@@ -179,6 +264,7 @@ describe('ProductFormScreen', () => {
     const screen = renderForm(client);
 
     fireEvent.changeText(screen.getByTestId('product-name-input'), 'Offline Product');
+    fireEvent.press(screen.getByTestId('edit-barcode-button'));
     fireEvent.changeText(screen.getByTestId('product-barcode-input'), '4800000000077');
     fireEvent.changeText(screen.getByTestId('product-price-input'), '10');
     fireEvent.changeText(screen.getByTestId('product-stock-input'), '2');
@@ -190,29 +276,19 @@ describe('ProductFormScreen', () => {
     expect(mockRouter.back).not.toHaveBeenCalled();
   });
 
-  it('asks before leaving with unsaved edits instead of dropping them', () => {
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-    try {
-      const client = new ApiClient({ baseUrl: undefined });
-      const screen = renderForm(client);
-
-      expect(screen.queryByTestId('discard-product-button')).toBeNull();
-      fireEvent.press(screen.getByRole('button', { name: 'Go back' }));
-      expect(mockRouter.back).toHaveBeenCalledTimes(1);
-
-      fireEvent.changeText(screen.getByTestId('product-name-input'), 'Half-entered product');
-      fireEvent.press(screen.getByTestId('discard-product-button'));
-      expect(alertSpy).toHaveBeenCalledWith('Discard unsaved changes?', expect.stringContaining('not been saved'), expect.any(Array));
-      expect(mockRouter.back).toHaveBeenCalledTimes(1);
-
-      fireEvent.press(screen.getByRole('button', { name: 'Go back' }));
-      expect(alertSpy).toHaveBeenCalledTimes(2);
-      expect(mockRouter.back).toHaveBeenCalledTimes(1);
-    } finally {
-      alertSpy.mockRestore();
-    }
+  it('asks before discarding unsaved edits and keeps the draft when cancelled', () => {
+    const screen = renderForm(new ApiClient({ baseUrl: undefined }));
+    fireEvent.changeText(screen.getByTestId('product-name-input'), 'Half-entered product');
+    fireEvent.press(screen.getByTestId('discard-product-button'));
+    expect(screen.getByTestId('discard-confirmation')).toBeTruthy();
+    expect(mockRouter.back).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.queryByTestId('discard-confirmation')).toBeNull();
+    expect(screen.getByTestId('product-name-input').props.value).toBe('Half-entered product');
+    fireEvent.press(screen.getByRole('button', { name: 'Close product editor' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Discard' }));
+    expect(mockRouter.back).toHaveBeenCalledTimes(1);
   });
-
   it('shows a scanned unknown barcode prefilled in the creation form', () => {
     mockRouteParams = { barcode: '4800000000066' };
     const client = new ApiClient({ baseUrl: undefined });

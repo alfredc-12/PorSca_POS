@@ -11,7 +11,7 @@
 ## Start here
 
 - Canonical check: `npm run verify`.
-- Setup and local running: [docs/SETUP.md](docs/SETUP.md).
+- Setup and local running, including localhost browser camera development: [docs/SETUP.md](docs/SETUP.md).
 
 ## Documentation map
 
