@@ -6,7 +6,7 @@ import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } fr
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
-import { CartLine, Product, Sale } from '@/src/types';
+import { CartLine, PaymentStatus, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
 export type { BarcodeLookupResult };
@@ -510,6 +510,19 @@ export function PosProvider({
     const lines = cartRef.current.lines;
     if (lines.length === 0) return null;
 
+    const qrSignature = qrCartSignature(lines);
+    const knownQrPayment = qrPayments.current.get(qrSignature);
+    const qrUnresolved = knownQrPayment
+      ? !QR_TERMINAL_STATUSES.includes(knownQrPayment.status)
+      : qrKeys.current.has(qrSignature);
+    if (qrUnresolved) {
+      throw new ApiClientError(
+        'A QR Ph payment for this cart is still unresolved. Check the QR Ph payment status before recording cash.',
+        undefined,
+        'qr_payment_unresolved',
+      );
+    }
+
     // Strict online: every sale is recorded by Laravel. There is deliberately no
     // local-sale branch, not even for the demo catalog, so a demo catalog can
     // never produce an unrecorded paid sale (defect F1).
@@ -843,6 +856,9 @@ function qrCartSignature(cart: CartLine[]) {
     .sort()
     .join('|');
 }
+
+/** Provider answers that settle a QR Ph attempt: it can no longer collect money. */
+const QR_TERMINAL_STATUSES: PaymentStatus[] = ['failed', 'cancelled', 'expired'];
 
 function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {
   for (const [signature, known] of payments) {

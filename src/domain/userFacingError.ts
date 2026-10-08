@@ -154,6 +154,9 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
   if (failure.code === 'insufficient_cash') {
     return { title: 'Not enough cash', body: 'The amount received is less than the total. Enter the full amount and confirm again. Your cart is still here.', actionLabel: 'Confirm again', action: 'retry' };
   }
+  if (failure.code === 'qr_payment_unresolved') {
+    return { title: 'Check the QR Ph payment first', body: 'A QR Ph payment for this cart is still unresolved. Check its status before recording cash. Your cart is still here.', actionLabel: 'Check the QR Ph status', action: 'check-payment' };
+  }
   if (failure.code === 'cash_attempt_unresolved' || failure.code === 'cash_attempt_already_recorded') {
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
   }
