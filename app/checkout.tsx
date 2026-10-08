@@ -50,6 +50,15 @@ export default function CheckoutScreen() {
 
   const finishCash = async () => {
     setCashError(undefined);
+    // Switching tabs does not cancel a QR attempt. Creation and verification
+    // errors are unresolved too: the provider may still collect payment.
+    // Only a server-confirmed unpaid terminal state permits another tender.
+    if (qrBusyRef.current || (qrStatus !== 'idle' && qrStatus !== 'failed' && qrStatus !== 'cancelled' && qrStatus !== 'expired')) {
+      const failure = localFailure('QR payment is unresolved', 'Cash cannot be recorded while the QR payment is unresolved. Return to QR Ph and check its status before accepting another payment.');
+      setCashError(failure);
+      Alert.alert(failure.title, failure.body);
+      return;
+    }
     // Strict online: no sale can be recorded without Laravel, so a stale or
     // deep-linked checkout can never fall through to a local sale (defect F1).
     if (!apiConfigured) {

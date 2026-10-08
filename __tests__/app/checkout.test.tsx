@@ -174,6 +174,67 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
   });
 
+  // Supplemental INV-03 / AC-08/32/34/36 coverage overlaps the protected
+  // baseline oracle, but uses today's Laravel-backed checkout interface.
+  it('offers no local paid simulation and cannot complete a pending QR through cashier actions', async () => {
+    const completeCashSale = jest.fn();
+    const confirmQrPhPayment = jest.fn();
+    const resetCart = jest.fn();
+    setContext({ completeCashSale, confirmQrPhPayment, resetCart });
+    const view = await openQrCheckout();
+    expect(view.queryByText(/simulate\s+(paid|success)/i)).toBeNull();
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    fireEvent.press(view.getByTestId('leave-qr-payment'));
+    act(() => {
+      for (const call of alertSpy.mock.calls) {
+        for (const button of (call[2] ?? []) as { text?: string; onPress?: () => void }[]) {
+          expect(button.text ?? '').not.toMatch(/simulate\s+(paid|success)/i);
+          button.onPress?.();
+        }
+      }
+    });
+    expect(completeCashSale).not.toHaveBeenCalled();
+    expect(confirmQrPhPayment).not.toHaveBeenCalled();
+    expect(resetCart).not.toHaveBeenCalled();
+  });
+
+  // Supplemental INV-04 / AC-16 coverage overlaps the protected cash oracle.
+  it.each(['pending', 'verification', 'creating', 'unknown'] as const)(
+    'refuses cash while QR is %s, preserving the cart', async (state) => {
+      let resolve!: (payment: Payment) => void;
+      const completeCashSale = jest.fn().mockResolvedValue(sale);
+      const resetCart = jest.fn();
+      const startQrPhPayment = state === 'creating'
+        ? jest.fn().mockReturnValue(new Promise<Payment>((done) => { resolve = done; }))
+        : state === 'unknown'
+          ? jest.fn().mockRejectedValue(new Error('Request outcome unknown'))
+          : jest.fn().mockResolvedValue(pendingQrPayment);
+      setContext({ completeCashSale, resetCart, startQrPhPayment,
+        refreshQrPhPayment: jest.fn().mockRejectedValue(new Error('Status unavailable')) });
+      const view = await openQrCheckout();
+      if (state === 'verification') {
+        await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+      }
+      fireEvent.press(view.getByTestId('checkout-payment-cash'));
+      fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+      await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+      expect(completeCashSale).not.toHaveBeenCalled();
+      expect(resetCart).not.toHaveBeenCalled();
+      expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR payment.*unresolved/);
+      if (state === 'creating') await act(async () => { resolve(pendingQrPayment); });
+    },
+  );
+
+  it.each(['failed', 'cancelled', 'expired'] as const)('allows cash after server-confirmed QR %s', async (status) => {
+    const completeCashSale = jest.fn().mockResolvedValue(sale);
+    setContext({ completeCashSale, startQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status }) });
+    const view = await openQrCheckout();
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+    expect(completeCashSale).toHaveBeenCalledWith(100);
+  });
+
   it('leaves a pending payment without cancelling it and keeps the cart', async () => {
     const mockBack = router.back as jest.Mock;
     const startQrPhPayment = jest.fn().mockResolvedValue(pendingQrPayment);
