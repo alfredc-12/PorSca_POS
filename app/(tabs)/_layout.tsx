@@ -8,19 +8,6 @@ import { useAuth } from '@/src/context/AuthContext';
 import { SessionLoading } from '@/src/components/SessionLoading';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-function TabButton({ children, accessibilityState, style, ...props }: any) {
-  const selected = accessibilityState?.selected;
-  return (
-    <Pressable
-      {...props}
-      accessibilityState={accessibilityState}
-      style={[style, styles.tabButton, selected && styles.tabButtonActive]}
-    >
-      {children}
-    </Pressable>
-  );
-}
-
 export default function TabsLayout() {
   const responsive = useResponsive();
   const iconSize = responsive.s(responsive.short ? 21 : 23);
@@ -46,9 +33,9 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
+        tabBarActiveBackgroundColor: colors.primarySoft,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarHideOnKeyboard: true,
-        tabBarButton: (props) => <TabButton {...props} />,
         tabBarStyle: [
           styles.tabBar,
           {
@@ -105,14 +92,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -5 },
     elevation: 12,
   },
-  tabItem: {},
-  tabButton: {
-    flex: 1,
+  tabItem: {
     borderRadius: radius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 5,
+    overflow: 'hidden',
   },
-  tabButtonActive: { backgroundColor: colors.primarySoft },
   tabLabel: { fontWeight: '700', marginTop: 2 },
 });

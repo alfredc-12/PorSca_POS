@@ -83,6 +83,12 @@ export function useBarcodeScan({
 }: UseBarcodeScanOptions): UseBarcodeScan {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<BarcodeScanOutcome>();
+  const active = useRef(true);
+  const generation = useRef(0);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; generation.current += 1; };
+  }, []);
   /**
    * The lock is a ref, not state. Several native callbacks can arrive in one
    * tick, before React has re-rendered, and a `useState` lock lets them all
@@ -109,12 +115,14 @@ export function useBarcodeScan({
   }, [cameraReady]);
 
   const rearm = useCallback(() => {
+    generation.current += 1;
     lockedRef.current = false;
     setOutcome(undefined);
     setBusy(false);
   }, []);
 
   const handleBarcode = useCallback((data: string) => {
+    if (!active.current) return;
     if (!cameraReadyRef.current) return;
     if (lockedRef.current) return;
 
@@ -134,10 +142,12 @@ export function useBarcodeScan({
     }
 
     setBusy(true);
+    const requestGeneration = generation.current;
+    const isCurrent = () => active.current && requestGeneration === generation.current;
     void resolveRef.current(shape.digits)
-      .then((result) => setOutcome(toOutcome(shape, result)))
-      .catch(() => setOutcome(errorOutcome(shape.digits)))
-      .finally(() => setBusy(false));
+      .then((result) => { if (isCurrent()) setOutcome(toOutcome(shape, result)); })
+      .catch(() => { if (isCurrent()) setOutcome(errorOutcome(shape.digits)); })
+      .finally(() => { if (isCurrent()) setBusy(false); });
   }, [cooldownMs, now]);
 
   return { busy, outcome, scanning: cameraReady && !busy && !outcome, handleBarcode, rearm };

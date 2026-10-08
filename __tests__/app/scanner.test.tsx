@@ -44,6 +44,14 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
+jest.mock('@/src/components/TemporaryCameraControls', () => ({
+  TemporaryCameraControls: (props: { onOpenChange: (open: boolean) => void }) => {
+    const mockReact = jest.requireActual('react');
+    const mockReactNative = jest.requireActual('react-native');
+    return mockReact.createElement(mockReactNative.View, { testID: 'camera-settings', onOpenChange: props.onOpenChange });
+  },
+}));
+
 const catalog = {
   [EAN13_IN_STOCK]: { id: 'prd-cola', barcode: EAN13_IN_STOCK, name: 'Coca-Cola 500mL', price: 25, stock: 48 },
   [EAN13_OUT_OF_STOCK]: { id: 'prd-zero', barcode: EAN13_OUT_OF_STOCK, name: 'Sold Out Chips', price: 20, stock: 0 },
@@ -145,6 +153,23 @@ describe('ScannerScreen', () => {
     expect(scanner.isArmed()).toBe(false);
     scanner.scan(EAN13_IN_STOCK);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('explains the paused state while camera settings are open and resumes on close', () => {
+    const scanner = renderScanner({ mode: 'inventory', fetchImpl: apiFetch() });
+    scanner.startCamera();
+    expect(scanner.isArmed()).toBe(true);
+
+    act(() => fireEvent(scanner.getByTestId('camera-settings'), 'openChange', true));
+    expect(scanner.isArmed()).toBe(false);
+    expect(scanner.getByText('Scanning paused')).toBeTruthy();
+    expect(scanner.getByText('Close camera settings to resume barcode scanning.')).toBeTruthy();
+    expect(scanner.queryByText('Place the barcode inside the frame')).toBeNull();
+
+    act(() => fireEvent(scanner.getByTestId('camera-settings'), 'openChange', false));
+    expect(scanner.isArmed()).toBe(true);
+    expect(scanner.getByText('Place the barcode inside the frame')).toBeTruthy();
+    expect(scanner.queryByText('Scanning paused')).toBeNull();
   });
 
   it('adds a scannable fixture once and confirms it in place', async () => {
@@ -278,10 +303,20 @@ describe('ScannerScreen', () => {
     const scanner = renderScanner({ mode: 'inventory', fetchImpl });
     scanner.startCamera();
 
-    scanner.scan(NON_PRODUCT_CODE);
+    scanner.scan('0000000000000');
 
     await waitFor(() => expect(scanner.getByTestId('scanner-add-product')).toBeTruthy());
     act(() => fireEvent.press(scanner.getByTestId('scanner-add-product')));
-    expect(mockRouter.replace).toHaveBeenCalledWith({ pathname: '/product-form', params: { barcode: NON_PRODUCT_CODE } });
+    expect(mockRouter.replace).toHaveBeenCalledWith({ pathname: '/product-form', params: { barcode: '0000000000000' } });
+  });
+
+  it('does not offer creation for an invalid inventory barcode', async () => {
+    const fetchImpl = apiFetch();
+    const scanner = renderScanner({ mode: 'inventory', fetchImpl });
+    scanner.startCamera();
+    scanner.scan(NON_PRODUCT_CODE);
+    await waitFor(() => expect(scanner.getByTestId('scanner-outcome-title')).toHaveTextContent('Not a product barcode'));
+    expect(scanner.queryByTestId('scanner-add-product')).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

@@ -62,8 +62,11 @@ describe('signed-in tabs and cashier controls', () => {
     mockIsAdmin = true;
     const screen = render(<InventoryScreen />);
     fireEvent.press(screen.getByText('Add Product'));
-    expect(mockPush).toHaveBeenCalledWith('/product-form');
+    expect(screen.getByTestId('product-name-input').props.value).toBe('');
+    fireEvent.press(screen.getByRole('button', { name: 'Close product editor' }));
     fireEvent.press(screen.getByRole('button', { name: 'Edit Coffee' }));
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/product-form', params: { id: '1' } });
+    expect(screen.getByTestId('product-name-input').props.value).toBe('Coffee');
+    expect(screen.getByTestId('product-barcode-input').props.editable).toBe(false);
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });

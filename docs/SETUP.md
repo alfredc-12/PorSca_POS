@@ -7,7 +7,7 @@ Install:
 - Git
 - Node.js 20 LTS or newer
 - npm
-- A newly built PorSca development app on a physical Android/iOS phone
+- A newly built PorSca development app on a physical Android/iOS phone for native testing; browser development does not require a phone
 - An active API-managed admin or cashier account
 - Android Studio if you want an Android emulator
 
@@ -18,7 +18,7 @@ No PayMongo key is needed for local practice or for `npm run verify`.
 From the repository root:
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 npm run start
 ```
@@ -43,6 +43,34 @@ EXPO_PUBLIC_API_URL=http://192.168.1.100:8000/api/v1
 For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Sign in with your own account in the app. The returned 30-day Sanctum token is saved in `expo-secure-store` under `porsca.session.v1`, never in `.env`. Startup validates it with `/auth/me` before showing any signed-in route. Every current-session `401` clears it and returns to login. Use Sign out in the tab header before sharing a device. No password, token, or PayMongo/provider secret belongs in an Expo public variable; those variables are included in the client bundle.
 
 The backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). Laravel is the only backend authority; the former embedded Express scaffold has been removed.
+
+## Browser inventory development
+
+Keep the Laravel backend and Expo frontend running in separate terminals. For an existing configured local database, start Laravel from the sibling `PorSca_POS_API` folder:
+
+```powershell
+php artisan serve --host=127.0.0.1 --port=8000
+```
+
+In `PorSca_POS/.env`, use:
+
+```env
+EXPO_PUBLIC_APP_ENV=development
+EXPO_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1
+```
+
+Then start the frontend from `PorSca_POS`:
+
+```powershell
+npm.cmd ci
+npm.cmd run web -- --localhost --port 8081
+```
+
+Open `http://localhost:8081` and sign in with a local API account. Allow the browser camera when Inventory requests it. Use localhost for development camera access; remote HTTP origins cannot use `getUserMedia` ([browser requirements](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia#privacy_and_security)). Browser sessions keep tokens in memory, so reload requires signing in again. Do not reset or reseed an existing database to run this flow.
+
+Inventory owns its camera overlay and product modal. Admins can scan, add, or edit products; cashiers can scan to inspect stock. Barcode fields start locked and require Edit before entry. Custom category names persist through the existing Laravel product endpoints. Editing sends only changed fields, and stock entry means the resulting total quantity. If a product saves but inventory refresh fails, Retry inventory refresh performs reads only.
+
+Temporary browser camera controls are available in development builds. With the scanner open and focus outside a text field, button, or picker, press Space five times within three seconds. The floating panel selects a connected camera, mirrors horizontally, or flips vertically. Scanning pauses while the panel is open; close it or press Escape to resume. Refresh cameras after connecting a device, or Reset to restore the automatic camera and normal orientation. Settings last only until the scanner closes. No audio or photos are recorded.
 
 ## Offline demo catalog
 

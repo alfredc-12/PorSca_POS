@@ -13,7 +13,8 @@ export type { BarcodeLookupResult };
 
 export type ReadState = 'idle' | 'loading' | 'ready' | 'unavailable';
 
-export type ProductField = 'name' | 'barcode' | 'price' | 'stock';
+export type ProductField = 'name' | 'barcode' | 'price' | 'stock' | 'category';
+export type ProductUpdate = Pick<Product, 'id'> & Partial<Omit<Product, 'id'>>;
 
 export type ProductMutationResult = {
   ok: boolean;
@@ -58,7 +59,7 @@ type PosContextValue = {
   revalidateCart: () => Promise<CartRevalidation>;
   /** Apply a reconciled cart from the review sheet. */
   replaceCartLines: (lines: CartLine[]) => void;
-  updateProduct: (product: Product) => Promise<ProductMutationResult>;
+  updateProduct: (product: ProductUpdate) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
   completeCashSale: (cashReceived: number) => Promise<Sale | null>;
   apiConfigured: boolean;
@@ -710,7 +711,7 @@ export function PosProvider({
     }
   }, [client, refreshInventory, rememberProductEverywhere]);
 
-  const updateProduct = useCallback((updated: Product) => saveRemoteProduct(
+  const updateProduct = useCallback((updated: ProductUpdate) => saveRemoteProduct(
     () => client.updateProduct(updated.id, updated),
     'updated',
   ), [client, saveRemoteProduct]);
@@ -810,7 +811,7 @@ function productMutationFailure(error: unknown): ProductMutationResult {
 function extractFieldErrors(details: unknown): Partial<Record<ProductField, string>> {
   if (!details || typeof details !== 'object' || Array.isArray(details)) return {};
   const result: Partial<Record<ProductField, string>> = {};
-  for (const field of ['name', 'barcode', 'price', 'stock'] as ProductField[]) {
+  for (const field of ['name', 'barcode', 'price', 'stock', 'category'] as ProductField[]) {
     const value = (details as Record<string, unknown>)[field];
     if (Array.isArray(value) && typeof value[0] === 'string') result[field] = value[0];
     else if (typeof value === 'string') result[field] = value;
