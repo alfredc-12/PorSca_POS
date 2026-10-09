@@ -185,7 +185,7 @@ export default function CheckoutScreen() {
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [showQrPayment, startQrPhPayment]);
+  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt]);
 
   const checkQrPayment = useCallback(async () => {
     if (!qrPayment || qrBusyRef.current) return;
