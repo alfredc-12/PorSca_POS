@@ -6,8 +6,11 @@ import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } fr
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
-import { isDefinitiveQrRejection } from '@/src/domain/checkout';
-import { CartLine, PaymentStatus, Product, Sale } from '@/src/types';
+import { CheckoutStorage, DurableCheckout, checkoutPayment, checkoutSale } from '@/src/domain/durableCheckout';
+import { checkoutStorage } from '@/src/api/checkoutStorage';
+import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
+import { CheckoutMachine } from '@/src/domain/checkoutMachine';
+import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
 export type { BarcodeLookupResult };
@@ -62,7 +65,18 @@ type PosContextValue = {
   replaceCartLines: (lines: CartLine[]) => void;
   updateProduct: (product: ProductUpdate) => Promise<ProductMutationResult>;
   createProduct: (product: Omit<Product, 'id'>) => Promise<ProductMutationResult>;
-  completeCashSale: (cashReceived: number) => Promise<Sale | null>;
+  completeCashSale: (cashReceived: number | string) => Promise<Sale | null>;
+  authorityCheckout?: AuthorityCheckout;
+  checkoutMachine?: CheckoutMachine;
+  recoverableCheckouts: AuthorityCheckout[];
+  checkoutRecoveryError?: string;
+  canDiscardCorruptCheckout: boolean;
+  openPosCheckouts: () => Promise<void>;
+  discardCorruptCheckout: (reason: string) => Promise<string>;
+  recoverCheckout: (id?: string) => Promise<void>;
+  discoverCheckouts: () => Promise<AuthorityCheckout[]>;
+  revalidateCheckout: () => Promise<void>;
+  abandonCheckout: (reason: string) => Promise<void>;
   apiConfigured: boolean;
   searchProducts: (query: string) => Promise<void>;
   refreshProducts: () => Promise<boolean>;
@@ -85,11 +99,13 @@ export function PosProvider({
   children,
   client = apiClient,
   demoCatalogEnabled = isDemoCatalogEnabled(),
+  checkoutStore,
 }: {
   children: React.ReactNode;
   client?: ApiClient;
   /** Opt-in demo catalog. Off unless EXPO_PUBLIC_ALLOW_DEMO_CATALOG is exactly "1". */
   demoCatalogEnabled?: boolean;
+  checkoutStore?: CheckoutStorage;
 }) {
   const [products, setProducts] = useState<Product[]>(demoCatalogEnabled ? seedProducts : []);
   const [inventoryProducts, setInventoryProducts] = useState<Product[]>(demoCatalogEnabled ? seedProducts : []);
@@ -107,17 +123,11 @@ export function PosProvider({
   const requestId = useRef(0);
   /** The query whose request is currently in flight, so the same query is never read twice. */
   const inFlightQuery = useRef<string | undefined>(undefined);
-  const cashKeys = useRef(new Map<string, string>());
-  const cashRequests = useRef(new Map<string, Promise<Sale | null>>());
-  /**
-   * The last cash attempt whose outcome Laravel never acknowledged. It is bound
-   * to the exact payload that was sent so a repriced retry cannot replay it.
-   */
-  const uncertainCashRef = useRef<{ payloadSignature: string; idempotencyKey: string } | undefined>(undefined);
-  const qrKeys = useRef(new Map<string, string>());
-  const qrPayments = useRef(new Map<string, Payment>());
-  const qrRequests = useRef(new Map<string, Promise<Payment>>());
-  const qrSettlements = useRef(new Map<string, Promise<void>>());
+  const authority = useMemo(() => new DurableCheckout(client, checkoutStore ?? checkoutStorage(client.baseUrl ?? 'unconfigured')), [client, checkoutStore]);
+  const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
+  const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
+  const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
+  const [canDiscardCorruptCheckout, setCanDiscardCorruptCheckout] = useState(false);
   const productsRef = useRef(products);
   /**
    * The reducer is the single cart authority. The ref mirrors its state
@@ -126,6 +136,7 @@ export function PosProvider({
    * Every mutation goes through `commitCart`; nothing else calls `dispatchCart`.
    */
   const cartRef = useRef(cartState);
+  const cartRevision = useRef(0);
 
   useEffect(() => {
     productsRef.current = products;
@@ -133,6 +144,7 @@ export function PosProvider({
 
   const commitCart = useCallback((action: CartAction): CartReduction => {
     const reduction = reduceCart(cartRef.current, action);
+    if (reduction.state !== cartRef.current) cartRevision.current += 1;
     cartRef.current = reduction.state;
     dispatchCart(action);
     return reduction;
@@ -492,247 +504,161 @@ export function PosProvider({
       return false;
     }
   }, [client, demoCatalogEnabled]);
-  /**
-   * Resolve whether an earlier uncertain cash attempt actually became a sale.
-   * Laravel echoes the idempotency key on each sale. The client preserves the
-   * history pagination evidence: only a complete first page can prove absence.
-   */
-  const resolveCashAttempt = useCallback(async (idempotencyKey: string): Promise<'found' | 'not-found' | 'unknown'> => {
-    try {
-      return await client.resolveCashSaleAttempt(idempotencyKey);
-    } catch {
-      return 'unknown';
-    }
-  }, [client]);
-
-  const completeCashSale = useCallback(async (cashReceived: number) => {
-    // The cart is about to be handed over; an Undo from the POS screen must not
-    // be able to resurrect it after this point.
-    commitCart({ type: 'discard-undo' });
-
-    const lines = cartRef.current.lines;
-    if (lines.length === 0) return null;
-
-    // Known limitation: these in-memory attempt maps are lost when sign-out
-    // unmounts the provider, while a server-side QR attempt may stay payable.
-    if (unresolvedQrSignatures(qrPayments.current, qrKeys.current, qrRequests.current).length > 0) {
-      throw new ApiClientError(
-        'A QR Ph payment for this cart is still unresolved. Check the QR Ph payment status before recording cash.',
-        undefined,
-        'qr_payment_unresolved',
-      );
-    }
-
-    // Strict online: every sale is recorded by Laravel. There is deliberately no
-    // local-sale branch, not even for the demo catalog, so a demo catalog can
-    // never produce an unrecorded paid sale (defect F1).
-    if (!client.isConfigured) {
-      throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
-    }
-
-    const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
-    const payloadSignature = cashPayloadSignature(lines, cashCents);
-
-    const pending = cashRequests.current.get(payloadSignature);
-    if (pending) return pending;
-    if (cashRequests.current.size > 0) {
-      throw new ApiClientError(
-        'Another cash payment for this cart is still being recorded. Wait for it to finish before taking payment again.',
-        undefined,
-        'cash_attempt_unresolved',
-      );
-    }
-
-    const requestCart = lines;
-    const requestTotal = total;
-    const request = (async () => {
-      // A transport failure can leave an attempt committed but unacknowledged.
-      // That attempt is bound to its exact payload: a plain retry reuses its
-      // key, but a repriced or otherwise changed cart must first establish
-      // whether the earlier sale was recorded, so a retry can never return the
-      // old sale (defect F3).
-      const uncertain = uncertainCashRef.current;
-      if (uncertain && uncertain.payloadSignature !== payloadSignature) {
-        const resolution = await resolveCashAttempt(uncertain.idempotencyKey);
-        if (resolution !== 'not-found') {
-          throw new ApiClientError(
-            resolution === 'found'
-              ? 'An earlier cash attempt for this cart was already recorded on the shop server. Nothing new was sent; check Transactions before taking payment again.'
-              : 'An earlier cash attempt could not be confirmed. Check Transactions for a completed sale before taking payment again; nothing new was sent.',
-            undefined,
-            'cash_attempt_unresolved',
-          );
-        }
-        // Laravel confirmed the earlier attempt never became a sale, so the
-        // revised cart can be charged with a fresh key without duplicating it.
-        uncertainCashRef.current = undefined;
-      }
-
-      const idempotencyKey = cashKeys.current.get(payloadSignature) ?? createIdempotencyKey();
-      cashKeys.current.set(payloadSignature, idempotencyKey);
-      try {
-        const sale = await client.createSale({
-          idempotencyKey,
-          items: requestCart.map((line) => ({
-            productId: line.product.id,
-            quantity: line.quantity,
-            unitPrice: Math.round(line.product.price * 100),
-          })),
-          total: Math.round(requestTotal * 100),
-          paymentMethod: 'cash',
-          cashReceived: cashCents,
-        });
-
-        if (uncertainCashRef.current?.payloadSignature === payloadSignature) uncertainCashRef.current = undefined;
-        cashKeys.current.delete(payloadSignature);
-        setSales((current) => mergeSales(current, [sale]));
-        if (sameCart(cartRef.current.lines, requestCart)) commitCart({ type: 'reset' });
-
-        // The sale response is authoritative for the receipt. These reads make
-        // inventory and history authoritative too, even after a retry response.
-        await Promise.allSettled([refreshInventory(), refreshSales()]);
-        return sale;
-      } catch (error) {
-        // No HTTP answer, or a server error: Laravel may have committed the
-        // sale. Keep the key and bind the attempt to its payload so a later
-        // repriced cart cannot replay the old sale.
-        if (isUncertainCashFailure(error)) {
-          uncertainCashRef.current = { payloadSignature, idempotencyKey };
-        }
-        throw error;
-      }
-    })();
-    cashRequests.current.set(payloadSignature, request);
-    request.then(
-      () => cashRequests.current.delete(payloadSignature),
-      () => cashRequests.current.delete(payloadSignature),
-    );
-    return request;
-  }, [client, commitCart, refreshInventory, refreshSales, resolveCashAttempt, total]);
-
-  const startQrPhPayment = useCallback(async (forceNew = false) => {
-    commitCart({ type: 'discard-undo' });
-    const lines = cartRef.current.lines;
-    if (lines.length === 0) {
-      throw new ApiClientError('The cart is empty. Add a product before starting QR Ph payment.');
-    }
-    if (!client.isConfigured) {
-      throw new ApiClientError('The shop server is not configured. QR Ph payment needs it; no sale was recorded.');
-    }
-
-    // Cash and QR Ph are mutually exclusive in both directions. A cash attempt
-    // that is in flight or whose outcome Laravel never acknowledged may still
-    // become a sale, so no QR attempt may start next to it.
-    if (cashRequests.current.size > 0 || uncertainCashRef.current) {
-      throw new ApiClientError(
-        'A cash payment for this cart is still unresolved. Check the cash payment before starting QR Ph.',
-        undefined,
-        'cash_attempt_unresolved',
-      );
-    }
-
-    const signature = qrCartSignature(lines);
-    // Only one QR Ph attempt may be payable at a time. The basket that started
-    // a retained attempt can still retry or check it, but another basket must
-    // wait for that attempt to settle before it may create its own.
-    const unresolved = unresolvedQrSignatures(qrPayments.current, qrKeys.current, qrRequests.current);
-    const blocked = forceNew ? unresolved.length > 0 : unresolved.some((known) => known !== signature);
-    if (blocked) {
-      throw new ApiClientError(
-        'A QR Ph payment is still unresolved. Check its payment status before starting another payment.',
-        undefined,
-        'qr_payment_unresolved',
-      );
-    }
-    if (forceNew) {
-      qrKeys.current.delete(signature);
-      qrPayments.current.delete(signature);
-    } else {
-      const knownPayment = qrPayments.current.get(signature);
-      if (knownPayment) return knownPayment;
-      const existingRequest = qrRequests.current.get(signature);
-      if (existingRequest) return existingRequest;
-    }
-
-    const idempotencyKey = qrKeys.current.get(signature) ?? createIdempotencyKey('mobile-qr');
-    qrKeys.current.set(signature, idempotencyKey);
-    const requestCart = lines;
-    const request = client.createQrPhPayment({
-      idempotencyKey,
-      items: requestCart.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
-    });
-    qrRequests.current.set(signature, request);
-
-    try {
-      const payment = await request;
-      qrPayments.current.set(signature, payment);
-      return payment;
-    } catch (error) {
-      // A definitive refusal means Laravel created no attempt to collect
-      // money, so its key must not keep cash blocked for this basket. An
-      // unanswered or uncertain outcome keeps the key for a safe retry.
-      const apiError = error instanceof ApiClientError ? error : undefined;
-      if (apiError && isDefinitiveQrRejection(apiError) && qrKeys.current.get(signature) === idempotencyKey) {
-        qrKeys.current.delete(signature);
-      }
-      throw error;
-    } finally {
-      qrRequests.current.delete(signature);
-    }
+  const applyCheckout = useCallback(async (checkout: AuthorityCheckout, canReplace?: () => boolean) => {
+    // Recover the original basket, not whatever happens to be on the POS screen.
+    const lines = await Promise.all(checkout.items.map(async item => ({
+      product: { ...await client.getProduct(String(item.productId)).catch(() => ({ id: String(item.productId), name: item.name, barcode: '', price: item.unitPriceCentavos / 100, stock: 0 })), name: item.name, price: item.unitPriceCentavos / 100 },
+      quantity: item.quantity,
+    })));
+    if (canReplace && !canReplace()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    commitCart({ type: 'replace-lines', lines });
+    setAuthorityCheckout(checkout);
   }, [client, commitCart]);
 
-  const unresolvedQrPayment = useCallback(() => {
-    for (const payment of qrPayments.current.values()) {
-      if (!QR_TERMINAL_STATUSES.includes(payment.status)) return payment;
+  const recoverCheckoutInternal = useCallback(async (id?: string, automatic?: { revision: number; signature: string }) => authority.exclusive(async () => {
+    const cartUnchanged = () => automatic !== undefined && cartRevision.current === automatic.revision && cartSignature(cartRef.current.lines) === automatic.signature;
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    const checkout = await authority.recover(id);
+    if (!checkout) return;
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
+    if (checkout.state === 'abandoned') {
+      const restoredRevision = cartRevision.current;
+      await authority.retire();
+      setAuthorityCheckout(undefined);
+      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
+      return;
     }
-    return undefined;
-  }, []);
+    // A lost cash response may already have committed a receipt. Resolve that
+    // identity instead of stranding the device on a completed, untenderable cart.
+    if (checkout.state === 'completed' && checkout.sale?.method === 'cash' && !authority.machine?.reconciliationRequired) {
+      const restoredRevision = cartRevision.current;
+      const saleLines = cartRef.current.lines;
+      const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
+      if (!inventory || !history) throw new ApiClientError('Retry cash receipt inventory and history verification.');
+      setSales(current => mergeSales(current, [checkoutSale(checkout, saleLines)]));
+      await authority.retire();
+      setAuthorityCheckout(undefined);
+      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
+    }
+  }), [authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
+  const recoverCheckout = useCallback(async (id?: string) => {
+    await recoverCheckoutInternal(id);
+    setCanDiscardCorruptCheckout(false);
+    setCheckoutRecoveryError(undefined);
+  }, [recoverCheckoutInternal]);
 
-  const refreshQrPhPayment = useCallback(async (paymentId: string) => {
-    if (!client.isConfigured) {
-      throw new ApiClientError('The shop server is not configured. Payment verification is unavailable.');
+  const discoverCheckouts = useCallback(async () => {
+    const items: AuthorityCheckout[] = [];
+    for (let page = 1; ; page++) {
+      const result = await client.listCheckouts(page);
+      items.push(...result.items);
+      if (page >= result.pagination.last_page) return items;
     }
-    // The refresh endpoint asks the PayMongo sandbox for the latest verified
-    // outcome and settles it server-side. There is no cashier cancel action:
-    // leaving a pending attempt alone lets the reservation expire on its own.
-    const payment = await client.refreshPayment(paymentId);
-    rememberQrPayment(qrPayments.current, payment);
-    return payment;
   }, [client]);
 
-  const confirmQrPhPayment = useCallback(async (payment: Payment) => {
-    // Only settled money is verified. `paid` completes the sale and clears the
-    // cart; `paid_unfulfilled` refreshes authoritative state but keeps the cart
-    // because no sale was recorded and a new payment could double-charge.
-    if (payment.status !== 'paid' && payment.status !== 'paid_unfulfilled') return;
-    const existingSettlement = qrSettlements.current.get(payment.id);
-    if (existingSettlement) return existingSettlement;
+  const openPosCheckouts = useCallback(async () => {
+    if (!client.isConfigured) return;
+    setCheckoutRecoveryError(undefined);
+    setCanDiscardCorruptCheckout(false);
+    let emptyDiscovery = false;
+    let corruptLocalStorage = false;
+    const initialCart = cartSignature(cartRef.current.lines);
+    const initialRevision = cartRevision.current;
+    const automatic = { revision: initialRevision, signature: initialCart };
+    const cartUnchanged = () => cartRevision.current === initialRevision && cartSignature(cartRef.current.lines) === initialCart;
+    try {
+      const discovered = await discoverCheckouts();
+      const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
+      emptyDiscovery = live.length === 0;
+      setRecoverableCheckouts(live);
+      if (emptyDiscovery) {
+        corruptLocalStorage = await authority.hasCorruptStorage();
+        setCanDiscardCorruptCheckout(corruptLocalStorage);
+      }
+      if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+      await recoverCheckoutInternal(undefined, automatic);
+    } catch {
+      setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
+      setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
+    }
+  }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
-    const settlement = Promise.all([refreshInventory(), refreshSales()]).then(([inventoryRefreshed, salesRefreshed]) => {
-      if (!inventoryRefreshed || !salesRefreshed) {
-        throw new ApiClientError('The shop server confirmed the QR payment, but inventory or history verification is unavailable. Retry verification.');
-      }
-      // A `paid_unfulfilled` payment took money without recording a sale, so
-      // the cart is kept for operator reconciliation.
-      if (payment.status !== 'paid') return;
-      const completedSignature = [...qrPayments.current.entries()].find(([, known]) => known.id === payment.id)?.[0];
-      if (!completedSignature) return;
-      // This attempt fulfilled its sale. Retire its basket identity only after
-      // verification succeeds, so the next identical basket is a new payment,
-      // while pending, uncertain and paid-unfulfilled retries keep their key.
-      qrPayments.current.delete(completedSignature);
-      qrKeys.current.delete(completedSignature);
-      if (qrCartSignature(cartRef.current.lines) === completedSignature) {
-        commitCart({ type: 'reset' });
-      }
+  const discardCorruptCheckout = useCallback(async (reason: string) => {
+    if (!canDiscardCorruptCheckout) throw new ApiClientError('Complete empty server discovery before discarding the unreadable checkout identity.', 409, 'checkout_recovery_required');
+    return authority.exclusive(async () => {
+      const attributedReason = await authority.discardCorruptIdentity(reason);
+      setAuthorityCheckout(undefined);
+      setRecoverableCheckouts([]);
+      setCheckoutRecoveryError(undefined);
+      setCanDiscardCorruptCheckout(false);
+      return attributedReason;
     });
-    qrSettlements.current.set(payment.id, settlement);
-    settlement.then(
-      () => qrSettlements.current.delete(payment.id),
-      () => qrSettlements.current.delete(payment.id),
-    );
-    return settlement;
-  }, [commitCart, refreshInventory, refreshSales]);
+  }, [authority, canDiscardCorruptCheckout]);
+
+  const revalidateCheckout = useCallback(async () => authority.exclusive(async () => {
+    await applyCheckout(await authority.revalidate());
+  }), [authority, applyCheckout]);
+
+  const abandonCheckout = useCallback(async (reason: string) => authority.exclusive(async () => {
+    await authority.abandon(reason);
+    setAuthorityCheckout(undefined);
+    commitCart({ type: 'reset' });
+  }), [authority, commitCart]);
+
+  const completeCashSale = useCallback(async (cashReceived: number | string) => authority.exclusive(async () => {
+    commitCart({ type: 'discard-undo' });
+    if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
+    const lines = cartRef.current.lines;
+    if (!lines.length) return null;
+    let checkout: AuthorityCheckout;
+    try { checkout = await authority.tender(lines, 'cash', typeof cashReceived === 'string' ? cashReceived : cashReceived.toFixed(2)); }
+    finally { setAuthorityCheckout(authority.current); }
+    const sale = checkoutSale(checkout, lines);
+    setSales(current => mergeSales(current, [sale]));
+    await authority.retire();
+    setAuthorityCheckout(undefined);
+    if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
+    await Promise.allSettled([refreshInventory(), refreshSales()]);
+    return sale;
+  }), [authority, client, commitCart, refreshInventory, refreshSales]);
+
+  const startQrPhPayment = useCallback(async (forceNew = false) => authority.exclusive(async () => {
+    commitCart({ type: 'discard-undo' });
+    if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
+    if (!cartRef.current.lines.length) throw new ApiClientError('The cart is empty.');
+    try { return checkoutPayment(await authority.tender(cartRef.current.lines, 'qrph', undefined, forceNew)); }
+    finally { setAuthorityCheckout(authority.current); }
+  }), [authority, client, commitCart]);
+
+  const unresolvedQrPayment = useCallback(() => authority.retainedPayment(), [authority]);
+
+  const refreshQrPhPayment = useCallback(async (id: string) => authority.exclusive(async () => {
+    try {
+      const checkout = await authority.refresh(id);
+      setAuthorityCheckout(checkout);
+      return checkoutPayment(checkout);
+    } catch (error) { setAuthorityCheckout(authority.current); throw error; }
+  }), [authority]);
+
+  const confirmQrPhPayment = useCallback(async (payment: Payment) => authority.exclusive(async () => {
+    const checkout = await authority.recover();
+    if (!checkout) throw new ApiClientError('Recover the checkout first.');
+    setAuthorityCheckout(checkout);
+    // Caller/UI status is not authority. Contradictions and unfulfilled money stay locked.
+    if (checkout.state === 'paid_unfulfilled') {
+      const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
+      if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
+      return;
+    }
+    if (checkout.state !== 'completed' || !checkout.sale || checkoutPayment(checkout).id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
+    const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
+    if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
+    const matches = JSON.stringify(checkout.items.map(i => [String(i.productId), i.quantity]).sort()) === JSON.stringify(cartRef.current.lines.map(l => [l.product.id, l.quantity]).sort());
+    await authority.retire();
+    setAuthorityCheckout(undefined);
+    if (matches) commitCart({ type: 'reset' });
+  }), [authority, commitCart, refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
@@ -813,6 +739,17 @@ export function PosProvider({
         updateProduct,
         createProduct,
         completeCashSale,
+        authorityCheckout,
+        checkoutMachine: authority.machine,
+        recoverableCheckouts,
+        checkoutRecoveryError,
+        canDiscardCorruptCheckout,
+        openPosCheckouts,
+        discardCorruptCheckout,
+        recoverCheckout,
+        discoverCheckouts,
+        revalidateCheckout,
+        abandonCheckout,
         apiConfigured: client.isConfigured,
         searchProducts,
         refreshProducts,
@@ -889,78 +826,6 @@ function mergeSales(current: Sale[], incoming: Sale[]) {
   const merged = new Map(current.map((sale) => [sale.id, sale]));
   incoming.forEach((sale) => merged.set(sale.id, { ...merged.get(sale.id), ...sale }));
   return [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-}
-
-function sameCart(current: CartLine[], expected: CartLine[]) {
-  return current.length === expected.length && current.every((line, index) =>
-    line.product.id === expected[index]?.product.id && line.quantity === expected[index]?.quantity,
-  );
-}
-
-function qrCartSignature(cart: CartLine[]) {
-  return cart
-    .map((line) => `${line.product.id}:${line.quantity}`)
-    .sort()
-    .join('|');
-}
-
-/** Provider answers that settle a QR Ph attempt: it can no longer collect money. */
-const QR_TERMINAL_STATUSES: PaymentStatus[] = ['failed', 'cancelled', 'expired'];
-
-/**
- * Signatures whose QR Ph attempt the provider may still collect money for: a
- * retained payment without a terminal status, a creation that never answered,
- * or a creation still in flight. Editing or replacing the cart never settles
- * the attempt a basket started, so every one of them must be waited out before
- * cash or a different basket's payment.
- */
-function unresolvedQrSignatures(
-  payments: Map<string, Payment>,
-  keys: Map<string, string>,
-  requests: Map<string, Promise<Payment>>,
-) {
-  const signatures = new Set<string>();
-  for (const [signature, payment] of payments) {
-    if (!QR_TERMINAL_STATUSES.includes(payment.status)) signatures.add(signature);
-  }
-  for (const signature of keys.keys()) {
-    if (!payments.has(signature)) signatures.add(signature);
-  }
-  for (const signature of requests.keys()) signatures.add(signature);
-  return [...signatures];
-}
-
-function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {
-  for (const [signature, known] of payments) {
-    if (known.id === payment.id) payments.set(signature, payment);
-  }
-}
-
-/**
- * Identity of the exact cash payload the mobile app sent. Unlike the API's
- * canonical request (items and cash only), this includes the per-line price, so
- * a repriced cart is a different attempt and cannot silently reuse an earlier
- * uncertain attempt's idempotency key (defect F3).
- */
-function cashPayloadSignature(lines: CartLine[], cashCents: number) {
-  const items = lines
-    .map((line) => `${line.product.id}:${line.quantity}:${Math.round(line.product.price * 100)}`)
-    .join('|');
-  return `${items}|cash:${cashCents}`;
-}
-
-/**
- * True when a cash attempt failed without a definite answer, so Laravel may
- * still have committed the sale: a transport failure (no HTTP status) or a
- * server-side error.
- */
-function isUncertainCashFailure(error: unknown) {
-  if (!(error instanceof ApiClientError)) return true;
-  return error.status === undefined || error.status >= 500;
-}
-
-function createIdempotencyKey(prefix: 'mobile-cash' | 'mobile-qr' = 'mobile-cash') {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function usePos() {

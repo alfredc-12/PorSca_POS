@@ -6,6 +6,7 @@ import { ApiClient, ApiClientError } from '@/src/api/client';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Product } from '@/src/types';
+import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 jest.mock('expo-router', () => ({
   __esModule: true,
@@ -77,6 +78,28 @@ describe('POS cart consistency', () => {
   beforeEach(() => {
     jest.useRealTimers();
     router.push.mockReset();
+  });
+
+  it('requires an attributed reason and confirmation to discard a corrupt identity after empty discovery', async () => {
+    const store: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('legacy basket [[null,1]]')),
+      save: jest.fn(async (_handle: CheckoutHandle | null) => undefined),
+    };
+    const recoveryClient = {
+      isConfigured: true,
+      baseUrl: 'https://shop.test/api/v1',
+      listCheckouts: jest.fn().mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }),
+    } as unknown as ApiClient;
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={store}><PosScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('review-corrupt-checkout-discard')).toBeTruthy());
+    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
+    expect(view.queryByTestId('confirm-corrupt-checkout-discard')).toBeNull();
+    fireEvent.changeText(view.getByTestId('corrupt-checkout-discard-reason'), 'Operator approved discard');
+    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
+    fireEvent.press(view.getByTestId('confirm-corrupt-checkout-discard'));
+    await waitFor(() => expect(store.save).toHaveBeenCalledWith(null));
+    expect(view.getByText(/Reason: Operator approved discard/)).toBeTruthy();
+    expect(view.getByText(/Payment was not confirmed/)).toBeTruthy();
   });
 
   it('surfaces the stock limit on the cart "+" instead of a silent no-op', async () => {

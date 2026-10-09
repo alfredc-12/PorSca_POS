@@ -81,7 +81,7 @@ Keep the record with:
 
 - cycle ID and owner;
 - exact mobile commit SHA and exact Laravel API commit SHA;
-- `porsca-mobile-api-v2` contract version;
+- `porsca-mobile-api-v3` contract version;
 - environment/profile and staging API origin;
 - migration and seed/data version;
 - PayMongo sandbox account/context, webhook endpoint reachability, and provider test mode;

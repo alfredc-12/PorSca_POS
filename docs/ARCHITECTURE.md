@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v2`.
+Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v3`.
 
 The mobile bundle never contains PayMongo secrets. QR creation, payment status checks, webhook verification, sale persistence, idempotency, and final inventory deduction belong to Laravel. The former embedded Express scaffold is retired.
 
@@ -37,15 +37,15 @@ src/
   types/
 ```
 
-The separate checkout model lives in `src/domain/checkoutMachine.ts` and
-`src/domain/checkoutMoney.ts`. It keeps checkout, payment-attempt, reservation,
-and reconciliation-lock state distinct; preserves the first verified outcome;
-and treats verification failures as unknown rather than final. Timer and
-reservation events cannot establish payment finality. This is a pure domain
-module with no API, persistence, clock, sale, or inventory side effects, and it
-is not yet wired into the runtime checkout flow. Money uses integer centavos
-with strict cash parsing and pure formatting; the QR minimum is explicitly
-staging-provisional.
+Runtime checkout is coordinated by `DurableCheckout` in
+`src/domain/durableCheckout.ts`; `PosProvider` sends creation, tender, recovery,
+and verification operations through the shared API client. Laravel authority
+responses feed `checkoutMachine.ts` through `checkoutAuthorityAdapter.ts`. The
+machine owns pure UI tender-lock transitions and cash grammar, not network,
+persistence, sales, or inventory effects. Money uses integer centavos with
+strict cash parsing and pure formatting; the QR minimum is explicitly
+staging-provisional. See [API-CONTRACT.md](API-CONTRACT.md#durable-checkout-lifecycle-v3)
+for the authoritative lifecycle and recovery rules.
 
 `AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form and Users screen also require admin. Admin navigation exposes Users while cashier navigation does not. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Users actions stay inside the single API client; cashier permissions remain fixed by role, and cashiers read all sales without per-cashier scoping.
 

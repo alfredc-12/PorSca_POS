@@ -67,16 +67,17 @@ function expectNoRawText(view: ReturnType<typeof render>) {
 const product = { id: '1', barcode: '4800000000041', name: 'Mineral Water 1L', price: 35, stock: 10, category: 'Beverages' as const };
 
 function CheckoutWithSeededCart({ client }: { client: ApiClient }) {
-  const { products, cart, addProductChecked } = usePos();
+  const { cart, addProductChecked } = usePos();
   return (
     <>
-      <Pressable testID="seed-cart" onPress={() => addProductChecked(products[0])}><Text>seed</Text></Pressable>
+      <Pressable testID="seed-cart" onPress={() => addProductChecked(product)}><Text>seed</Text></Pressable>
       {cart.length > 0 ? <CheckoutScreen /> : null}
     </>
   );
 }
 
-const pendingQr = { id: 'pay-1', status: 'pending' as const, amount: 3500, qrPayload: 'data:image/png;base64,fixture' };
+const checkout = { id: 'server-uuid', state: 'open', revision: 1, amountCentavos: 3500, items: [{ productId: 1, name: product.name, quantity: 1, unitPriceCentavos: 3500 }], attempts: [], sale: null, exceptions: [] };
+const pendingQr = { ...checkout, state: 'payment_unresolved', attempts: [{ id: 7, method: 'qrph', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, amountCentavos: 3500, qrPayload: 'data:image/png;base64,fixture' }] };
 
 function checkoutClient(overrides: Record<string, jest.Mock>) {
   return {
@@ -84,14 +85,16 @@ function checkoutClient(overrides: Record<string, jest.Mock>) {
     listProducts: jest.fn().mockResolvedValue([product]),
     listInventory: jest.fn().mockResolvedValue([]),
     listSales: jest.fn().mockResolvedValue([]),
-    createSale: jest.fn().mockRejectedValue(new ApiClientError(
+    createCheckout: jest.fn().mockResolvedValue(checkout),
+    getCheckout: jest.fn().mockResolvedValue(checkout),
+    checkoutCash: jest.fn().mockRejectedValue(new ApiClientError(
       'The sale was not confirmed.',
       500,
       'server_error',
       { exception: 'Illuminate\\Database\\QueryException', message: 'SQLSTATE[23000]: Integrity constraint violation' },
     )),
-    createQrPhPayment: jest.fn().mockResolvedValue(pendingQr),
-    refreshPayment: jest.fn(),
+    createCheckoutAttempt: jest.fn().mockResolvedValue(pendingQr),
+    refreshCheckoutAttempt: jest.fn(),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -141,7 +144,7 @@ describe('no raw error text reaches the screen', () => {
   });
 
   it('QR Ph verification: the transport error never renders', async () => {
-    const client = checkoutClient({ refreshPayment: jest.fn().mockRejectedValue(new ApiClientError("Unable to reach PorSca API: Failed to execute 'fetch' on 'Window': Illegal invocation")) });
+    const client = checkoutClient({ refreshCheckoutAttempt: jest.fn().mockRejectedValue(new ApiClientError("Unable to reach PorSca API: Failed to execute 'fetch' on 'Window': Illegal invocation")) });
     const view = await openSeededCheckout(client, true);
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
@@ -150,8 +153,8 @@ describe('no raw error text reaches the screen', () => {
   });
 
   it('QR Ph decline: the provider decline code and transaction reference never render', async () => {
-    const declined = { ...pendingQr, status: 'failed' as const, failureReason: 'card_declined: PAYMONGO_ERR_INSUFFICIENT_FUNDS (txn_1QxLmZ2eZvKYlo2C / 402)' };
-    const client = checkoutClient({ createQrPhPayment: jest.fn().mockResolvedValue(declined) });
+    const declined = { ...pendingQr, state: 'ready_for_attempt', attempts: [{ ...pendingQr.attempts[0], status: 'non_payable', financialStatus: 'failed', firstVerifiedOutcome: 'non_payable' }], failureReason: 'card_declined: PAYMONGO_ERR_INSUFFICIENT_FUNDS (txn_1QxLmZ2eZvKYlo2C / 402)' };
+    const client = checkoutClient({ createCheckoutAttempt: jest.fn().mockResolvedValue(declined) });
     const view = await openSeededCheckout(client, true);
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     await waitFor(() => expect(view.getByTestId('qr-payment-status')).toBeTruthy());

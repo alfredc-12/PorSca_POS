@@ -142,7 +142,7 @@ describe('ApiClient', () => {
     }]);
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://staging-api.example.test/api/v1/products?search=coffee&per_page=100',
-      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v2' }) }),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-PorSca-Contract-Version': 'porsca-mobile-api-v3' }) }),
     );
   });
 

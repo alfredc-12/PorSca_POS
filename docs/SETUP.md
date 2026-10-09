@@ -103,7 +103,7 @@ Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a phys
 
 ## QR Ph local and staging flow
 
-The checkout screen creates QR Ph payments only through Laravel. Laravel returns the transaction-specific QR payload and the mobile app polls the documented payment status endpoint. Pending, failed, cancelled, expired, and verification-uncertain states keep the cart and stock unchanged; only a Laravel-confirmed paid response triggers the inventory/history refresh.
+The checkout screen creates QR Ph attempts only through Laravel. Laravel returns the transaction-specific QR payload; while the attempt is pending, the app periodically asks Laravel to refresh its provider verification through the checkout-attempt endpoint. Pending, failed, cancelled, expired, and verification-uncertain states keep the cart and stock unchanged. A Laravel-confirmed paid result triggers authoritative inventory/history verification; if payment is `paid_unfulfilled`, the cart remains and operator reconciliation is required rather than reporting a completed sale.
 
 A local API without provider credentials can create a synthetic pending payment. Do not add provider credentials to this repository or to any `EXPO_PUBLIC_*` variable. Paid sandbox results and webhook verification belong in the isolated Laravel checkout or the approved staging environment.
 

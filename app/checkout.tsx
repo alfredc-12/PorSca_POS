@@ -8,7 +8,9 @@ import { FailureNotice } from '@/src/components/FailureNotice';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
-import { cashChange, paymentError } from '@/src/domain/pos';
+import { paymentError } from '@/src/domain/pos';
+import { cashTenderPresets } from '@/src/domain/checkoutMoney';
+import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
 import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
 import { describeAndRecordFailure } from '@/src/observability/diagnostics';
@@ -29,11 +31,16 @@ export default function CheckoutScreen() {
     refreshQrPhPayment,
     confirmQrPhPayment,
     unresolvedQrPayment,
+    authorityCheckout,
+    checkoutMachine,
+    recoverCheckout,
+    revalidateCheckout,
+    abandonCheckout,
   } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
-  const [qrStatus, setQrStatus] = useState<QrViewStatus>('idle');
-  const [qrPayment, setQrPayment] = useState<Payment>();
+  const [qrStatus, setQrStatus] = useState<QrViewStatus>(() => unresolvedQrPayment()?.status ?? 'idle');
+  const [qrPayment, setQrPayment] = useState<Payment | undefined>(() => unresolvedQrPayment());
   const [qrError, setQrError] = useState<DescribedFailure>();
   const [qrFailure, setQrFailure] = useState<DescribedFailure>();
   const [cashError, setCashError] = useState<DescribedFailure>();
@@ -43,15 +50,29 @@ export default function CheckoutScreen() {
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
+  const initialRetainedPayment = useRef(unresolvedQrPayment());
 
-  const received = Number(cash) || 0;
-  const cashResult = useMemo(() => cashChange(total, received), [received, total]);
+  const cashResult = useMemo(() => checkoutCashTender(cash, Math.round(total * 100)), [cash, total]);
+  const [abandonReason, setAbandonReason] = useState('');
+  const [recoveryError, setRecoveryError] = useState<string>();
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const recoveryAction = async (action: () => Promise<void>) => {
+    setRecoveryBusy(true);
+    setRecoveryError(undefined);
+    try {
+      await action();
+      const retained = unresolvedQrPayment();
+      if (retained) await showQrPayment(retained);
+      else { setQrPayment(undefined); setQrStatus('idle'); }
+    } catch { setRecoveryError('Recovery could not be completed. The purchase is retained; retry before taking payment.'); }
+    finally { setRecoveryBusy(false); }
+  };
+
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
-  // end: show that attempt with its status check so it can be settled. Known
-  // limitation: a creation that never answered retains only its key, so it has
-  // no payment ID to check and cannot be recovered after a cart edit.
+  // end: show the stored authority attempt with its status check. Ambiguous
+  // creation is recoverable by durable checkout id, even without a payment id.
   const surfaceRetainedQrAttempt = useCallback((error: unknown) => {
     const apiError = error instanceof ApiClientError ? error : undefined;
     if (apiError?.code !== 'qr_payment_unresolved') return false;
@@ -68,7 +89,7 @@ export default function CheckoutScreen() {
     // Switching tabs does not cancel a QR attempt. Creation and verification
     // errors are unresolved too: the provider may still collect payment.
     // Only a server-confirmed unpaid terminal state permits another tender.
-    if (qrBusyRef.current || (qrStatus !== 'idle' && qrStatus !== 'failed' && qrStatus !== 'cancelled' && qrStatus !== 'expired')) {
+    if (qrBusyRef.current || !canAcceptCheckoutTender(checkoutMachine)) {
       const failure = localFailure('QR payment is unresolved', 'Cash cannot be recorded while the QR payment is unresolved. Return to QR Ph and check its status before accepting another payment.');
       setCashError(failure);
       Alert.alert(failure.title, failure.body);
@@ -82,8 +103,8 @@ export default function CheckoutScreen() {
       Alert.alert(failure.title, failure.body);
       return;
     }
-    if (!cashResult.sufficient) {
-      const failure = localFailure('Not enough cash', `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`, { action: 'retry', actionLabel: 'Confirm again' });
+    if (cashResult.kind !== 'sufficient') {
+      const failure = localFailure('Check cash tender', `Enter an amount using digits and at most two decimal places, at least ₱${total.toFixed(2)}.`, { action: 'retry', actionLabel: 'Confirm again' });
       setCashError(failure);
       Alert.alert(failure.title, failure.body);
       return;
@@ -94,7 +115,7 @@ export default function CheckoutScreen() {
     cashBusyRef.current = true;
     setCashSubmitting(true);
     try {
-      const sale = await completeCashSale(received);
+      const sale = await completeCashSale(cash);
       if (!sale) {
         const failure = localFailure('The sale was not saved', 'The cart is empty. Return to the POS and add a product before trying again.', { action: 'retry', actionLabel: 'Try again' });
         setCashError(failure);
@@ -165,6 +186,12 @@ export default function CheckoutScreen() {
     }
   }, [confirmQrPhPayment]);
 
+  useEffect(() => {
+    const retained = initialRetainedPayment.current;
+    initialRetainedPayment.current = undefined;
+    if (retained?.status === 'paid' || retained?.status === 'paid_unfulfilled') void showQrPayment(retained);
+  }, [showQrPayment]);
+
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (qrBusyRef.current || cashBusyRef.current) return;
     qrBusyRef.current = true;
@@ -203,10 +230,7 @@ export default function CheckoutScreen() {
     }
   }, [qrPayment, refreshQrPhPayment, showQrPayment]);
 
-  // Laravel exposes no cashier cancel action: leaving the QR screen does not
-  // cancel the payment attempt. The pending payment stays payable until the
-  // provider settles it or the server-side reservation expires, so the cart
-  // is kept and the cashier returns to the POS.
+  // Leaving never cancels an attempt. Hold expiry does not establish financial finality.
   const leaveQrPayment = useCallback(() => {
     router.back();
   }, []);
@@ -226,6 +250,8 @@ export default function CheckoutScreen() {
           <View style={styles.emptyIcon}><Ionicons name="cart-outline" size={36} color={colors.primary} /></View>
           <Text style={styles.emptyTitle}>The cart is empty</Text>
           <Text style={styles.emptyBody}>Return to the POS and add a product before starting payment.</Text>
+          <AppButton label="Recover device purchase" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={recoveryBusy} />
+          {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           <AppButton testID="return-to-pos" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
       </Screen>
@@ -266,6 +292,14 @@ export default function CheckoutScreen() {
         </View>
 
         <View style={styles.orderCard}>
+          <AppButton label="Recover device purchase" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={recoveryBusy} variant="secondary" />
+          {authorityCheckout ? <>
+            <Text>Checkout {authorityCheckout.id} • {authorityCheckout.state} • quote {authorityCheckout.revision}</Text>
+            <AppButton label="Review current server quote" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={recoveryBusy} variant="secondary" />
+            <TextInput accessibilityLabel="Abandonment reason" placeholder="Reason for abandoning purchase" value={abandonReason} onChangeText={setAbandonReason} />
+            <AppButton label="Abandon purchase" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={recoveryBusy || abandonReason.trim().length < 8} variant="secondary" />
+          </> : null}
+          {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           <Text style={styles.sectionTitle}>Order summary</Text>
           {cart.map((line, index) => (
             <View key={line.product.id} style={[styles.orderLine, index > 0 && styles.orderBorder]}>
@@ -313,16 +347,19 @@ export default function CheckoutScreen() {
                   accessibilityLabel="Cash received"
                 />
               </View>
+              <View style={styles.segmentRow}>
+                {cashTenderPresets(Math.round(total * 100)).map(preset => <Pressable key={preset.label} accessibilityRole="button" accessibilityLabel={`Cash ${preset.label}`} onPress={() => setCash(preset.input)}><Text>{preset.label}</Text></Pressable>)}
+              </View>
               <View style={styles.changeBox}>
                 <Text style={styles.changeLabel}>Change to customer</Text>
-                <Text style={styles.changeValue}>₱{cashResult.change.toFixed(2)}</Text>
+                <Text style={styles.changeValue}>{cashResult.kind === 'sufficient' ? `₱${(cashResult.changeCentavos / 100).toFixed(2)}` : '—'}</Text>
               </View>
               {cashError ? <FailureNotice testID="checkout-cash-error" failure={cashError} /> : null}
               <AppButton
                 testID="confirm-cash-payment"
                 label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
                 onPress={finishCash}
-                disabled={cashSubmitting}
+                disabled={cashSubmitting || recoveryBusy}
                 style={styles.fullButton}
               />
             </View>
@@ -333,8 +370,8 @@ export default function CheckoutScreen() {
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
               )}
-              <Text style={styles.qrTitle}>QR Ph payment</Text>
-              <Text style={styles.qrBody}>The shop server creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending payment stays payable until the provider settles it or the reservation expires.</Text>
+              <Text style={styles.qrTitle}>QR Ph practice payment (sandbox)</Text>
+              <Text style={styles.qrBody}>The shop server creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending or unknown payment remains unresolved even after the stock reservation expires.</Text>
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
                   {qrStatusText(qrStatus)}
@@ -354,7 +391,7 @@ export default function CheckoutScreen() {
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
-              {qrStatus === 'verification' && qrPayment ? (
+              {(qrStatus === 'verification' || qrStatus === 'unknown') && qrPayment ? (
                 <View style={styles.qrActions}>
                   <AppButton testID="retry-qr-verification" label="Retry Payment Verification" onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
@@ -405,6 +442,7 @@ function qrStatusText(status: QrViewStatus) {
     case 'creating': return 'Creating a QR Ph payment…';
     case 'pending': return 'Payment pending…';
     case 'paid': return 'Payment confirmed by the shop server. Inventory and history refreshed.';
+    case 'unknown': return 'Payment outcome is unknown. Retry server verification; cash remains blocked.';
     case 'paid_unfulfilled': return 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.';
     case 'failed':
     case 'cancelled':
