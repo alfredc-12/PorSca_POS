@@ -168,7 +168,7 @@ export default function LoginScreen() {
               ) : null}
             </View>
 
-            <Text style={styles.hint}>Need an account or a password reset? Ask your shop administrator. Staff accounts are managed through the API, not on this phone.</Text>
+            <Text style={styles.hint}>Contact your store administrator for account access.</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
