@@ -513,7 +513,7 @@ export function PosProvider({
 
     // Known limitation: these in-memory attempt maps are lost when sign-out
     // unmounts the provider, while a server-side QR attempt may stay payable.
-    if (hasUnresolvedQrAttempt(qrPayments.current, qrKeys.current)) {
+    if (unresolvedQrSignatures(qrPayments.current, qrKeys.current, qrRequests.current).length > 0) {
       throw new ApiClientError(
         'A QR Ph payment for this cart is still unresolved. Check the QR Ph payment status before recording cash.',
         undefined,
@@ -630,6 +630,18 @@ export function PosProvider({
     }
 
     const signature = qrCartSignature(lines);
+    // Only one QR Ph attempt may be payable at a time. The basket that started
+    // a retained attempt can still retry or check it, but another basket must
+    // wait for that attempt to settle before it may create its own.
+    const unresolved = unresolvedQrSignatures(qrPayments.current, qrKeys.current, qrRequests.current);
+    const blocked = forceNew ? unresolved.length > 0 : unresolved.some((known) => known !== signature);
+    if (blocked) {
+      throw new ApiClientError(
+        'A QR Ph payment is still unresolved. Check its payment status before starting another payment.',
+        undefined,
+        'qr_payment_unresolved',
+      );
+    }
     if (forceNew) {
       qrKeys.current.delete(signature);
       qrPayments.current.delete(signature);
@@ -886,19 +898,26 @@ function qrCartSignature(cart: CartLine[]) {
 const QR_TERMINAL_STATUSES: PaymentStatus[] = ['failed', 'cancelled', 'expired'];
 
 /**
- * True while any QR Ph attempt the provider is holding may still collect
- * money: a retained payment without a terminal status, or a creation request
- * that never answered. Cash must wait for all of them, because editing or
- * replacing the cart never settles the provider attempt it started.
+ * Signatures whose QR Ph attempt the provider may still collect money for: a
+ * retained payment without a terminal status, a creation that never answered,
+ * or a creation still in flight. Editing or replacing the cart never settles
+ * the attempt a basket started, so every one of them must be waited out before
+ * cash or a different basket's payment.
  */
-function hasUnresolvedQrAttempt(payments: Map<string, Payment>, keys: Map<string, string>) {
-  for (const payment of payments.values()) {
-    if (!QR_TERMINAL_STATUSES.includes(payment.status)) return true;
+function unresolvedQrSignatures(
+  payments: Map<string, Payment>,
+  keys: Map<string, string>,
+  requests: Map<string, Promise<Payment>>,
+) {
+  const signatures = new Set<string>();
+  for (const [signature, payment] of payments) {
+    if (!QR_TERMINAL_STATUSES.includes(payment.status)) signatures.add(signature);
   }
   for (const signature of keys.keys()) {
-    if (!payments.has(signature)) return true;
+    if (!payments.has(signature)) signatures.add(signature);
   }
-  return false;
+  for (const signature of requests.keys()) signatures.add(signature);
+  return [...signatures];
 }
 
 function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {

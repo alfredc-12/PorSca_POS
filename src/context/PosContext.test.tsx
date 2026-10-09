@@ -687,6 +687,110 @@ describe('PosProvider Laravel QR Ph checkout', () => {
 
     expect(createSale).toHaveBeenCalledTimes(1);
   });
+
+  it('refuses a QR Ph payment for an edited cart while an earlier payment is still pending', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => {
+      await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a QR Ph payment for an edited cart while a paid-unfulfilled attempt waits', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'paid_unfulfilled' as const });
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => {
+      await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a QR Ph payment for an edited cart while an earlier creation never answered', async () => {
+    const createQrPhPayment = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
+      .mockResolvedValueOnce(pendingPayment);
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow(); });
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => {
+      await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to replace an unresolved QR Ph attempt for the same basket', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    await act(async () => {
+      await expect(result.current.startQrPhPayment(true)).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a QR Ph payment for an edited cart once the earlier attempt reached a terminal status', async () => {
+    const secondPayment = { ...pendingPayment, id: 'payment-2' };
+    const createQrPhPayment = jest.fn()
+      .mockResolvedValueOnce({ ...pendingPayment, status: 'failed' as const })
+      .mockResolvedValueOnce(secondPayment);
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { expect(await result.current.startQrPhPayment()).toEqual(secondPayment); });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows a QR Ph payment for an edited cart after Laravel definitively rejected the earlier one', async () => {
+    const secondPayment = { ...pendingPayment, id: 'payment-2' };
+    const createQrPhPayment = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('The cart has no valid items.', 422, 'validation_error'))
+      .mockResolvedValueOnce(secondPayment);
+    const client = makeQrStageClient({ createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow(); });
+
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { expect(await result.current.startQrPhPayment()).toEqual(secondPayment); });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(2);
+  });
 });
 
 it('refuses a changed cash retry when its lost receipt may be beyond the first history page', async () => {

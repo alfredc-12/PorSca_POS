@@ -134,6 +134,26 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
   });
 
+  it('starts no second QR Ph payment after the cart changed while the first is pending', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = shopClient({ createQrPhPayment });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    await startPendingQrPayment(view);
+
+    // The edited basket is a different signature, but the provider still holds
+    // the payable attempt the first basket started.
+    fireEvent.press(view.getByTestId('shop-leave-checkout'));
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('qr-payment-error')).toBeTruthy();
+  });
+
   it('records cash after Laravel definitively rejected the QR attempt', async () => {
     const createQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('The cart has no valid items.', 422, 'validation_error'));
     const createSale = jest.fn().mockResolvedValue(sale);
