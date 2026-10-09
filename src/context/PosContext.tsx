@@ -511,6 +511,8 @@ export function PosProvider({
     const lines = cartRef.current.lines;
     if (lines.length === 0) return null;
 
+    // Known limitation: these in-memory attempt maps are lost when sign-out
+    // unmounts the provider, while a server-side QR attempt may stay payable.
     if (hasUnresolvedQrAttempt(qrPayments.current, qrKeys.current)) {
       throw new ApiClientError(
         'A QR Ph payment for this cart is still unresolved. Check the QR Ph payment status before recording cash.',
