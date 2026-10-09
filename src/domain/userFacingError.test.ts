@@ -38,6 +38,7 @@ describe('describeFailure', () => {
     expect(described('cash-sale', { code: 'insufficient_stock' })).toMatchObject({ title: 'Stock changed', actionLabel: 'Refresh and remove', action: 'retry' });
     expect(described('cash-sale', { code: 'insufficient_cash' })).toMatchObject({ title: 'Not enough cash', actionLabel: 'Confirm again' });
     expect(described('cash-sale', { code: 'cash_attempt_unresolved' })).toMatchObject({ title: 'Check the earlier attempt first', action: 'check-transactions' });
+    expect(described('cash-sale', { code: 'qr_payment_unresolved' })).toMatchObject({ title: 'Check the QR Ph payment first', action: 'check-payment' });
     expect(described('cash-sale', { status: 409, message: 'The idempotency key was already used.' })).toMatchObject({ title: 'This sale is already being saved', action: 'check-transactions' });
     expect(described('cash-sale', { code: 'product_missing' })).toMatchObject({ title: 'Product no longer available' });
     expect(described('cash-sale', { status: 500 })).toMatchObject({ title: 'The sale was not saved', action: 'retry' });

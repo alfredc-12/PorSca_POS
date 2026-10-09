@@ -5,6 +5,25 @@ function response(body: unknown, ok = true, status = 200) {
 }
 
 describe('ApiClient', () => {
+  it('uses the browser fetch receiver when signing in with the default fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = function (this: unknown) {
+      if (this !== globalThis) return Promise.reject(new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation"));
+      return Promise.resolve(response({ data: {
+        token: 'session-token',
+        token_type: 'Bearer',
+        user: { id: 1, name: 'Cashier', email: 'cashier@example.test', role: 'cashier', is_active: true },
+      } })) as Promise<Response>;
+    } as typeof fetch;
+
+    try {
+      const client = new ApiClient({ baseUrl: 'https://staging-api.example.test' });
+      await expect(client.login('cashier@example.test', 'password')).resolves.toMatchObject({ token: 'session-token' });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('uses the configured API URL and idempotency key for QR payments', async () => {
     const fetchImpl = jest.fn().mockResolvedValue(response({ data: { id: 'pay-1', status: 'pending', amount: 63 } }));
     const client = new ApiClient({ baseUrl: 'https://staging-api.example.test/', fetchImpl: fetchImpl as unknown as typeof fetch });
