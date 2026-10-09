@@ -50,6 +50,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
     startQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     refreshQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     confirmQrPhPayment: jest.fn().mockResolvedValue(undefined),
+    unresolvedQrPayment: jest.fn(() => undefined),
     ...overrides,
   });
 }

@@ -134,9 +134,11 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
   });
 
-  it('starts no second QR Ph payment after the cart changed while the first is pending', async () => {
+  it('checks the retained QR attempt after a cart edit and then records cash', async () => {
     const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const client = shopClient({ createQrPhPayment });
+    const refreshPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'expired' });
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = shopClient({ createQrPhPayment, refreshPayment, createSale });
     const view = render(<PosProvider client={client}><Shop /></PosProvider>);
 
     fireEvent.press(view.getByTestId('shop-seed-cart'));
@@ -150,8 +152,43 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     fireEvent.press(view.getByTestId('checkout-payment-qrph'));
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
 
+    // No second payment is created; the retained attempt is surfaced instead.
     expect(createQrPhPayment).toHaveBeenCalledTimes(1);
-    expect(view.getByTestId('qr-payment-error')).toBeTruthy();
+    expect(view.getByText('Payment pending…')).toBeTruthy();
+    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
+
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(view.getByText('Payment expired. Start a new QR Ph payment; stock was not changed.')).toBeTruthy();
+
+    // The earlier attempt is settled, so this checkout can record cash again.
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
+  });
+
+  it('surfaces the retained QR check action after cash is refused for it', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = shopClient({ createQrPhPayment, createSale });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    await startPendingQrPayment(view);
+
+    fireEvent.press(view.getByTestId('shop-leave-checkout'));
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(createSale).not.toHaveBeenCalled();
+    expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
+
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
   });
 
   it('records cash after Laravel definitively rejected the QR attempt', async () => {

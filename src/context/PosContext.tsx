@@ -72,6 +72,8 @@ type PosContextValue = {
   /** Authoritative provider-verified check; never cancels the payment. */
   refreshQrPhPayment: (paymentId: string) => Promise<Payment>;
   confirmQrPhPayment: (payment: Payment) => Promise<void>;
+  /** The retained QR Ph payment that may still collect money, if any. */
+  unresolvedQrPayment: () => Payment | undefined;
 };
 
 const PosContext = createContext<PosContextValue | null>(null);
@@ -679,6 +681,13 @@ export function PosProvider({
     }
   }, [client, commitCart]);
 
+  const unresolvedQrPayment = useCallback(() => {
+    for (const payment of qrPayments.current.values()) {
+      if (!QR_TERMINAL_STATUSES.includes(payment.status)) return payment;
+    }
+    return undefined;
+  }, []);
+
   const refreshQrPhPayment = useCallback(async (paymentId: string) => {
     if (!client.isConfigured) {
       throw new ApiClientError('The shop server is not configured. Payment verification is unavailable.');
@@ -812,6 +821,7 @@ export function PosProvider({
         startQrPhPayment,
         refreshQrPhPayment,
         confirmQrPhPayment,
+        unresolvedQrPayment,
       }}
     >
       {children}

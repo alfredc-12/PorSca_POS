@@ -29,6 +29,7 @@ export default function CheckoutScreen() {
     startQrPhPayment,
     refreshQrPhPayment,
     confirmQrPhPayment,
+    unresolvedQrPayment,
   } = usePos();
   const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
@@ -47,6 +48,19 @@ export default function CheckoutScreen() {
   const received = Number(cash) || 0;
   const cashResult = useMemo(() => cashChange(total, received), [received, total]);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+
+  // A refusal because the provider still holds an earlier attempt is not a dead
+  // end: show that attempt with its status check so it can be settled.
+  const surfaceRetainedQrAttempt = useCallback((error: unknown) => {
+    const apiError = error instanceof ApiClientError ? error : undefined;
+    if (apiError?.code !== 'qr_payment_unresolved') return false;
+    const retained = unresolvedQrPayment();
+    if (!retained) return false;
+    setQrPayment(retained);
+    setQrStatus(retained.status === 'paid' ? 'verification' : retained.status);
+    setQrError(undefined);
+    return true;
+  }, [unresolvedQrPayment]);
 
   const finishCash = async () => {
     setCashError(undefined);
@@ -88,6 +102,7 @@ export default function CheckoutScreen() {
       }
       Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
     } catch (error) {
+      surfaceRetainedQrAttempt(error);
       const apiError = error instanceof ApiClientError ? error : undefined;
       const failure = saleFailureCopy({
         status: apiError?.status,
@@ -162,6 +177,7 @@ export default function CheckoutScreen() {
       const payment = await startQrPhPayment(forceNew);
       await showQrPayment(payment);
     } catch (error) {
+      if (surfaceRetainedQrAttempt(error)) return;
       const startFailure = qrStartFailure(error);
       setQrStatus(startFailure.status);
       setQrError(startFailure.failure);

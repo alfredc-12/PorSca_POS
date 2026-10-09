@@ -791,6 +791,22 @@ describe('PosProvider Laravel QR Ph checkout', () => {
 
     expect(createQrPhPayment).toHaveBeenCalledTimes(2);
   });
+
+  it('reports the retained unresolved payment a refused start must surface', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const refreshPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'failed' as const });
+    const client = makeQrStageClient({ createQrPhPayment, refreshPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    expect(result.current.unresolvedQrPayment()).toBeUndefined();
+    await act(async () => { await result.current.startQrPhPayment(); });
+    expect(result.current.unresolvedQrPayment()).toEqual(pendingPayment);
+
+    await act(async () => { await result.current.refreshQrPhPayment(pendingPayment.id); });
+    expect(result.current.unresolvedQrPayment()).toBeUndefined();
+  });
 });
 
 it('refuses a changed cash retry when its lost receipt may be beyond the first history page', async () => {
