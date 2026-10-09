@@ -134,7 +134,7 @@ npm install
 cp .env.example .env
 ```
 
-Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). Sign in in the app with your API-managed email and password. The app saves the returned 30-day session token in native secure storage; no token or password belongs in an Expo public variable. Ask the API maintainer for an account, not a shared token.
+Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). Sign in in the app with your API-managed email and password. The app saves the returned 30-day session token in native secure storage; no token or password belongs in an Expo public variable. Contact your store administrator for account access; see the [API contract](docs/API-CONTRACT.md#authentication-and-roles) for account roles and permissions.
 
 PowerShell can set the URL for the current session (replace the placeholder with the LAN address found above):
 
@@ -286,7 +286,7 @@ php artisan migrate:fresh --seed --force
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-Before seeding the isolated local database, configure private `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the API checkout's `.env` (see the API setup guide). Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1`, then sign in with that account. Create cashier accounts through the admin API; there is no staff setup screen on the phone. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
+Before seeding the isolated local database, configure private `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the API checkout's `.env` (see the API setup guide). Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1`, then sign in with that account. Admins can manage cashier accounts from the phone's Users screen; see the [API contract](docs/API-CONTRACT.md#authentication-and-roles) for its access rules and supported operations. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
 
 ## Check it works
 
