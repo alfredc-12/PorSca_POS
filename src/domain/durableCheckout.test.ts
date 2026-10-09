@@ -40,6 +40,27 @@ describe('durable authority workflow and machine integration', () => {
     expect(saved()).toBeNull();
     expect(client.createCheckout).not.toHaveBeenCalled();
   });
+  it('discards the legacy null-product identity only after empty discovery and an attributed reason', async () => {
+    const storage: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('legacy basket [[null,1]]')),
+      save: jest.fn(),
+    };
+    const { client } = fixture();
+    const authority = new DurableCheckout(client as unknown as ApiClient, storage);
+    await expect(authority.recover()).rejects.toThrow(/identity is unreadable/);
+    await expect(authority.discardCorruptIdentity('short')).rejects.toThrow(/8 and 500/);
+    client.listCheckouts.mockResolvedValueOnce({ items: [], pagination: { current_page: 1, last_page: 2, total: 1 } }).mockResolvedValueOnce({ items: [pending], pagination: { current_page: 2, last_page: 2, total: 1 } });
+    await expect(authority.discardCorruptIdentity('Operator approved discard')).rejects.toThrow(/checkout records were found/);
+    expect(client.listCheckouts.mock.calls.slice(-2)).toEqual([[1], [2]]);
+    expect(storage.save).not.toHaveBeenCalled();
+    client.listCheckouts.mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 2, total: 0 } });
+    await expect(authority.discardCorruptIdentity('Operator approved discard')).resolves.toBe('Operator approved discard');
+    expect(storage.save).toHaveBeenCalledWith(null);
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+    expect(authority.current).toBeUndefined();
+    await expect(authority.prepare(lines)).resolves.toEqual(open);
+    expect(authority.current?.sale).toBeNull();
+  });
   it('keeps a corrupt stored identity unresolved until a discovered checkout is explicitly reattached', async () => {
     let saved: CheckoutHandle | null = null;
     const storage: CheckoutStorage = {

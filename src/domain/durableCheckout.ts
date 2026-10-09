@@ -73,12 +73,31 @@ export class DurableCheckout {
     }
   }
   private async persist() { await this.storage.save(this.handle ?? null); }
-  private async verifyDiscoveredCheckout(id: string) {
+  async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
+  private async discoverCheckouts() {
+    const checkouts: AuthorityCheckout[] = [];
     for (let page = 1; ; page++) {
       const result = await this.client.listCheckouts(page);
-      if (result.items.some(checkout => checkout.id === id)) return;
-      if (page >= result.pagination.last_page) throw new ApiClientError('The selected checkout was not found in server discovery. The unreadable device identity remains unresolved.', 409, 'checkout_recovery_required');
+      checkouts.push(...result.items);
+      if (page >= result.pagination.last_page) return checkouts;
     }
+  }
+  private async verifyDiscoveredCheckout(id: string) {
+    if (!(await this.discoverCheckouts()).some(checkout => checkout.id === id)) {
+      throw new ApiClientError('The selected checkout was not found in server discovery. The unreadable device identity remains unresolved.', 409, 'checkout_recovery_required');
+    }
+  }
+  async discardCorruptIdentity(reason: string) {
+    await this.load();
+    if (!this.corruptStorage) throw new ApiClientError('There is no unreadable checkout identity to discard.', 409, 'checkout_recovery_required');
+    const attributedReason = reason.trim();
+    if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
+    if ((await this.discoverCheckouts()).length > 0) throw new ApiClientError('Server checkout records were found. Recover one before discarding the unreadable identity.', 409, 'checkout_recovery_required');
+    await this.storage.save(null);
+    this.handle = undefined;
+    this.corruptStorage = false;
+    this.current = undefined;
+    return attributedReason;
   }
   async recover(id?: string) {
     await this.load();

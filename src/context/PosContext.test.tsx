@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos } from './PosContext';
-import { CheckoutHandle, CheckoutStorage } from '@/src/domain/durableCheckout';
+import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
 const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
@@ -182,6 +182,23 @@ describe('POS durable checkout integration', () => {
     expect(second.result.current.recoverableCheckouts).toHaveLength(1);
     expect(second.result.current.checkoutRecoveryError).toBeTruthy();
   });
+  it('offers corrupt-identity discard only after empty server discovery and keeps its reason', async () => {
+    const { wrapper, client, store } = fixture();
+    store.load = jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('legacy basket [[null,1]]'));
+    client.listCheckouts.mockResolvedValue({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } });
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await act(async () => { await result.current.openPosCheckouts(); });
+    expect(result.current.canDiscardCorruptCheckout).toBe(false);
+    client.listCheckouts.mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } });
+    await act(async () => { await result.current.openPosCheckouts(); });
+    expect(result.current.canDiscardCorruptCheckout).toBe(true);
+    await act(async () => {
+      await expect(result.current.discardCorruptCheckout('Operator approved discard')).resolves.toBe('Operator approved discard');
+    });
+    expect(result.current.canDiscardCorruptCheckout).toBe(false);
+    expect(result.current.authorityCheckout).toBeUndefined();
+    expect(result.current.cart).toHaveLength(0);
+  });
   it('reports a missing retained authority record as unrecoverable, never paid', async () => {
     const { wrapper, client, handle } = fixture();
     const first = renderHook(() => usePos(), { wrapper });
@@ -193,6 +210,32 @@ describe('POS durable checkout integration', () => {
     expect(second.result.current.checkoutRecoveryError).toMatch(/no authority record/);
     expect(second.result.current.unresolvedQrPayment()).toBeUndefined();
     expect(handle()?.id).toBe('durable-uuid');
+  });
+  it('preserves cashier edits while retiring an automatically recovered abandoned checkout', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.startQrPhPayment(); });
+    first.unmount();
+    const persist = store.save.bind(store);
+    let finishRetire!: () => void;
+    store.save = jest.fn(async value => {
+      if (value === null) await new Promise<void>(resolve => { finishRetire = resolve; });
+      await persist(value);
+    });
+    client.recoverCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    const second = renderHook(() => usePos(), { wrapper });
+    let recovery!: Promise<void>;
+    act(() => { recovery = second.result.current.openPosCheckouts(); });
+    await waitFor(() => expect(store.save).toHaveBeenCalledWith(null));
+    await add(second.result);
+    await add(second.result);
+    await act(async () => {
+      finishRetire();
+      await recovery;
+    });
+    expect(second.result.current.cart[0].quantity).toBe(2);
+    expect(handle()).toBeNull();
   });
   it('resolves a lost cash response on restart without charging the purchase twice', async () => {
     const { wrapper, client, handle } = fixture();

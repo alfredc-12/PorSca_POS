@@ -38,12 +38,16 @@ export default function PosScreen() {
     apiConfigured,
     recoverableCheckouts = [],
     checkoutRecoveryError,
+    canDiscardCorruptCheckout,
     openPosCheckouts,
     recoverCheckout,
+    discardCorruptCheckout,
   } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
+  const [discardReason, setDiscardReason] = useState('');
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [review, setReview] = useState<CartRevalidation>();
   const [checkingPrices, setCheckingPrices] = useState(false);
   const responsive = useResponsive();
@@ -130,6 +134,19 @@ export default function PosScreen() {
     <Screen>
       {checkoutRecoveryError ? <Text accessibilityRole="alert">{checkoutRecoveryError}</Text> : null}
       {checkoutRecoveryError ? <Pressable accessibilityRole="button" onPress={() => void openPosCheckouts()}><Text>Retry checkout recovery</Text></Pressable> : null}
+      {canDiscardCorruptCheckout && recoverableCheckouts.length === 0 ? <View>
+        <Text accessibilityRole="alert">Server discovery found no checkout. The unreadable local identity cannot establish a payment outcome. Discarding it does not confirm whether money was collected.</Text>
+        <TextInput testID="corrupt-checkout-discard-reason" accessibilityLabel="Reason for discarding unreadable checkout identity" placeholder="Reason for discarding (8–500 characters)" value={discardReason} onChangeText={value => { setDiscardReason(value); setConfirmDiscard(false); }} maxLength={500} />
+        {confirmDiscard ? <>
+          <Text>Confirm local identity discard. Reason: {discardReason.trim()}</Text>
+          <Pressable testID="confirm-corrupt-checkout-discard" accessibilityRole="button" onPress={() => void discardCorruptCheckout(discardReason).then(reason => {
+            setCartNotice(`Local checkout identity discarded after empty server discovery. Reason: ${reason}. Payment was not confirmed.`);
+            setDiscardReason('');
+            setConfirmDiscard(false);
+          }).catch(() => setCartNotice('The identity was not discarded. Retry server discovery before trying again.'))}><Text>Confirm discard</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setConfirmDiscard(false)}><Text>Cancel discard</Text></Pressable>
+        </> : <Pressable testID="review-corrupt-checkout-discard" accessibilityRole="button" disabled={discardReason.trim().length < 8} onPress={() => setConfirmDiscard(true)}><Text>Review local identity discard</Text></Pressable>}
+      </View> : null}
       {recoverableCheckouts.map(checkout => <Pressable key={checkout.id} accessibilityRole="button" onPress={() => {
         void recoverCheckout(checkout.id).then(() => router.push('/checkout')).catch(() => setCartNotice('Resolve the device purchase before recovering another checkout.'));
       }}><Text>Recover {checkout.id} • {checkout.state} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}

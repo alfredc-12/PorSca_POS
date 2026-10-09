@@ -26,7 +26,7 @@ describe('checkout identity storage', () => {
     (SecureStore.deleteItemAsync as jest.Mock).mockImplementation(async () => { value = ''; });
   });
 
-  it.each(['', '{malformed', JSON.stringify({ key: 'creation-key', signature: 'not-a-basket' })])('preserves unreadable identity data for authority-backed recovery', async stored => {
+  it.each(['', '{malformed', JSON.stringify({ key: 'creation-key', signature: 'not-a-basket' }), JSON.stringify({ key: 'creation-key', signature: '[[null,1]]' })])('preserves unreadable identity data for authority-backed recovery', async stored => {
     value = stored;
     await expect(checkoutStorage('https://shop.test/api/v1').load()).rejects.toBeInstanceOf(CheckoutStorageCorruptionError);
     expect(value).toBe(stored);

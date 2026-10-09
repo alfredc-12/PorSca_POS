@@ -70,7 +70,9 @@ type PosContextValue = {
   checkoutMachine?: CheckoutMachine;
   recoverableCheckouts: AuthorityCheckout[];
   checkoutRecoveryError?: string;
+  canDiscardCorruptCheckout: boolean;
   openPosCheckouts: () => Promise<void>;
+  discardCorruptCheckout: (reason: string) => Promise<string>;
   recoverCheckout: (id?: string) => Promise<void>;
   discoverCheckouts: () => Promise<AuthorityCheckout[]>;
   revalidateCheckout: () => Promise<void>;
@@ -125,6 +127,7 @@ export function PosProvider({
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
   const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
+  const [canDiscardCorruptCheckout, setCanDiscardCorruptCheckout] = useState(false);
   const productsRef = useRef(products);
   /**
    * The reducer is the single cart authority. The ref mirrors its state
@@ -520,9 +523,10 @@ export function PosProvider({
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
     await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     if (checkout.state === 'abandoned') {
+      const restoredRevision = cartRevision.current;
       await authority.retire();
       setAuthorityCheckout(undefined);
-      commitCart({ type: 'reset' });
+      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
       return;
     }
     // A lost cash response may already have committed a receipt. Resolve that
@@ -538,7 +542,11 @@ export function PosProvider({
       if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
     }
   }), [authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
-  const recoverCheckout = useCallback((id?: string) => recoverCheckoutInternal(id), [recoverCheckoutInternal]);
+  const recoverCheckout = useCallback(async (id?: string) => {
+    await recoverCheckoutInternal(id);
+    setCanDiscardCorruptCheckout(false);
+    setCheckoutRecoveryError(undefined);
+  }, [recoverCheckoutInternal]);
 
   const discoverCheckouts = useCallback(async () => {
     const items: AuthorityCheckout[] = [];
@@ -552,6 +560,9 @@ export function PosProvider({
   const openPosCheckouts = useCallback(async () => {
     if (!client.isConfigured) return;
     setCheckoutRecoveryError(undefined);
+    setCanDiscardCorruptCheckout(false);
+    let emptyDiscovery = false;
+    let corruptLocalStorage = false;
     const initialCart = cartSignature(cartRef.current.lines);
     const initialRevision = cartRevision.current;
     const automatic = { revision: initialRevision, signature: initialCart };
@@ -559,13 +570,31 @@ export function PosProvider({
     try {
       const discovered = await discoverCheckouts();
       const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
+      emptyDiscovery = live.length === 0;
       setRecoverableCheckouts(live);
+      if (emptyDiscovery) {
+        corruptLocalStorage = await authority.hasCorruptStorage();
+        setCanDiscardCorruptCheckout(corruptLocalStorage);
+      }
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
       await recoverCheckoutInternal(undefined, automatic);
     } catch {
+      setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
       setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
-  }, [client, discoverCheckouts, recoverCheckoutInternal]);
+  }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
+
+  const discardCorruptCheckout = useCallback(async (reason: string) => {
+    if (!canDiscardCorruptCheckout) throw new ApiClientError('Complete empty server discovery before discarding the unreadable checkout identity.', 409, 'checkout_recovery_required');
+    return authority.exclusive(async () => {
+      const attributedReason = await authority.discardCorruptIdentity(reason);
+      setAuthorityCheckout(undefined);
+      setRecoverableCheckouts([]);
+      setCheckoutRecoveryError(undefined);
+      setCanDiscardCorruptCheckout(false);
+      return attributedReason;
+    });
+  }, [authority, canDiscardCorruptCheckout]);
 
   const revalidateCheckout = useCallback(async () => authority.exclusive(async () => {
     await applyCheckout(await authority.revalidate());
@@ -714,7 +743,9 @@ export function PosProvider({
         checkoutMachine: authority.machine,
         recoverableCheckouts,
         checkoutRecoveryError,
+        canDiscardCorruptCheckout,
         openPosCheckouts,
+        discardCorruptCheckout,
         recoverCheckout,
         discoverCheckouts,
         revalidateCheckout,
