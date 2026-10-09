@@ -99,7 +99,7 @@ php artisan migrate:fresh --seed --force
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel development revision and its synthetic seed; do not reset the shared staging database from this procedure. Sign in with the seeded admin account. Staff setup remains API-only: admins create cashier accounts through `/users`, not a phone admin screen. Cashiers see all sales read-only and cannot edit products or stock.
+Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel development revision and its synthetic seed; do not reset the shared staging database from this procedure. Sign in with the seeded admin account. Admins can manage cashier accounts from the phone's Users screen; see [API-CONTRACT.md](API-CONTRACT.md#authentication-and-roles) for access rules and supported operations. Cashiers see all sales read-only and cannot edit products or stock.
 
 ## QR Ph local and staging flow
 

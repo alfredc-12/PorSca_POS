@@ -69,7 +69,7 @@ eas build --profile preview --platform android
 
 Record a result and evidence for each behavior. Record stock before and after every successful sale.
 
-Before sale checks, verify individual admin/cashier login, secure token restoration on restart, failed login, logout, and expired/revoked-token redirect to login. Confirm cashier inventory is read-only (no add/edit controls), admin product writes are available, and both roles can read all sales. Staff setup stays API-only. Record account role labels, never passwords or tokens.
+Before sale checks, verify individual admin/cashier login, secure token restoration on restart, failed login, logout, and expired/revoked-token redirect to login. Confirm cashier inventory is read-only (no add/edit controls), admin product writes are available, and both roles can read all sales. Verify that admins can manage cashier accounts from the phone's Users screen; see [API-CONTRACT.md](API-CONTRACT.md#authentication-and-roles) for access rules and supported operations. Record account role labels, never passwords or tokens.
 
 1. Search a product, add it to the cart, and complete a cash checkout.
 2. Scan a barcode, add it to the cart, and complete a cash checkout.
