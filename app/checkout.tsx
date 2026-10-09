@@ -9,7 +9,7 @@ import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { cashChange, paymentError } from '@/src/domain/pos';
-import { saleFailureCopy } from '@/src/domain/checkout';
+import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
 import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
 import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { OFFLINE_COPY } from '@/src/config/offline';
@@ -151,7 +151,7 @@ export default function CheckoutScreen() {
   }, [confirmQrPhPayment, resetCart]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
-    if (qrBusyRef.current) return;
+    if (qrBusyRef.current || cashBusyRef.current) return;
     qrBusyRef.current = true;
     setQrBusy(true);
     setQrStatus('creating');
@@ -162,8 +162,9 @@ export default function CheckoutScreen() {
       const payment = await startQrPhPayment(forceNew);
       await showQrPayment(payment);
     } catch (error) {
-      setQrStatus('verification');
-      setQrError(describeQrVerification(error));
+      const startFailure = qrStartFailure(error);
+      setQrStatus(startFailure.status);
+      setQrError(startFailure.failure);
     } finally {
       qrBusyRef.current = false;
       setQrBusy(false);
@@ -326,7 +327,7 @@ export default function CheckoutScreen() {
               {qrError ? <FailureNotice testID="qr-payment-error" failure={qrError} /> : null}
               {qrFailure ? <FailureNotice testID="qr-payment-failure" failure={qrFailure} /> : null}
               {qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment ? (
-                <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy} style={styles.fullButton} />
+                <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy || cashSubmitting} style={styles.fullButton} />
               ) : null}
               {qrStatus === 'creating' ? (
                 <AppButton testID="start-qrph-payment" label="Creating QR Ph Payment…" onPress={() => undefined} disabled style={styles.fullButton} />
@@ -351,7 +352,7 @@ export default function CheckoutScreen() {
               ) : null}
               {qrTerminal ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy || cashSubmitting} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
@@ -405,6 +406,34 @@ function describeQrVerification(error: unknown): DescribedFailure {
         { screen: 'qr-verification' },
       )
     : localFailure('We cannot check this payment yet', 'Do not hand over the goods. Check the connection and check again.', { action: 'check-payment', actionLabel: 'Check again' });
+}
+
+/**
+ * A failed QR start either rules the attempt out, leaves it unresolved, or was
+ * refused because an earlier cash attempt still is. Only the first may clear
+ * the screen's cash guard; the provider retains the same distinction.
+ */
+function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
+  const apiError = error instanceof ApiClientError ? error : undefined;
+  if (apiError && isDefinitiveQrRejection(apiError)) {
+    return {
+      status: 'idle',
+      failure: describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'qr-payment' },
+      ),
+    };
+  }
+  if (apiError?.code === 'cash_attempt_unresolved') {
+    return {
+      status: 'verification',
+      failure: describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'cash-sale' },
+      ),
+    };
+  }
+  return { status: 'verification', failure: describeQrVerification(error) };
 }
 
 /** The alert body: the visible copy, plus the support code when one was issued. */

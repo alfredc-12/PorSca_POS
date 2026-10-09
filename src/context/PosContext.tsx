@@ -6,6 +6,7 @@ import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } fr
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
+import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { CartLine, PaymentStatus, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
@@ -528,36 +529,43 @@ export function PosProvider({
     const cashCents = Math.round((Number.isFinite(cashReceived) ? cashReceived : 0) * 100);
     const payloadSignature = cashPayloadSignature(lines, cashCents);
 
-    // A transport failure can leave an attempt committed but unacknowledged.
-    // That attempt is bound to its exact payload: a plain retry reuses its key,
-    // but a repriced or otherwise changed cart must first establish whether the
-    // earlier sale was recorded, so a retry can never return the old sale
-    // (defect F3).
-    const uncertain = uncertainCashRef.current;
-    if (uncertain && uncertain.payloadSignature !== payloadSignature) {
-      const resolution = await resolveCashAttempt(uncertain.idempotencyKey);
-      if (resolution !== 'not-found') {
-        throw new ApiClientError(
-          resolution === 'found'
-            ? 'An earlier cash attempt for this cart was already recorded on the shop server. Nothing new was sent; check Transactions before taking payment again.'
-            : 'An earlier cash attempt could not be confirmed. Check Transactions for a completed sale before taking payment again; nothing new was sent.',
-          undefined,
-          'cash_attempt_unresolved',
-        );
-      }
-      // Laravel confirmed the earlier attempt never became a sale, so the
-      // revised cart can be charged with a fresh key without duplicating it.
-      uncertainCashRef.current = undefined;
-    }
-
     const pending = cashRequests.current.get(payloadSignature);
     if (pending) return pending;
+    if (cashRequests.current.size > 0) {
+      throw new ApiClientError(
+        'Another cash payment for this cart is still being recorded. Wait for it to finish before taking payment again.',
+        undefined,
+        'cash_attempt_unresolved',
+      );
+    }
 
-    const idempotencyKey = cashKeys.current.get(payloadSignature) ?? createIdempotencyKey();
-    cashKeys.current.set(payloadSignature, idempotencyKey);
     const requestCart = lines;
     const requestTotal = total;
     const request = (async () => {
+      // A transport failure can leave an attempt committed but unacknowledged.
+      // That attempt is bound to its exact payload: a plain retry reuses its
+      // key, but a repriced or otherwise changed cart must first establish
+      // whether the earlier sale was recorded, so a retry can never return the
+      // old sale (defect F3).
+      const uncertain = uncertainCashRef.current;
+      if (uncertain && uncertain.payloadSignature !== payloadSignature) {
+        const resolution = await resolveCashAttempt(uncertain.idempotencyKey);
+        if (resolution !== 'not-found') {
+          throw new ApiClientError(
+            resolution === 'found'
+              ? 'An earlier cash attempt for this cart was already recorded on the shop server. Nothing new was sent; check Transactions before taking payment again.'
+              : 'An earlier cash attempt could not be confirmed. Check Transactions for a completed sale before taking payment again; nothing new was sent.',
+            undefined,
+            'cash_attempt_unresolved',
+          );
+        }
+        // Laravel confirmed the earlier attempt never became a sale, so the
+        // revised cart can be charged with a fresh key without duplicating it.
+        uncertainCashRef.current = undefined;
+      }
+
+      const idempotencyKey = cashKeys.current.get(payloadSignature) ?? createIdempotencyKey();
+      cashKeys.current.set(payloadSignature, idempotencyKey);
       try {
         const sale = await client.createSale({
           idempotencyKey,
@@ -608,6 +616,17 @@ export function PosProvider({
       throw new ApiClientError('The shop server is not configured. QR Ph payment needs it; no sale was recorded.');
     }
 
+    // Cash and QR Ph are mutually exclusive in both directions. A cash attempt
+    // that is in flight or whose outcome Laravel never acknowledged may still
+    // become a sale, so no QR attempt may start next to it.
+    if (cashRequests.current.size > 0 || uncertainCashRef.current) {
+      throw new ApiClientError(
+        'A cash payment for this cart is still unresolved. Check the cash payment before starting QR Ph.',
+        undefined,
+        'cash_attempt_unresolved',
+      );
+    }
+
     const signature = qrCartSignature(lines);
     if (forceNew) {
       qrKeys.current.delete(signature);
@@ -632,6 +651,15 @@ export function PosProvider({
       const payment = await request;
       qrPayments.current.set(signature, payment);
       return payment;
+    } catch (error) {
+      // A definitive refusal means Laravel created no attempt to collect
+      // money, so its key must not keep cash blocked for this basket. An
+      // unanswered or uncertain outcome keeps the key for a safe retry.
+      const apiError = error instanceof ApiClientError ? error : undefined;
+      if (apiError && isDefinitiveQrRejection(apiError) && qrKeys.current.get(signature) === idempotencyKey) {
+        qrKeys.current.delete(signature);
+      }
+      throw error;
     } finally {
       qrRequests.current.delete(signature);
     }

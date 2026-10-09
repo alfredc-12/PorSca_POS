@@ -601,6 +601,92 @@ describe('PosProvider Laravel QR Ph checkout', () => {
     expect(createSale).toHaveBeenCalledTimes(1);
     expect(result.current.cart).toHaveLength(0);
   });
+
+  it('permits cash after Laravel definitively rejected the QR creation', async () => {
+    const createQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('The cart has no valid items.', 422, 'validation_error'));
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = makeQrStageClient({ createQrPhPayment, createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow(); });
+    await act(async () => { expect(await result.current.completeCashSale(100)).toEqual(sale); });
+
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(result.current.cart).toHaveLength(0);
+  });
+
+  it.each([
+    { label: 'a lost response', error: new ApiClientError('Unable to reach PorSca API: timeout') },
+    { label: 'a server error', error: new ApiClientError('The shop server failed.', 500) },
+    { label: 'a request timeout', error: new ApiClientError('The request timed out.', 408) },
+    { label: 'a conflict', error: new ApiClientError('The idempotency key was already used.', 409, 'idempotency_conflict') },
+    { label: 'a throttle response', error: new ApiClientError('Too many requests.', 429) },
+  ])('keeps cash blocked after $label left the QR creation outcome unknown', async ({ error }) => {
+    const createQrPhPayment = jest.fn().mockRejectedValue(error);
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = makeQrStageClient({ createQrPhPayment, createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow(); });
+    await act(async () => {
+      await expect(result.current.completeCashSale(100)).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+
+    expect(createSale).not.toHaveBeenCalled();
+    expect(result.current.cart).toHaveLength(1);
+  });
+
+  it('refuses to start QR Ph while a cash attempt is still being recorded', async () => {
+    const createSale = jest.fn().mockReturnValue(new Promise<Sale>(() => undefined));
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = makeQrStageClient({ createSale, createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    act(() => { void result.current.completeCashSale(100); });
+
+    await act(async () => {
+      await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'cash_attempt_unresolved' });
+    });
+    expect(createQrPhPayment).not.toHaveBeenCalled();
+  });
+
+  it('refuses to start QR Ph while an earlier cash attempt is unresolved', async () => {
+    const createSale = jest.fn().mockRejectedValue(new ApiClientError('Unable to reach PorSca API: timeout'));
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = makeQrStageClient({ createSale, createQrPhPayment });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    await act(async () => { await expect(result.current.completeCashSale(100)).rejects.toThrow(); });
+    await act(async () => {
+      await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'cash_attempt_unresolved' });
+    });
+
+    expect(createQrPhPayment).not.toHaveBeenCalled();
+    expect(result.current.cart).toHaveLength(1);
+  });
+
+  it('refuses a second cash attempt with a different payload while one is in flight', async () => {
+    const createSale = jest.fn().mockReturnValue(new Promise<Sale>(() => undefined));
+    const client = makeQrStageClient({ createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    act(() => { result.current.addProductChecked(sale.items[0].product); });
+
+    act(() => { void result.current.completeCashSale(100); });
+    await act(async () => {
+      await expect(result.current.completeCashSale(200)).rejects.toMatchObject({ code: 'cash_attempt_unresolved' });
+    });
+
+    expect(createSale).toHaveBeenCalledTimes(1);
+  });
 });
 
 it('refuses a changed cash retry when its lost receipt may be beyond the first history page', async () => {

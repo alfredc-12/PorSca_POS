@@ -1,4 +1,4 @@
-import { hasMissingProductDetail, saleFailureCopy } from '@/src/domain/checkout';
+import { hasMissingProductDetail, isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
 
 // The words are asserted here; the on-device record store is exercised in
 // src/observability/diagnostics.test.ts, so this suite stays pure.
@@ -78,5 +78,22 @@ describe('checkout failure copy', () => {
     expect(failure.body).toContain('Check the connection');
     expect(failure.body).not.toContain('Unable to reach PorSca API');
     expect(failure.reference).toMatch(/^PRS-/);
+  });
+
+  it('treats a 4xx refusal that answers the QR attempt as definitive', () => {
+    expect(isDefinitiveQrRejection({ status: 400, code: 'validation_error' })).toBe(true);
+    expect(isDefinitiveQrRejection({ status: 401 })).toBe(true);
+    expect(isDefinitiveQrRejection({ status: 404 })).toBe(true);
+    expect(isDefinitiveQrRejection({ status: 422, code: 'validation_error' })).toBe(true);
+  });
+
+  it('keeps an unresolved QR attempt possible after transport, server, and uncertain 4xx answers', () => {
+    expect(isDefinitiveQrRejection({ message: 'Unable to reach PorSca API: timeout' })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 500 })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 503 })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 408 })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 409, code: 'idempotency_conflict' })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 425 })).toBe(false);
+    expect(isDefinitiveQrRejection({ status: 429 })).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { Alert, Button, View } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
 import { PosProvider, usePos } from '@/src/context/PosContext';
-import { ApiClient, Payment } from '@/src/api/client';
+import { ApiClient, ApiClientError, Payment } from '@/src/api/client';
 import { Product, Sale } from '@/src/types';
 
 jest.mock('expo-router', () => ({
@@ -132,5 +132,46 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(createSale).not.toHaveBeenCalled();
     expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
     expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
+  });
+
+  it('records cash after Laravel definitively rejected the QR attempt', async () => {
+    const createQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('The cart has no valid items.', 422, 'validation_error'));
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = shopClient({ createQrPhPayment, createSale });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    // The refusal is an answer, not a provider attempt: leaving and reopening
+    // must not leave a retained key blocking cash for the basket.
+    fireEvent.press(view.getByTestId('shop-leave-checkout'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
+  });
+
+  it('offers no QR Ph start while a cash sale is being recorded', async () => {
+    let resolveSale!: (value: Sale) => void;
+    const createSale = jest.fn().mockReturnValue(new Promise<Sale>((done) => { resolveSale = done; }));
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = shopClient({ createSale, createQrPhPayment });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    fireEvent.press(view.getByTestId('confirm-cash-payment'));
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    fireEvent.press(view.getByTestId('start-qrph-payment'));
+
+    expect(createQrPhPayment).not.toHaveBeenCalled();
+    await act(async () => { resolveSale(sale); });
   });
 });
