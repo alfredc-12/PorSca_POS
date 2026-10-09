@@ -24,7 +24,6 @@ export default function CheckoutScreen() {
     total,
     cart,
     apiConfigured,
-    resetCart,
     completeCashSale,
     startQrPhPayment,
     refreshQrPhPayment,
@@ -50,7 +49,9 @@ export default function CheckoutScreen() {
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
-  // end: show that attempt with its status check so it can be settled.
+  // end: show that attempt with its status check so it can be settled. Known
+  // limitation: a creation that never answered retains only its key, so it has
+  // no payment ID to check and cannot be recovered after a cart edit.
   const surfaceRetainedQrAttempt = useCallback((error: unknown) => {
     const apiError = error instanceof ApiClientError ? error : undefined;
     if (apiError?.code !== 'qr_payment_unresolved') return false;
@@ -152,7 +153,6 @@ export default function CheckoutScreen() {
       setQrStatus('paid');
       if (handledPaidPayment.current !== payment.id) {
         handledPaidPayment.current = payment.id;
-        resetCart();
         Alert.alert(
           'Payment recorded',
           `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by the shop server.`,
@@ -163,7 +163,7 @@ export default function CheckoutScreen() {
       setQrStatus('verification');
       setQrError(describeQrVerification(error));
     }
-  }, [confirmQrPhPayment, resetCart]);
+  }, [confirmQrPhPayment]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (qrBusyRef.current || cashBusyRef.current) return;

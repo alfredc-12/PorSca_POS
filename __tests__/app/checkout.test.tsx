@@ -285,12 +285,10 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
     const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
-    const resetCart = jest.fn();
-    setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment, resetCart });
+    setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment });
     await openQrCheckout();
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(paidPayment);
-    expect(resetCart).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
   });
 

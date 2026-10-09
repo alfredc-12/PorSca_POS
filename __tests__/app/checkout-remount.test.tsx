@@ -169,6 +169,31 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
   });
 
+  it('keeps the edited cart when an earlier retained payment settles as paid', async () => {
+    const paidPayment = { ...pendingPayment, status: 'paid' as const, saleId: 'sale-1' };
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const refreshPayment = jest.fn().mockResolvedValue(paidPayment);
+    const client = shopClient({ createQrPhPayment, refreshPayment });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    await startPendingQrPayment(view);
+
+    fireEvent.press(view.getByTestId('shop-leave-checkout'));
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+
+    // The paid attempt was for the one-item basket; the edited two-item basket
+    // is a different basket and must survive its settlement.
+    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
+    expect(view.queryByText('The cart is empty')).toBeNull();
+    expect(view.getByText('Qty 2 • ₱25.00 each')).toBeTruthy();
+  });
+
   it('surfaces the retained QR check action after cash is refused for it', async () => {
     const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
     const createSale = jest.fn().mockResolvedValue(sale);
