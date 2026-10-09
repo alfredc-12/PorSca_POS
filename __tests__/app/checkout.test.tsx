@@ -6,6 +6,8 @@ import { router } from 'expo-router';
 import { usePos } from '@/src/context/PosContext';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { CartLine, Sale } from '@/src/types';
+import { CheckoutMachine, openCheckout, transitionCheckout } from '@/src/domain/checkoutMachine';
+import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -40,19 +42,40 @@ const pendingQrPayment: Payment = {
 };
 
 function setContext(overrides: Record<string, unknown> = {}) {
-  mockUsePos.mockReturnValue({
+  const context = {
     total: 35,
     cart,
     apiConfigured: true,
-    completeSale: jest.fn(),
     completeCashSale: jest.fn().mockResolvedValue(sale),
     resetCart: jest.fn(),
-    startQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
-    refreshQrPhPayment: jest.fn().mockResolvedValue(pendingQrPayment),
     confirmQrPhPayment: jest.fn().mockResolvedValue(undefined),
     unresolvedQrPayment: jest.fn(() => undefined),
+    checkoutMachine: openCheckout('test-checkout', 3500),
     ...overrides,
-  });
+  };
+  const observe = (state: CheckoutMachine['state']) => {
+    context.checkoutMachine = transitionCheckout(context.checkoutMachine, {
+      type: 'authority-observed',
+      checkout: { ...context.checkoutMachine, state },
+    }).checkout;
+  };
+  const observePayment = (payment: Payment) => {
+    observe(payment.status === 'failed' || payment.status === 'expired' || payment.status === 'cancelled'
+      ? 'ready-for-new-attempt' : payment.status === 'paid' ? 'completed' : 'payment-unresolved');
+    return payment;
+  };
+  const start = (overrides.startQrPhPayment ?? jest.fn().mockResolvedValue(pendingQrPayment)) as jest.Mock;
+  const refresh = (overrides.refreshQrPhPayment ?? jest.fn().mockResolvedValue(pendingQrPayment)) as jest.Mock;
+  // Assign after overrides so an injected network mock cannot bypass the machine adapter.
+  const startQrPhPayment = async (...args: unknown[]) => {
+    try { return observePayment(await start(...args)); }
+    catch (error) {
+      if (!(error instanceof ApiClientError) || error.code !== 'cash_attempt_unresolved' && !isDefinitiveQrRejection(error)) observe('payment-unresolved');
+      throw error;
+    }
+  };
+  const refreshQrPhPayment = async (...args: unknown[]) => observePayment(await refresh(...args));
+  mockUsePos.mockImplementation(() => ({ ...context, startQrPhPayment, refreshQrPhPayment }));
 }
 
 describe('CheckoutScreen cash states', () => {
@@ -76,9 +99,9 @@ describe('CheckoutScreen cash states', () => {
     fireEvent.changeText(getByTestId('cash-received-input'), '20');
     fireEvent.press(getByTestId('confirm-cash-payment'));
 
-    expect(getByText('You are ₱15.00 short. Enter at least ₱35.00 and confirm again.')).toBeTruthy();
+    expect(getByText(/Enter an amount using digits and at most two decimal places/)).toBeTruthy();
     expect(completeCashSale).not.toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalledWith('Not enough cash', expect.stringContaining('confirm again.'));
+    expect(alertSpy).toHaveBeenCalledWith('Check cash tender', expect.stringContaining('at least ₱35.00'));
   });
 
   it('surfaces Laravel stock conflicts with a recovery action and preserves the cart', async () => {
@@ -105,7 +128,7 @@ describe('CheckoutScreen cash states', () => {
       fireEvent.press(getByTestId('confirm-cash-payment'));
     });
 
-    expect(completeCashSale).toHaveBeenCalledWith(100);
+    expect(completeCashSale).toHaveBeenCalledWith('100');
     expect(alertSpy).toHaveBeenCalledWith('Payment recorded', '42 was completed successfully.', expect.any(Array));
     const actions = alertSpy.mock.calls[0][2] as { onPress?: () => void }[];
     actions[0].onPress?.();
@@ -157,7 +180,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
   async function openQrCheckout() {
     const view = render(<CheckoutScreen />);
     fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    fireEvent.press(view.getByTestId('start-qrph-payment'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     await waitFor(() => expect(view.getByTestId('qr-payment-status')).toBeTruthy());
     return view;
   }
@@ -216,6 +239,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
       if (state === 'verification') {
         await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
       }
+      if (state !== 'creating') expect(mockUsePos().checkoutMachine.state).toBe('payment-unresolved');
       fireEvent.press(view.getByTestId('checkout-payment-cash'));
       fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
       await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
@@ -233,7 +257,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-    expect(completeCashSale).toHaveBeenCalledWith(100);
+    expect(completeCashSale).toHaveBeenCalledWith('100');
   });
 
   it('leaves a pending payment without cancelling it and keeps the cart', async () => {
@@ -324,7 +348,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
 
-    expect(completeCashSale).toHaveBeenCalledWith(100);
+    expect(completeCashSale).toHaveBeenCalledWith('100');
   });
 
   it('leaves cash retryable after a QR start is refused because that cash attempt is unresolved', async () => {
@@ -347,7 +371,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
 
-    expect(completeCashSale).toHaveBeenCalledWith(100);
+    expect(completeCashSale).toHaveBeenCalledWith('100');
   });
 
   it('offers no QR Ph start while a cash sale is being recorded', async () => {

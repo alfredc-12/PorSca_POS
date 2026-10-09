@@ -3,286 +3,62 @@ import { Alert, Button, View } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
 import { PosProvider, usePos } from '@/src/context/PosContext';
-import { ApiClient, ApiClientError, Payment } from '@/src/api/client';
-import { Product, Sale } from '@/src/types';
+import { ApiClient, ApiClientError } from '@/src/api/client';
+import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
+import { CheckoutHandle, CheckoutStorage } from '@/src/domain/durableCheckout';
 
-jest.mock('expo-router', () => ({
-  router: { replace: jest.fn(), back: jest.fn() },
-  useLocalSearchParams: () => ({ method: 'cash' }),
-}));
+jest.mock('expo-router', () => ({ router: { replace: jest.fn(), back: jest.fn() }, useLocalSearchParams: () => ({ method: 'cash' }) }));
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-
-const product: Product = { id: 'prd-001', barcode: '4800010000011', name: 'Coca-Cola 500mL', price: 25, stock: 48 };
-
-const pendingPayment: Payment = { id: 'payment-1', status: 'pending', amount: 2500 };
-
-const sale: Sale = {
-  id: 'sale-1',
-  createdAt: '2026-09-08T12:00:00Z',
-  total: 25,
-  paymentMethod: 'cash',
-  status: 'paid',
-  cashReceived: 100,
-  change: 75,
-  items: [{ product, quantity: 1 }],
-};
-
-/** The provider outlives the checkout route: only the screen unmounts on Leave. */
+const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
+const open: AuthorityCheckout = { id: 'server-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
+const pending: AuthorityCheckout = { ...open, state: 'payment_unresolved', attempts: [{ id: 7, method: 'qrph', amountCentavos: 2500, currency: 'PHP', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: 'QR', qrExpiresAt: null, reservation: null }] };
 function Shop() {
-  const { addProductChecked } = usePos();
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-
-  return (
-    <View>
-      <Button testID="shop-seed-cart" title="Seed cart" onPress={() => addProductChecked(product)} />
-      <Button testID="shop-leave-checkout" title="Leave checkout" onPress={() => setCheckoutOpen(false)} />
-      <Button testID="shop-open-checkout" title="Open checkout" onPress={() => setCheckoutOpen(true)} />
-      {checkoutOpen ? <CheckoutScreen /> : null}
-    </View>
-  );
+  const { addProductChecked } = usePos(); const [visible, setVisible] = useState(false);
+  return <View><Button testID="seed" title="Seed" onPress={() => addProductChecked(product)} /><Button testID="open" title="Open" onPress={() => setVisible(true)} /><Button testID="leave" title="Leave" onPress={() => setVisible(false)} />{visible ? <CheckoutScreen /> : null}</View>;
+}
+function fixture() {
+  let handle: CheckoutHandle | null = null; let checkout = open;
+  const storage: CheckoutStorage = { load: async () => handle, save: async value => { handle = value; } };
+  const client = { isConfigured: true, createCheckout: jest.fn().mockResolvedValue(open), getCheckout: jest.fn(async () => checkout), recoverCheckout: jest.fn(async () => checkout),
+    createCheckoutAttempt: jest.fn(async () => { checkout = pending; return pending; }), refreshCheckoutAttempt: jest.fn(async () => checkout),
+    checkoutCash: jest.fn(), listProducts: jest.fn().mockResolvedValue([]), listInventory: jest.fn().mockResolvedValue([]), listSales: jest.fn().mockResolvedValue([]), getProduct: jest.fn().mockResolvedValue(product) };
+  const tree = <PosProvider client={client as unknown as ApiClient} checkoutStore={storage}><Shop /></PosProvider>;
+  return { tree, client };
+}
+async function start(view: ReturnType<typeof render>) {
+  fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+  await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+  expect(view.getByText('Payment pending…')).toBeTruthy();
 }
 
-function shopClient(overrides: Record<string, unknown> = {}) {
-  return {
-    isConfigured: true,
-    listProducts: jest.fn().mockResolvedValue([]),
-    listInventory: jest.fn().mockResolvedValue([]),
-    listSales: jest.fn().mockResolvedValue([]),
-    createQrPhPayment: jest.fn().mockResolvedValue(pendingPayment),
-    refreshPayment: jest.fn().mockResolvedValue(pendingPayment),
-    createSale: jest.fn().mockResolvedValue(sale),
-    ...overrides,
-  } as unknown as ApiClient;
-}
-
-async function startPendingQrPayment(view: ReturnType<typeof render>) {
-  fireEvent.press(view.getByTestId('shop-open-checkout'));
-  fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-  fireEvent.press(view.getByTestId('start-qrph-payment'));
-  await waitFor(() => expect(view.getByTestId('qr-payment-status')).toBeTruthy());
-}
-
-describe('checkout after leaving and reopening a pending QR payment', () => {
-  let alertSpy: jest.SpyInstance;
-
-  beforeEach(() => {
-    alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
-  });
-
-  afterEach(() => {
-    alertSpy.mockRestore();
-  });
-
-  it('records no cash while the provider still holds the QR attempt', async () => {
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createSale });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
-
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-
+describe('checkout remount with durable machine state', () => {
+  beforeEach(() => jest.spyOn(Alert, 'alert').mockImplementation(() => undefined));
+  afterEach(() => jest.restoreAllMocks());
+  it('restores the retained QR inspection action and blocks cash after leaving and reopening', async () => {
+    const { tree, client } = fixture(); const view = render(tree); await start(view);
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).not.toHaveBeenCalled();
-    expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
-    expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
+    expect(client.checkoutCash).not.toHaveBeenCalled(); expect(view.getByTestId('checkout-cash-error')).toBeTruthy();
+    fireEvent.press(view.getByTestId('checkout-payment-qrph')); expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
-
-  it('records cash once the retained QR attempt reached a terminal status', async () => {
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createSale, refreshPayment: jest.fn().mockResolvedValue({ ...pendingPayment, status: 'failed' }) });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
+  it('keeps reversible unknown inspectable after refresh transport failure and remount', async () => {
+    const { tree, client } = fixture(); const view = render(tree); await start(view);
+    client.refreshCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('offline'));
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
-    expect(view.getByText('Payment failed. No sale was recorded and stock was not changed.')).toBeTruthy();
-
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    expect(view.getByText(/Payment outcome is unknown/)).toBeTruthy();
+    await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
+    await waitFor(() => expect(view.getByText('Payment pending…')).toBeTruthy());
   });
-
-  it('records no cash after the cart changed and checkout was reopened', async () => {
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createSale });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
-
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).not.toHaveBeenCalled();
-    expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
-    expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
-  });
-
-  it('checks the retained QR attempt after a cart edit and then records cash', async () => {
-    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const refreshPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'expired' });
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createQrPhPayment, refreshPayment, createSale });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
-
-    // The edited basket is a different signature, but the provider still holds
-    // the payable attempt the first basket started.
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
-
-    // No second payment is created; the retained attempt is surfaced instead.
-    expect(createQrPhPayment).toHaveBeenCalledTimes(1);
-    expect(view.getByText('Payment pending…')).toBeTruthy();
-    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
-
-    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
-    expect(view.getByText('Payment expired. Start a new QR Ph payment; stock was not changed.')).toBeTruthy();
-
-    // The earlier attempt is settled, so this checkout can record cash again.
-    fireEvent.press(view.getByTestId('checkout-payment-cash'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
-  });
-
-  it('keeps the edited cart when an earlier retained payment settles as paid', async () => {
-    const paidPayment = { ...pendingPayment, status: 'paid' as const, saleId: 'sale-1' };
-    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const refreshPayment = jest.fn().mockResolvedValue(paidPayment);
-    const client = shopClient({ createQrPhPayment, refreshPayment });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
-
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
-
-    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
-
-    // The paid attempt was for the one-item basket; the edited two-item basket
-    // is a different basket and must survive its settlement.
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
-    expect(view.queryByText('The cart is empty')).toBeNull();
-    expect(view.getByText('Qty 2 • ₱25.00 each')).toBeTruthy();
-  });
-
-  it('surfaces the retained QR check action after cash is refused for it', async () => {
-    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createQrPhPayment, createSale });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    await startPendingQrPayment(view);
-
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).not.toHaveBeenCalled();
-    expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
-
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
-  });
-
-  it('records cash after Laravel definitively rejected the QR attempt', async () => {
-    const createQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('The cart has no valid items.', 422, 'validation_error'));
-    const createSale = jest.fn().mockResolvedValue(sale);
-    const client = shopClient({ createQrPhPayment, createSale });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
-
-    // The refusal is an answer, not a provider attempt: leaving and reopening
-    // must not leave a retained key blocking cash for the basket.
-    fireEvent.press(view.getByTestId('shop-leave-checkout'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
-  });
-
-  it('offers no QR Ph start while a cash sale is being recorded', async () => {
-    let resolveSale!: (value: Sale) => void;
-    const createSale = jest.fn().mockReturnValue(new Promise<Sale>((done) => { resolveSale = done; }));
-    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const client = shopClient({ createSale, createQrPhPayment });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    fireEvent.press(view.getByTestId('confirm-cash-payment'));
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    fireEvent.press(view.getByTestId('start-qrph-payment'));
-
-    expect(createQrPhPayment).not.toHaveBeenCalled();
-    await act(async () => { resolveSale(sale); });
-  });
-
-  it('keeps the exact-payload cash retry available after a QR start is refused for it', async () => {
-    const createSale = jest.fn()
-      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
-      .mockResolvedValueOnce(sale);
-    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
-    const client = shopClient({ createSale, createQrPhPayment });
-    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
-
-    fireEvent.press(view.getByTestId('shop-seed-cart'));
-    fireEvent.press(view.getByTestId('shop-open-checkout'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    // The transport failure left an unacknowledged cash attempt. Its QR start
-    // is refused, but the refusal is not a QR outcome: the same cash payload
-    // must still be retryable with the key it already used.
-    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
-    expect(createQrPhPayment).not.toHaveBeenCalled();
-    expect(view.queryByTestId('qr-payment-status')).toBeNull();
-
-    fireEvent.press(view.getByTestId('checkout-payment-cash'));
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(createSale).toHaveBeenCalledTimes(2);
-    expect(createSale.mock.calls[1][0].idempotencyKey).toBe(createSale.mock.calls[0][0].idempotencyKey);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
+  it('reattaches ambiguous QR creation to the server attempt rather than starting another', async () => {
+    const { tree, client } = fixture();
+    client.createCheckoutAttempt.mockImplementationOnce(async () => { throw new ApiClientError('lost response'); });
+    client.recoverCheckout.mockResolvedValue(pending); client.getCheckout.mockResolvedValue(pending);
+    const view = render(tree); await start(view);
+    expect(client.recoverCheckout).toHaveBeenCalledWith('server-uuid');
+    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy(); expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
 });

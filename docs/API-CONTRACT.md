@@ -1,6 +1,6 @@
 # Mobile/API contract
 
-**Contract version for this round: `porsca-mobile-api-v2`.** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release. The embedded Express scaffold has been retired after Laravel payment parity was verified.
+**Development checkout contract: `porsca-mobile-api-v3` (not yet promoted to staging).** The mobile app uses the single client in [`src/api/client.ts`](../src/api/client.ts). Do not add `fetch` calls to screens or context modules. A Laravel API (`niks0501/PorSca_POS_API`) is the sole backend for local development, staging, and release. The embedded Express scaffold has been retired after Laravel payment parity was verified.
 
 ## Configuration
 
@@ -10,7 +10,7 @@ Users sign in with their own email and password. `AuthProvider` obtains a Sanctu
 
 ## Resource boundary
 
-The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v2` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Protected routes receive `Authorization: Bearer <session-token>` from the runtime token setter. Error responses should be `{ "error": "...", "details": ... }`, `{ "error": { "code": "...", "message": "...", "details": ... } }`, or `{ "message": "..." }` with an appropriate HTTP status. Paths below are relative to `/api/v1`; the contract version is v2 but the URL prefix remains `/api/v1`.
+The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v3` and expects JSON. Laravel Resource responses may be wrapped in `{ "data": ... }`; the client unwraps that envelope. Protected routes receive `Authorization: Bearer <session-token>` from the runtime token setter. Error responses should be `{ "error": "...", "details": ... }`, `{ "error": { "code": "...", "message": "...", "details": ... } }`, or `{ "message": "..." }` with an appropriate HTTP status. Paths below are relative to `/api/v1`; the contract version is v3 but the URL prefix remains `/api/v1`.
 
 | Capability | Method | Path | Client method |
 | --- | --- | --- | --- |
@@ -25,13 +25,19 @@ The client sends `X-PorSca-Contract-Version: porsca-mobile-api-v2` and expects J
 | Barcode lookup | GET | `/products/barcode/:barcode` | `getProductByBarcode()` (404 when unknown) |
 | Product stock | PATCH | `/products/:id/stock` | `updateInventory()` (the `/inventory/:id` alias is also supported) |
 | Inventory | GET | `/inventory` | `listInventory()` |
-| Sale | POST | `/sales/checkout` | `createSale()` |
+| Durable purchase | GET/POST | `/checkouts` | `listCheckouts()` / `createCheckout()` |
 | Completed sales | GET | `/sales` | `listSales()` |
 | Transactions | GET | `/transactions` | `listTransactions()` |
 | Transaction | GET | `/transactions/:id` | `getTransaction()` |
-| QR Ph payment | POST | `/payments` | `createQrPhPayment()` |
-| Payment status (stored read) | GET | `/payments/:id` | `getPaymentStatus()` |
-| Payment refresh (provider-verified) | POST | `/payments/:id/refresh` | `refreshPayment()` |
+| Checkout session | GET | `/checkout-session` | `checkoutSession()` |
+| Stored checkout | GET | `/checkouts/:id` | `getCheckout()` |
+| Recovery / quote / abandonment | POST | `/checkouts/:id/recover`, `/revalidate`, `/abandon` | `recoverCheckout()` / `revalidateCheckout()` / `abandonCheckout()` |
+| Cash receipt | POST | `/checkouts/:id/cash` | `checkoutCash()` |
+| QR attempts | GET/POST | `/checkouts/:id/attempts` | `listCheckoutAttempts()` / `createCheckoutAttempt()` |
+| Attempt / hold | GET | `/checkouts/:id/attempts/:attempt`, `/reservation` | `getCheckoutAttempt()` / `checkoutReservation()` |
+| Provider verification | POST | `/checkouts/:id/attempts/:attempt/refresh` | `refreshCheckoutAttempt()` |
+| Admin simulation capability | POST | `/checkouts/:id/attempts/:attempt/simulation-capability` | `checkoutSimulationCapability()` |
+| Admin reconciliation reads | GET | `/reconciliation-cases`, `/reconciliation-cases/:id` | `listReconciliationCases()` / `getReconciliationCase()` |
 
 Laravel product responses are wrapped in `{ data: ... }`. A product has `id`, `sku`, `barcode`, `name`, `category`, `price` (integer PHP centavos on the wire), and a `stock` object containing `quantity`, `reorder_level`, `status`, `low_stock`, and `out_of_stock`. The mobile client normalizes prices to pesos for the existing UI and converts them back to centavos for product writes. Product search is case-insensitive by name; barcode lookup is exact and returns a structured 404 for an unknown barcode. Inventory rows use the same stock state names: `in_stock`, `low_stock`, or `out_of_stock`.
 
@@ -51,27 +57,34 @@ Cashier account management is available from the admin-only phone Users screen. 
 
 The API admin seed uses private `ADMIN_EMAIL`/`ADMIN_PASSWORD` configuration; no account credentials belong in this repository.
 
-The paired RBAC API implementation was inspected on development at `335eb36447f8997f43485d6c7d44583acdf9334a`. Promote compatible mobile/API contract-v2 revisions together; do not pair this client with a shared-token v1 API.
+The paired RBAC API implementation was inspected on development at `335eb36447f8997f43485d6c7d44583acdf9334a`. Catalog/auth/history retain their v2 shapes. Checkout requires the matching durable authority v3 revision. This development integration does not promote either repository; exact mobile/API revisions require a separate paired staging PR and human QA approval.
 
-Cash sale requests contain `idempotencyKey`, `paymentMethod: "cash"`, `cashReceived`, and line items (`productId`, `quantity`). Money values sent to Laravel are integer PHP centavos (`₱100.00` is `10000`). `total` and line `unitPrice` may be sent for client compatibility, but Laravel ignores them and recomputes authoritative prices and totals. The mobile client sends `POST /sales/checkout` with an `Idempotency-Key` header. A new sale returns the completed sale with `201`; retrying the same key and identical cart/cash returns that sale with `200`. A reused key with a different request returns `409`; insufficient cash returns `422`; insufficient stock returns `409` without creating a sale or changing stock.
+## Durable checkout lifecycle (v3)
 
-Completed cash sales are loaded for the Transactions screen with `GET /sales?per_page=100`. Each sale includes `id`, `status: "completed"`, `payment_method`, `total_amount`, `cash_received`, `change_amount`, `completed_at`, and item price snapshots. The mobile client normalizes the wire amounts to pesos and displays the completed state, payment method, amount received, and change.
+The authority resources require the v3 header (409 otherwise). The authoritative backend contract is `PorSca_POS_API/docs/CHECKOUT-CONTRACT.md`; URL prefix remains `/api/v1`. Legacy `createSale`, `createQrPhPayment`, and payment reads remain client compatibility methods only; the POS never uses them for a new purchase.
 
-### Mobile client behaviour on these endpoints (no contract change)
+- Creation: `POST /checkouts` with `{ items: [{ productId, quantity }] }` (positive JSON integers) and an `Idempotency-Key`. Laravel assigns the checkout UUID, authoritative price snapshots, `revision` and `amountCentavos`. A new purchase, even an identical basket, uses a new creation key.
+- Cash: `{ revision, acceptedAmountCentavos, cashReceivedCentavos }`. QR: `{ revision, acceptedAmountCentavos }`. Both require stable tender keys, persisted before sending; an uncertain response retains the exact key/payload. Money is integer centavos, bounded to 0–4294967295; the existing UI/catalog peso-number seam converts only at the boundary.
+- Cash text uses strict digits with at most two decimal places; blank, signs, exponent, comma and whitespace forms are invalid. Exact and denomination presets fill input only; only explicit cash confirmation asserts physical receipt.
+- Quote changes require server revalidation, disclosure of the recovered snapshot, and a subsequent explicit confirmation. Never silently accept a changed amount. A different basket cannot reuse the device's durable purchase: recover the original or safely abandon it first.
+- Checkout states: `open`, `payment_unresolved`, `ready_for_attempt`, `completed`, `paid_unfulfilled`, `provider_contradiction`, `abandoned`. Attempt verification states are independently `pending`, `unknown`, `paid`, `non_payable`, `contradiction`. Only a committed `sale` in a completed checkout is sale success.
+- `checkoutMachine.ts` owns active UI tender locks, strict cash grammar, and pending-to-unknown verification transitions; the v3 adapter feeds it stored authority observations, not UI claims. Pending/unknown QR blocks Cash. Failed verification becomes reversible unknown; later server pending restores pending. QR/hold expiry never establishes non-payability or permits a new tender. First verified outcome stands; contradictory observations remain in Laravel, lock tender, and expose read-only exception markers. No local paid control or provider-outcome injection exists.
+- Recovery GET/show/recover uses stored truth, not provider I/O. Refresh performs provider verification through Laravel. Opening the POS fetches every unresolved discovery page and resolves each listed checkout with show; operators can recover an interrupted purchase. The device handle (checkout id, creation/tender keys, basket signature) survives restart/sign-out via native SecureStore or browser localStorage, namespaced by API base. It stores no credentials or capability URL. Missing/unavailable authority records surface a recovery error, never a paid result.
+- QR completion is retained until authoritative inventory/history reads succeed; sign-out cannot discard the handle. Paid-but-unfulfilled and contradictions remain locked. Abandonment requires an attributed 8–500-character reason, is server-authorized and terminal, and retires the device identity so the next purchase receives a new UUID.
+- Admin-only capability and reconciliation reads check the live checkout-session role; Laravel still enforces authorization. Simulation additionally requires explicitly approved staging sandbox eligibility. Capability retrieval never changes payment state; no reconciliation write UI is added.
+
+Completed sales/history retain v2 wire fields (`total_amount`, `cash_received`, `change_amount`, item snapshots), normalized to pesos for the existing Transactions screen.
+
+### Unchanged catalog and cart review behavior
 
 - **Barcode canonicalisation.** iOS reports UPC-A as EAN-13 with a leading zero, so `getProductByBarcode()` tries the EAN-13 leading-zero form of a 12-digit symbol and the 12-digit form of a leading-zero EAN-13 symbol. The second attempt happens only after a `404`. The stored barcode is untouched; the alternates live in the mobile client.
 - **Search shape.** A query matching `^\d{8,64}$` is an exact lookup and is sent as `?barcode=`; anything else is sent as `?search=`. The offline filter uses the same predicate and the same name-only matching, so online and offline return the same rows for text and for short numeric queries. Search requests are debounced by 280 ms with one in-flight read per query; a repeated same-query invocation shares that read instead of discarding it.
-- **Pre-checkout revalidation.** Before a cart is handed to checkout the client re-reads each line with `GET /products/:id` and compares price and stock with the cart snapshot. A `404` marks that line as no longer in the catalog. Each result carries a cart signature: if the cart changes while the lines are being read (or while the review is open) the client re-reads the cart and never applies a stale review. Laravel remains the pricing authority, and `POST /sales/checkout` is still the only way a sale is recorded.
-- **Cash retry safety.** An idempotency key is bound to the exact mobile payload, per-line price included. A plain retry after a transport failure reuses the key. If the payload changed after an unacknowledged attempt, the client looks the earlier idempotency key up in `GET /sales` and refuses to send a revised sale until that receipt is resolved. A receipt missing from `GET /sales?per_page=100` is conclusively absent only when the response has a complete first page (`current_page = last_page = 1` and `total` equals the returned item count). Incomplete, missing, or inconsistent pagination leaves the original attempt unresolved; page-1 absence never authorizes a new key on its own.
-- **Tender exclusivity and retained QR recovery.** A retained QR attempt that may still collect funds blocks cash and blocks starting another basket's QR payment. Retrying its original basket reuses the attempt and restores a known payment for status checking. If that payment is surfaced after a cart edit, settling the earlier basket does not clear the edited cart. A known `paid` attempt is retired only after inventory/history verification; `failed`, `cancelled`, or `expired` releases the lock, while pending/unknown and `paid_unfulfilled` remain blocked.
-- **QR sale lifecycle.** After a paid attempt's inventory/history verification succeeds, its basket signature and key are retired so a later identical basket creates a new pending payment. Pending/uncertain retries keep their original key. Failed verification and `paid_unfulfilled` retain the original attempt for recovery or reconciliation.
-
-QR Ph requests contain `idempotencyKey` and line items (`productId`, `quantity`); Laravel recomputes the amount from current prices. Payment responses contain `id`, `status` (`pending`, `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired`), `amount`, the provider QR payload when available, and settlement fields (`failure_reason`, `reservation_expires_at`). `GET /payments/:id` returns the stored state only. `POST /payments/:id/refresh` asks the PayMongo sandbox for the latest verified outcome and settles it server-side; it is never a cancellation. Laravel exposes no cashier cancel action (`cancelled` remains readable for legacy attempts), so the app offers Leave Payment instead of Cancel: leaving keeps the cart and the pending attempt expires server-side. A `paid_unfulfilled` payment received money but could not fulfil stock, so the app refreshes inventory and history, keeps the cart, and offers no new payment until the operator reconciles.
+- **Pre-checkout revalidation.** Before a cart is handed to checkout the client re-reads each line with `GET /products/:id` and compares price and stock with the cart snapshot. A `404` marks that line as no longer in the catalog. Each result carries a cart signature: if the cart changes while the lines are being read (or while the review is open) the client re-reads the cart and never applies a stale review. Laravel remains the pricing authority, and only the durable authority can record a sale.
 
 ## Safety rules
 
 - PayMongo secret keys, webhook signing secrets, and provider requests stay on Laravel. The mobile bundle only receives a transaction-specific QR or payment status.
-- Laravel validates and records cash sales through the cash-checkout endpoint. QR Ph creates a sale only after Laravel confirms provider payment; pending, failed, cancelled, expired, and `paid_unfulfilled` QR attempts create no sale or stock change.
+- Laravel validates and records cash sales through the durable checkout cash endpoint. QR Ph creates a sale only after Laravel confirms provider payment; pending, failed, cancelled, expired, and `paid_unfulfilled` QR attempts create no sale or stock change.
 - `Idempotency-Key` is required on sale and QR payment requests. A retry of the same key must return the original result rather than create another sale or deduct stock again.
 - Backend transaction processing owns the final inventory deduction. The opt-in demo catalog substitutes reads only after sign-in; it never bypasses auth or records a local sale.
 - API changes require a contract version update and paired mobile/API promotion notes.

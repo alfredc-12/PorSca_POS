@@ -57,11 +57,20 @@ export type CheckoutEvent =
   | { type: 'sale-recorded'; attemptId: string; saleId: string }
   | { type: 'fulfillment-failed'; attemptId: string }
   | { type: 'abandon'; authorized: boolean }
-  | { type: 'reconciliation-closed' };
+  | { type: 'reconciliation-closed' }
+  /** Trusted stored authority observation, never a UI/provider callback. */
+  | { type: 'authority-observed'; checkout: CheckoutMachine };
 
 export type TransitionResult =
   | { ok: true; checkout: CheckoutMachine }
   | { ok: false; checkout: CheckoutMachine; reason: string };
+
+export function canAcceptCheckoutTender(checkout?: CheckoutMachine): boolean {
+  return !checkout || (!checkout.reconciliationRequired && (checkout.state === 'open' || checkout.state === 'ready-for-new-attempt'));
+}
+
+/** The UI and authority adapter share the machine's cash grammar. */
+export const checkoutCashTender = validateCashTender;
 
 export function openCheckout(id: string, amountCentavos: number): CheckoutMachine {
   if (!id.trim()) throw new Error('Checkout identity is required.');
@@ -72,13 +81,10 @@ export function openCheckout(id: string, amountCentavos: number): CheckoutMachin
 }
 
 /**
- * Pure projection of trusted authority observations, NOT payment authorization.
- * No network, clock, inventory writes, or sale creation. Adapters in a later wave
- * must correlate attempt-specific evidence and supply durable sale/hold results;
- * UI timer/callback claims must never be translated into verified outcomes.
- * Cash selection before confirmation stays Open; begin-attempt starts the cash
- * confirmation (and locks tender), not merely a selection of a payment tab.
- * Persist/rehydrate the complete value, including old attempts, in that wave.
+ * Single active UI transition owner, NOT payment authorization. The v3 adapter
+ * supplies trusted stored authority observations; no UI timer/callback claims
+ * may be translated into verified outcomes. No network or inventory effects.
+ * Cash selection alone stays Open; only explicit confirmation starts a tender.
  */
 export function transitionCheckout(checkout: CheckoutMachine, event: CheckoutEvent): TransitionResult {
   const accept = (next: CheckoutMachine = checkout): TransitionResult => ({ ok: true, checkout: next });
@@ -90,8 +96,20 @@ export function transitionCheckout(checkout: CheckoutMachine, event: CheckoutEve
     checkout.attempts.map((old) => old.id === attempt.id ? attempt : old);
 
   switch (event.type) {
+    case 'authority-observed': {
+      if (event.checkout.id !== checkout.id) return reject('Authority identity mismatch.');
+      assertCentavos(event.checkout.amountCentavos);
+      if (checkout.state === 'abandoned' && event.checkout.state !== 'abandoned') return reject('Abandonment is terminal.');
+      if (checkout.saleId && event.checkout.saleId !== checkout.saleId) return reject('A durable sale cannot be replaced or erased.');
+      for (const previous of checkout.attempts) {
+        const observed = event.checkout.attempts.find(attempt => attempt.id === previous.id);
+        if (previous.finalEvidence && observed?.finalEvidence?.outcome !== previous.finalEvidence.outcome) return reject('The first verified financial outcome must stand.');
+        if (previous.contradictions.length && (!observed?.contradictions.length || !event.checkout.reconciliationRequired)) return reject('Contradictions must remain preserved and locked.');
+      }
+      return accept(event.checkout);
+    }
     case 'begin-attempt': {
-      if (locked || (checkout.state !== 'open' && checkout.state !== 'ready-for-new-attempt')) {
+      if (!canAcceptCheckoutTender(checkout)) {
         return reject('Checkout cannot accept another tender.');
       }
       if (!event.attemptId.trim() || checkout.attempts.some((attempt) => attempt.id === event.attemptId)) {

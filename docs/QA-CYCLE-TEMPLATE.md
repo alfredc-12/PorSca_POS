@@ -15,7 +15,7 @@ See [WORKFLOW.md](WORKFLOW.md) for the standing collaboration and release rules 
 - **Environment:** `staging`
 - **Staging API address:** `<stable HTTPS address ending in /api/v1>`
 - **App profile:** `preview`, after the pre-build checklist is green
-- **API contract:** `porsca-mobile-api-v2`
+- **API contract:** `porsca-mobile-api-v3`
 - **Cycle status:** `not started | in progress | approval pending | approved | rejected`
 - **Approval:** `<human decision, date, and evidence links>`
 

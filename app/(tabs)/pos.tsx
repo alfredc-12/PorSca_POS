@@ -36,6 +36,10 @@ export default function PosScreen() {
     replaceCartLines,
     demoCatalogEnabled,
     apiConfigured,
+    recoverableCheckouts = [],
+    checkoutRecoveryError,
+    openPosCheckouts,
+    recoverCheckout,
   } = usePos();
   const [query, setQuery] = useState('');
   const [method, setMethod] = useState<PaymentMethod>('cash');
@@ -52,6 +56,8 @@ export default function PosScreen() {
   useEffect(() => {
     void searchProducts(debouncedQuery);
   }, [debouncedQuery, searchProducts]);
+
+  useEffect(() => { void openPosCheckouts?.(); }, [openPosCheckouts]);
 
   const retrySearch = () => {
     void searchProducts(query);
@@ -122,6 +128,11 @@ export default function PosScreen() {
 
   return (
     <Screen>
+      {checkoutRecoveryError ? <Text accessibilityRole="alert">{checkoutRecoveryError}</Text> : null}
+      {checkoutRecoveryError ? <Pressable accessibilityRole="button" onPress={() => void openPosCheckouts()}><Text>Retry checkout recovery</Text></Pressable> : null}
+      {recoverableCheckouts.map(checkout => <Pressable key={checkout.id} accessibilityRole="button" onPress={() => {
+        void recoverCheckout(checkout.id).then(() => router.push('/checkout')).catch(() => setCartNotice('Resolve the device purchase before recovering another checkout.'));
+      }}><Text>Recover {checkout.id} • {checkout.state} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}
       <View style={styles.searchRow}>
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />

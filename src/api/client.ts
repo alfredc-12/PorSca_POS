@@ -1,7 +1,8 @@
 import { PaymentMethod, PaymentStatus, Product, Sale, StockStatus } from '@/src/types';
+import { AuthorityAttempt, AuthorityCheckout, AuthorityPage, CheckoutSession, CheckoutTender, ReconciliationCase } from './checkoutAuthority';
 
 /** The mobile/API contract version promoted with the staging workflow. */
-export const API_CONTRACT_VERSION = 'porsca-mobile-api-v2';
+export const API_CONTRACT_VERSION = 'porsca-mobile-api-v3';
 
 export type AuthUser = {
   id: string | number;
@@ -404,6 +405,43 @@ export class ApiClient {
   refreshPayment(paymentId: string) {
     return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/refresh`), { method: 'POST' }).then(normalizePayment);
   }
+
+  checkoutSession() { return this.request<CheckoutSession>(this.versionedPath('/checkout-session')); }
+  listCheckouts(page = 1) { return this.request<AuthorityPage<AuthorityCheckout>>(this.versionedPath(`/checkouts?per_page=100&page=${page}`)); }
+  createCheckout(items: { productId: number; quantity: number }[], key: string) {
+    return this.request<AuthorityCheckout>(this.versionedPath('/checkouts'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: { items } });
+  }
+  getCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id)); }
+  recoverCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/recover'), { method: 'POST' }); }
+  revalidateCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/revalidate'), { method: 'POST' }); }
+  abandonCheckout(id: string, reason: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/abandon'), { method: 'POST', body: { reason } }); }
+  checkoutCash(id: string, tender: CheckoutTender, key: string) {
+    return this.request<AuthorityCheckout>(this.checkoutPath(id, '/cash'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: tender });
+  }
+  createCheckoutAttempt(id: string, tender: CheckoutTender, key: string) {
+    return this.request<AuthorityCheckout>(this.checkoutPath(id, '/attempts'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: tender });
+  }
+  listCheckoutAttempts(id: string) { return this.request<{ items: AuthorityAttempt[] }>(this.checkoutPath(id, '/attempts')); }
+  getCheckoutAttempt(id: string, attempt: number) { return this.request<AuthorityAttempt>(this.checkoutPath(id, `/attempts/${attempt}`)); }
+  checkoutReservation(id: string, attempt: number) { return this.request<{ checkoutId: string; attemptId: number; reservation: AuthorityAttempt['reservation'] }>(this.checkoutPath(id, `/attempts/${attempt}/reservation`)); }
+  refreshCheckoutAttempt(id: string, attempt: number) { return this.request<AuthorityCheckout>(this.checkoutPath(id, `/attempts/${attempt}/refresh`), { method: 'POST' }); }
+  async checkoutSimulationCapability(id: string, attempt: number) {
+    const session = await this.checkoutSession();
+    if (session.user.role !== 'admin' || !session.simulationAllowed) throw new ApiClientError('Simulation is not available.', 403);
+    return this.request<{ checkoutId: string; attemptId: number; provider: string; url: string }>(this.checkoutPath(id, `/attempts/${attempt}/simulation-capability`), { method: 'POST' });
+  }
+  async listReconciliationCases(page = 1) {
+    await this.requireCheckoutAdmin();
+    return this.request<AuthorityPage<ReconciliationCase>>(this.versionedPath(`/reconciliation-cases?per_page=100&page=${page}`));
+  }
+  async getReconciliationCase(id: number) {
+    await this.requireCheckoutAdmin();
+    return this.request<ReconciliationCase>(this.versionedPath(`/reconciliation-cases/${id}`));
+  }
+  private async requireCheckoutAdmin() {
+    if ((await this.checkoutSession()).user.role !== 'admin') throw new ApiClientError('Administrator access required.', 403);
+  }
+  private checkoutPath(id: string, suffix = '') { return this.versionedPath(`/checkouts/${encodeURIComponent(id)}${suffix}`); }
 
   private versionedPath(path: string) {
     const baseUrl = this.baseUrl ?? '';
