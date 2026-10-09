@@ -409,9 +409,10 @@ function describeQrVerification(error: unknown): DescribedFailure {
 }
 
 /**
- * A failed QR start either rules the attempt out, leaves it unresolved, or was
- * refused because an earlier cash attempt still is. Only the first may clear
- * the screen's cash guard; the provider retains the same distinction.
+ * A failed QR start either created no attempt, left its outcome unresolved, or
+ * was refused because an earlier cash attempt still is. The refusals created
+ * no QR attempt, so they return the panel to idle instead of inventing a QR
+ * verification state; a transport or server outcome stays unresolved.
  */
 function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
@@ -426,7 +427,7 @@ function qrStartFailure(error: unknown): { status: QrViewStatus; failure: Descri
   }
   if (apiError?.code === 'cash_attempt_unresolved') {
     return {
-      status: 'verification',
+      status: 'idle',
       failure: describeAndRecordFailure(
         { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
         { screen: 'cash-sale' },

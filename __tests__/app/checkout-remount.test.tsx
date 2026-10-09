@@ -174,4 +174,33 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(createQrPhPayment).not.toHaveBeenCalled();
     await act(async () => { resolveSale(sale); });
   });
+
+  it('keeps the exact-payload cash retry available after a QR start is refused for it', async () => {
+    const createSale = jest.fn()
+      .mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'))
+      .mockResolvedValueOnce(sale);
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const client = shopClient({ createSale, createQrPhPayment });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    // The transport failure left an unacknowledged cash attempt. Its QR start
+    // is refused, but the refusal is not a QR outcome: the same cash payload
+    // must still be retryable with the key it already used.
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+    expect(createQrPhPayment).not.toHaveBeenCalled();
+    expect(view.queryByTestId('qr-payment-status')).toBeNull();
+
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(createSale).toHaveBeenCalledTimes(2);
+    expect(createSale.mock.calls[1][0].idempotencyKey).toBe(createSale.mock.calls[0][0].idempotencyKey);
+    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
+  });
 });

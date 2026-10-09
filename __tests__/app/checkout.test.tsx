@@ -328,8 +328,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(completeCashSale).toHaveBeenCalledWith(100);
   });
 
-  it('explains a QR start refused because an earlier cash attempt is unresolved', async () => {
-    const completeCashSale = jest.fn();
+  it('leaves cash retryable after a QR start is refused because that cash attempt is unresolved', async () => {
+    const completeCashSale = jest.fn().mockResolvedValue(sale);
     setContext({
       completeCashSale,
       startQrPhPayment: jest.fn().mockRejectedValue(new ApiClientError('A cash payment for this cart is still unresolved.', undefined, 'cash_attempt_unresolved')),
@@ -338,13 +338,17 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.press(view.getByTestId('checkout-payment-qrph'));
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
 
+    // The refusal is not a QR outcome: no verification status and no QR retry
+    // affordance appear, and the cash attempt stays the thing to retry.
     expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Check the earlier attempt first/);
+    expect(view.queryByTestId('qr-payment-status')).toBeNull();
+    expect(view.getByTestId('start-qrph-payment')).toHaveTextContent('Start QR Ph Payment');
 
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
 
-    expect(completeCashSale).not.toHaveBeenCalled();
+    expect(completeCashSale).toHaveBeenCalledWith(100);
   });
 
   it('offers no QR Ph start while a cash sale is being recorded', async () => {
