@@ -4,7 +4,7 @@ This is the formal native Android frontend automation seam. It is deliberately n
 
 ## Run exactly
 
-From a freshly rebuilt contract-v2 preview APK/install (with `expo-secure-store`) and the recorded staging seed, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active staging cashier/admin account; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
+From a freshly rebuilt contract-v3-compatible preview APK/install (with `expo-secure-store`) and the recorded staging seed, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active staging cashier/admin account; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
 
 ```bash
 cd automation/appium

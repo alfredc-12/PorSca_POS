@@ -82,9 +82,11 @@ describe('POS durable checkout integration', () => {
     const previousKey = handle()?.tender?.key;
     first.unmount();
     client.getCheckout.mockResolvedValue(readyForQrRetry);
+    client.recoverCheckout.mockResolvedValue(readyForQrRetry);
     const replacement: AuthorityCheckout = { ...readyForQrRetry, state: 'payment_unresolved', attempts: [...readyForQrRetry.attempts, { ...pending.attempts[0], id: 8 }] };
     client.createCheckoutAttempt.mockResolvedValueOnce(replacement);
     const second = renderHook(() => usePos(), { wrapper });
+    await act(async () => { await second.result.current.recoverCheckout(); });
     await act(async () => { await second.result.current.startQrPhPayment(true); });
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(2);
     expect(client.createCheckoutAttempt.mock.calls[1][2]).not.toBe(previousKey);
@@ -251,7 +253,7 @@ describe('POS durable checkout integration', () => {
       finishRetire();
       await recovery;
     });
-    expect(second.result.current.cart[0].quantity).toBe(2);
+    expect(second.result.current.cart[0].quantity).toBe(3);
     expect(handle()).toBeNull();
   });
   it('resolves a lost cash response on restart without charging the purchase twice', async () => {

@@ -85,7 +85,7 @@ Completed sales/history retain v2 wire fields (`total_amount`, `cash_received`, 
 
 - PayMongo secret keys, webhook signing secrets, and provider requests stay on Laravel. The mobile bundle only receives a transaction-specific QR or payment status.
 - Laravel validates and records cash sales through the durable checkout cash endpoint. QR Ph creates a sale only after Laravel confirms provider payment; pending, failed, cancelled, expired, and `paid_unfulfilled` QR attempts create no sale or stock change.
-- `Idempotency-Key` is required on sale and QR payment requests. A retry of the same key must return the original result rather than create another sale or deduct stock again.
+- `Idempotency-Key` is required on durable checkout creation, cash receipt, and QR attempt-creation requests. A retry with the same key must return the original result rather than create another checkout, sale, or inventory deduction.
 - Backend transaction processing owns the final inventory deduction. The opt-in demo catalog substitutes reads only after sign-in; it never bypasses auth or records a local sale.
 - API changes require a contract version update and paired mobile/API promotion notes.
 

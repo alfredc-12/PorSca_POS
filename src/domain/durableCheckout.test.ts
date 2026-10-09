@@ -142,16 +142,18 @@ describe('durable authority workflow and machine integration', () => {
     client.listCheckouts.mockResolvedValue({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } });
     await authority.recover('server-uuid');
     expect(client.recoverCheckout).toHaveBeenCalledWith('server-uuid');
-    expect(saved()).toMatchObject({ id: 'server-uuid', signature: '[[1,1]]' });
+    expect(saved).toMatchObject({ id: 'server-uuid', signature: '[[1,1]]' });
   });
   it('does not let a completed checkout satisfy a different payment method', async () => {
-    const { authority, client } = fixture();
+    const { authority, client, storage } = fixture();
     const completedQr: AuthorityCheckout = { ...pending, state: 'completed', sale: { id: 9, method: 'qrph', amountCentavos: 1010, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'now' } };
+    await storage.save({ key: 'retained-qr', signature: '[[1,1]]', id: 'server-uuid' });
     client.getCheckout.mockResolvedValue(completedQr);
     await expect(authority.tender(lines, 'cash', '20')).rejects.toThrow(/locked/);
     expect(client.checkoutCash).not.toHaveBeenCalled();
     const cashFixture = fixture();
     const completedCash: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 10, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } };
+    await cashFixture.storage.save({ key: 'retained-cash', signature: '[[1,1]]', id: 'server-uuid' });
     cashFixture.client.getCheckout.mockResolvedValue(completedCash);
     await expect(cashFixture.authority.tender(lines, 'qrph')).rejects.toThrow(/locked/);
     expect(cashFixture.client.createCheckoutAttempt).not.toHaveBeenCalled();
