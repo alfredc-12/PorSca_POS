@@ -1,6 +1,6 @@
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
-import { CheckoutHandle, CheckoutStorage, DurableCheckout, checkoutPayment } from './durableCheckout';
+import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError, DurableCheckout, checkoutPayment } from './durableCheckout';
 import { canAcceptCheckoutTender } from './checkoutMachine';
 
 const lines = [{ product: { id: '1', name: 'Coffee', barcode: '12345678', price: 10.1, stock: 20 }, quantity: 1 }];
@@ -11,7 +11,7 @@ function fixture() {
   const storage: CheckoutStorage = { load: jest.fn(async () => saved), save: jest.fn(async value => { saved = value ? JSON.parse(JSON.stringify(value)) : null; }) };
   const client = {
     createCheckout: jest.fn().mockResolvedValue(open), getCheckout: jest.fn().mockResolvedValue(open),
-    recoverCheckout: jest.fn().mockResolvedValue(pending), createCheckoutAttempt: jest.fn().mockResolvedValue(pending),
+    recoverCheckout: jest.fn().mockResolvedValue(pending), listCheckouts: jest.fn().mockResolvedValue({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } }), createCheckoutAttempt: jest.fn().mockResolvedValue(pending),
     checkoutCash: jest.fn(), refreshCheckoutAttempt: jest.fn().mockResolvedValue(pending),
     revalidateCheckout: jest.fn().mockResolvedValue({ ...open, revision: 2 }), abandonCheckout: jest.fn().mockResolvedValue({ ...open, state: 'abandoned' }),
   };
@@ -27,6 +27,63 @@ describe('durable authority workflow and machine integration', () => {
     expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
     expect(client.checkoutCash).toHaveBeenCalledWith('server-uuid', { revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 2000 }, expect.any(String));
     expect(authority.machine?.state).toBe('completed');
+  });
+  it('rejects non-server product identities and invalid quantities before persisting a checkout', async () => {
+    const { authority, client, storage, saved } = fixture();
+    const invalidLines = [
+      [{ ...lines[0], product: { ...lines[0].product, id: 'prd-001' } }],
+      [{ ...lines[0], quantity: 1.5 }],
+      [{ ...lines[0], quantity: 0 }],
+    ];
+    for (const invalid of invalidLines) await expect(authority.prepare(invalid)).rejects.toThrow(/server identities/);
+    expect(storage.save).not.toHaveBeenCalled();
+    expect(saved()).toBeNull();
+    expect(client.createCheckout).not.toHaveBeenCalled();
+  });
+  it('keeps a corrupt stored identity unresolved until a discovered checkout is explicitly reattached', async () => {
+    let saved: CheckoutHandle | null = null;
+    const storage: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('invalid')),
+      save: jest.fn(async value => { saved = value; }),
+    };
+    const { client } = fixture();
+    client.listCheckouts.mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } });
+    const authority = new DurableCheckout(client as unknown as ApiClient, storage);
+    await expect(authority.recover()).rejects.toThrow(/identity is unreadable/);
+    await expect(authority.retire()).rejects.toThrow(/must be resolved through server recovery/);
+    await expect(authority.recover('missing-id')).rejects.toThrow(/not found in server discovery/);
+    await expect(authority.prepare(lines)).rejects.toThrow(/identity is unreadable/);
+    expect(storage.save).not.toHaveBeenCalled();
+    client.listCheckouts.mockResolvedValue({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } });
+    await authority.recover('server-uuid');
+    expect(client.recoverCheckout).toHaveBeenCalledWith('server-uuid');
+    expect(saved()).toMatchObject({ id: 'server-uuid', signature: '[[1,1]]' });
+  });
+  it('does not let a completed checkout satisfy a different payment method', async () => {
+    const { authority, client } = fixture();
+    const completedQr: AuthorityCheckout = { ...pending, state: 'completed', sale: { id: 9, method: 'qrph', amountCentavos: 1010, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'now' } };
+    client.getCheckout.mockResolvedValue(completedQr);
+    await expect(authority.tender(lines, 'cash', '20')).rejects.toThrow(/locked/);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    const cashFixture = fixture();
+    const completedCash: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 10, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } };
+    cashFixture.client.getCheckout.mockResolvedValue(completedCash);
+    await expect(cashFixture.authority.tender(lines, 'qrph')).rejects.toThrow(/locked/);
+    expect(cashFixture.client.createCheckoutAttempt).not.toHaveBeenCalled();
+  });
+  it.each([408, 409, 425, 429])('recovers QR attempt creation status %i and retains its idempotency key', async status => {
+    const { authority, client, saved } = fixture();
+    client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('uncertain', status));
+    await authority.tender(lines, 'qrph');
+    expect(client.recoverCheckout).toHaveBeenCalledWith('server-uuid');
+    expect(saved()?.tender?.key).toBeTruthy();
+  });
+  it('releases the QR tender key only for a definitive refusal', async () => {
+    const { authority, client, saved } = fixture();
+    client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('invalid', 422));
+    await expect(authority.tender(lines, 'qrph')).rejects.toThrow('invalid');
+    expect(client.recoverCheckout).not.toHaveBeenCalled();
+    expect(saved()?.tender).toBeUndefined();
   });
   it.each(['', '1e3', '+20', ' 20', '20 ', '20.001', '2,000', '-20'])('rejects cash grammar %j without cash I/O', async input => {
     const { authority, client } = fixture();

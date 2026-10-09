@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, renderHook } from '@testing-library/react-native';
+import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos } from './PosContext';
@@ -9,6 +9,7 @@ const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock
 const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
 const pending: AuthorityCheckout = { ...open, state: 'payment_unresolved', attempts: [{ id: 7, method: 'qrph', amountCentavos: 2500, currency: 'PHP', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: 'QR', qrExpiresAt: null, reservation: null }] };
 const paid: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', financialStatus: 'paid', firstVerifiedOutcome: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: '2026-10-09' } };
+const paidUnfulfilled: AuthorityCheckout = { ...pending, state: 'paid_unfulfilled', attempts: [{ ...pending.attempts[0], status: 'paid', financialStatus: 'paid_unfulfilled', firstVerifiedOutcome: 'paid' }] };
 function fixture() {
   let handle: CheckoutHandle | null = null;
   const store: CheckoutStorage = { load: async () => handle, save: async value => { handle = value ? JSON.parse(JSON.stringify(value)) : null; } };
@@ -83,6 +84,20 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await result.current.recoverCheckout('durable-uuid'); });
     expect(result.current.unresolvedQrPayment()?.id).toBe('7');
   });
+  it.each(['inventory', 'history'])('keeps paid-but-unfulfilled QR unresolved when %s verification fails', async failedRead => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+    client.recoverCheckout.mockResolvedValue(paidUnfulfilled);
+    if (failedRead === 'inventory') client.listInventory.mockRejectedValueOnce(new ApiClientError('offline'));
+    else client.listSales.mockRejectedValueOnce(new ApiClientError('offline'));
+    await act(async () => {
+      await expect(result.current.confirmQrPhPayment({ id: '7', status: 'paid_unfulfilled', amount: 25 })).rejects.toThrow(/Retry inventory and history verification/);
+    });
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(result.current.cart).toHaveLength(1);
+  });
   it('keeps paid-but-unverified QR recoverable across sign-out/remount until history verification succeeds', async () => {
     const { wrapper, client, handle } = fixture();
     const first = renderHook(() => usePos(), { wrapper });
@@ -102,6 +117,70 @@ describe('POS durable checkout integration', () => {
       await second.result.current.confirmQrPhPayment({ id: '7', amount: 25, status: 'paid' });
     });
     expect(handle()).toBeNull(); expect(second.result.current.cart).toHaveLength(0);
+  });
+  it('does not auto-restore over cashier edits made during server discovery', async () => {
+    const { wrapper, client } = fixture();
+    let finishDiscovery!: (page: { items: AuthorityCheckout[]; pagination: { current_page: number; last_page: number; total: number } }) => void;
+    client.listCheckouts.mockReturnValueOnce(new Promise(resolve => { finishDiscovery = resolve; }));
+    const { result } = renderHook(() => usePos(), { wrapper });
+    let discovery!: Promise<void>;
+    act(() => { discovery = result.current.openPosCheckouts(); });
+    await add(result);
+    await add(result);
+    await act(async () => {
+      finishDiscovery({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } });
+      await discovery;
+    });
+    expect(result.current.cart[0].quantity).toBe(2);
+    expect(result.current.recoverableCheckouts).toHaveLength(1);
+    expect(result.current.checkoutRecoveryError).toBeTruthy();
+    expect(client.recoverCheckout).not.toHaveBeenCalled();
+  });
+  it('does not auto-restore over cashier edits made during authority recovery', async () => {
+    const { wrapper, client } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.startQrPhPayment(); });
+    first.unmount();
+    client.recoverCheckout.mockClear();
+    let finishRecovery!: (checkout: AuthorityCheckout) => void;
+    client.recoverCheckout.mockReturnValueOnce(new Promise(resolve => { finishRecovery = resolve; }));
+    const second = renderHook(() => usePos(), { wrapper });
+    let recovery!: Promise<void>;
+    act(() => { recovery = second.result.current.openPosCheckouts(); });
+    await waitFor(() => expect(client.recoverCheckout).toHaveBeenCalled());
+    await add(second.result);
+    await add(second.result);
+    await act(async () => {
+      finishRecovery(pending);
+      await recovery;
+    });
+    expect(second.result.current.cart[0].quantity).toBe(2);
+    expect(second.result.current.recoverableCheckouts).toHaveLength(1);
+    expect(second.result.current.checkoutRecoveryError).toBeTruthy();
+  });
+  it('does not auto-restore over cashier edits made during recovered-product reads', async () => {
+    const { wrapper, client } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.startQrPhPayment(); });
+    first.unmount();
+    client.getProduct.mockClear();
+    let finishProduct!: (value: typeof product) => void;
+    client.getProduct.mockReturnValueOnce(new Promise(resolve => { finishProduct = resolve; }));
+    const second = renderHook(() => usePos(), { wrapper });
+    let recovery!: Promise<void>;
+    act(() => { recovery = second.result.current.openPosCheckouts(); });
+    await waitFor(() => expect(client.getProduct).toHaveBeenCalled());
+    await add(second.result);
+    await add(second.result);
+    await act(async () => {
+      finishProduct(product);
+      await recovery;
+    });
+    expect(second.result.current.cart[0].quantity).toBe(2);
+    expect(second.result.current.recoverableCheckouts).toHaveLength(1);
+    expect(second.result.current.checkoutRecoveryError).toBeTruthy();
   });
   it('reports a missing retained authority record as unrecoverable, never paid', async () => {
     const { wrapper, client, handle } = fixture();

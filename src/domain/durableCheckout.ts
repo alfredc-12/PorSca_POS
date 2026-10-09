@@ -3,11 +3,32 @@ import { AuthorityCheckout, CheckoutTender } from '@/src/api/checkoutAuthority';
 import { CartLine, Sale } from '@/src/types';
 import { canAcceptCheckoutTender, CheckoutMachine, checkoutCashTender, transitionCheckout } from './checkoutMachine';
 import { authorityObservation } from './checkoutAuthorityAdapter';
+import { isDefinitiveQrRejection } from './checkout';
 
 export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string } };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null): Promise<void> };
+export class CheckoutStorageCorruptionError extends Error {}
 const key = () => `mobile-v3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const signature = (lines: CartLine[]) => JSON.stringify(lines.map(l => [Number(l.product.id), l.quantity]).sort((a, b) => a[0] - b[0]));
+function validateItems(items: { productId: number; quantity: number }[]) {
+  if (items.some(item => !Number.isSafeInteger(item.productId) || item.productId <= 0 || !Number.isSafeInteger(item.quantity) || item.quantity <= 0)) {
+    throw new ApiClientError('Products require server identities and positive quantities.');
+  }
+  return items;
+}
+function signatureForItems(items: { productId: number; quantity: number }[]) {
+  return JSON.stringify(validateItems(items).map(item => [item.productId, item.quantity]).sort((a, b) => a[0] - b[0]));
+}
+function itemsFromSignature(value: string) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new CheckoutStorageCorruptionError('Stored checkout basket is unreadable.'); }
+  if (!Array.isArray(parsed) || parsed.some(item => !Array.isArray(item) || item.length !== 2 || !Number.isSafeInteger(item[0]) || item[0] <= 0 || !Number.isSafeInteger(item[1]) || item[1] <= 0)) {
+    throw new CheckoutStorageCorruptionError('Stored checkout basket is invalid.');
+  }
+  return (parsed as number[][]).map(([productId, quantity]) => ({ productId, quantity }));
+}
+function checkoutItems(lines: CartLine[]) {
+  return validateItems(lines.map(line => ({ productId: Number(line.product.id), quantity: line.quantity })));
+}
 
 /** A single device purchase handle; all financial state is read from Laravel. */
 export class DurableCheckout {
@@ -27,6 +48,7 @@ export class DurableCheckout {
   }
   private handle?: CheckoutHandle;
   private loaded = false;
+  private corruptStorage = false;
   private busy = false;
   constructor(private client: ApiClient, private storage: CheckoutStorage) {}
 
@@ -41,20 +63,45 @@ export class DurableCheckout {
     try { return await operation(); } finally { this.busy = false; }
   }
   private async load() {
-    if (!this.loaded) { this.handle = await this.storage.load() ?? undefined; this.loaded = true; }
+    if (!this.loaded) {
+      try { this.handle = await this.storage.load() ?? undefined; }
+      catch (error) {
+        if (!(error instanceof CheckoutStorageCorruptionError)) throw error;
+        this.corruptStorage = true;
+      }
+      this.loaded = true;
+    }
   }
   private async persist() { await this.storage.save(this.handle ?? null); }
+  private async verifyDiscoveredCheckout(id: string) {
+    for (let page = 1; ; page++) {
+      const result = await this.client.listCheckouts(page);
+      if (result.items.some(checkout => checkout.id === id)) return;
+      if (page >= result.pagination.last_page) throw new ApiClientError('The selected checkout was not found in server discovery. The unreadable device identity remains unresolved.', 409, 'checkout_recovery_required');
+    }
+  }
   async recover(id?: string) {
     await this.load();
+    if (this.corruptStorage) {
+      if (!id) throw new ApiClientError('The stored checkout identity is unreadable. Select a checkout from server discovery to reattach it; payment remains unresolved.', 409, 'checkout_recovery_required');
+      await this.verifyDiscoveredCheckout(id);
+      const checkout = await this.client.recoverCheckout(id);
+      const handle: CheckoutHandle = { id, key: key(), signature: signatureForItems(checkout.items) };
+      await this.storage.save(handle);
+      this.handle = handle;
+      this.corruptStorage = false;
+      this.current = checkout;
+      return this.current;
+    }
     if (id) {
       if (this.handle && this.handle.id !== id) throw new ApiClientError('Resolve the device purchase before recovering another checkout.');
       const checkout = await this.client.recoverCheckout(id);
-      this.handle ??= { id, key: key(), signature: JSON.stringify(checkout.items.map(i => [i.productId, i.quantity]).sort((a,b) => a[0]-b[0])) };
+      this.handle ??= { id, key: key(), signature: signatureForItems(checkout.items) };
       await this.persist();
       this.current = checkout;
     } else if (this.handle) {
       if (!this.handle.id) {
-        const items = (JSON.parse(this.handle.signature) as number[][]).map(([productId, quantity]) => ({ productId, quantity }));
+        const items = validateItems(itemsFromSignature(this.handle.signature));
         this.current = await this.client.createCheckout(items, this.handle.key);
         this.handle.id = this.current.id; await this.persist();
       }
@@ -63,17 +110,16 @@ export class DurableCheckout {
     return this.current;
   }
   async prepare(lines: CartLine[]) {
+    const items = checkoutItems(lines);
+    const sig = signatureForItems(items);
     await this.load();
-    const sig = signature(lines);
+    if (this.corruptStorage) throw new ApiClientError('The stored checkout identity is unreadable. Discover and explicitly recover a server checkout before starting another purchase.', 409, 'checkout_recovery_required');
     if (this.handle && this.handle.signature !== sig) throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_recovery_required');
     if (!this.handle) {
       this.handle = { key: key(), signature: sig };
       await this.persist(); // save before I/O, including a lost creation response
     }
     if (!this.handle.id) {
-      await this.persist();
-      const items = lines.map(l => ({ productId: Number(l.product.id), quantity: l.quantity }));
-      if (items.some(i => !Number.isSafeInteger(i.productId) || i.productId <= 0)) throw new ApiClientError('Products require server identities.');
       this.current = await this.client.createCheckout(items, this.handle.key);
       this.handle.id = this.current.id;
       await this.persist();
@@ -82,7 +128,7 @@ export class DurableCheckout {
   }
   async tender(lines: CartLine[], method: 'cash' | 'qrph', cashInput?: string) {
     const checkout = await this.prepare(lines);
-    if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale) return checkout;
+    if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale?.method === method) return checkout;
     if (!canAcceptCheckoutTender(this.machine)) {
       if (method === 'qrph' && this.machine?.attempts.some(a => a.method === 'qr')) return checkout;
       throw new ApiClientError('QR Ph payment is unresolved or checkout is locked. Recover it before recording cash.', 409, 'qr_payment_unresolved');
@@ -106,15 +152,16 @@ export class DurableCheckout {
         : await this.client.createCheckoutAttempt(checkout.id, tender, this.handle!.tender!.key);
       return this.current;
     } catch (error) {
-      if (method === 'qrph' && (!(error instanceof ApiClientError) || error.status === undefined || error.status >= 500 || error.status === 408)) {
+      const definitiveQrRefusal = error instanceof ApiClientError && isDefinitiveQrRejection({ status: error.status });
+      if (method === 'qrph' && !definitiveQrRefusal) {
         try {
           const recovered = await this.client.recoverCheckout(checkout.id);
           this.current = recovered;
           if (recovered.attempts.some(a => a.method === 'qrph')) return recovered;
         } catch { /* Keep the durable id and exact key for explicit retry/recovery. */ }
       }
-      // Definitive validation refusal has no effect. Unknown responses retain the exact key.
-      if (error instanceof ApiClientError && (error.status === 422 || error.status === 409)) {
+      // A definitive refusal has no effect; uncertain responses retain the exact key.
+      if ((method === 'qrph' && definitiveQrRefusal) || (method === 'cash' && error instanceof ApiClientError && error.status === 422)) {
         this.handle!.tender = undefined; await this.persist();
       }
       throw error;
@@ -152,7 +199,11 @@ export class DurableCheckout {
     this.current = await this.client.abandonCheckout(this.current.id, reason);
     if (this.current.state === 'abandoned') await this.retire();
   }
-  async retire() { await this.storage.save(null); this.handle = undefined; this.current = undefined; }
+  async retire() {
+    await this.load();
+    if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
+    await this.storage.save(null); this.handle = undefined; this.current = undefined;
+  }
 }
 
 /** Compatibility seam only: never infer sale success from an attempt's paid status. */
