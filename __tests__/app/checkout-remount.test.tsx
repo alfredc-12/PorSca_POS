@@ -113,4 +113,24 @@ describe('checkout after leaving and reopening a pending QR payment', () => {
     expect(createSale).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('was completed successfully'), expect.any(Array));
   });
+
+  it('records no cash after the cart changed and checkout was reopened', async () => {
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = shopClient({ createSale });
+    const view = render(<PosProvider client={client}><Shop /></PosProvider>);
+
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    await startPendingQrPayment(view);
+
+    fireEvent.press(view.getByTestId('shop-leave-checkout'));
+    fireEvent.press(view.getByTestId('shop-seed-cart'));
+    fireEvent.press(view.getByTestId('shop-open-checkout'));
+
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(createSale).not.toHaveBeenCalled();
+    expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR Ph payment.*unresolved/);
+    expect(alertSpy).toHaveBeenCalledWith('Check the QR Ph payment first', expect.stringContaining('still unresolved'));
+  });
 });

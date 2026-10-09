@@ -510,12 +510,7 @@ export function PosProvider({
     const lines = cartRef.current.lines;
     if (lines.length === 0) return null;
 
-    const qrSignature = qrCartSignature(lines);
-    const knownQrPayment = qrPayments.current.get(qrSignature);
-    const qrUnresolved = knownQrPayment
-      ? !QR_TERMINAL_STATUSES.includes(knownQrPayment.status)
-      : qrKeys.current.has(qrSignature);
-    if (qrUnresolved) {
+    if (hasUnresolvedQrAttempt(qrPayments.current, qrKeys.current)) {
       throw new ApiClientError(
         'A QR Ph payment for this cart is still unresolved. Check the QR Ph payment status before recording cash.',
         undefined,
@@ -859,6 +854,22 @@ function qrCartSignature(cart: CartLine[]) {
 
 /** Provider answers that settle a QR Ph attempt: it can no longer collect money. */
 const QR_TERMINAL_STATUSES: PaymentStatus[] = ['failed', 'cancelled', 'expired'];
+
+/**
+ * True while any QR Ph attempt the provider is holding may still collect
+ * money: a retained payment without a terminal status, or a creation request
+ * that never answered. Cash must wait for all of them, because editing or
+ * replacing the cart never settles the provider attempt it started.
+ */
+function hasUnresolvedQrAttempt(payments: Map<string, Payment>, keys: Map<string, string>) {
+  for (const payment of payments.values()) {
+    if (!QR_TERMINAL_STATUSES.includes(payment.status)) return true;
+  }
+  for (const signature of keys.keys()) {
+    if (!payments.has(signature)) return true;
+  }
+  return false;
+}
 
 function rememberQrPayment(payments: Map<string, Payment>, payment: Payment) {
   for (const [signature, known] of payments) {

@@ -545,6 +545,62 @@ describe('PosProvider Laravel QR Ph checkout', () => {
     expect(createSale).toHaveBeenCalledTimes(1);
     expect(result.current.cart).toHaveLength(0);
   });
+
+  it('refuses cash after a cart edit while the retained QR payment is still unresolved', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue(pendingPayment);
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = makeQrStageClient({ createQrPhPayment, createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+
+    await act(async () => { await result.current.startQrPhPayment(); });
+    // The attempt belongs to the one-item basket; the edited two-item basket
+    // must not hide the payment the provider is still holding.
+    act(() => { result.current.addProductChecked(product); });
+
+    await act(async () => {
+      await expect(result.current.completeCashSale(100)).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+    expect(createSale).not.toHaveBeenCalled();
+    expect(result.current.cart).toHaveLength(1);
+    expect(result.current.cart[0].quantity).toBe(2);
+  });
+
+  it('refuses cash after a cart edit while the QR creation request never answered', async () => {
+    const createQrPhPayment = jest.fn().mockReturnValue(new Promise<Payment>(() => undefined));
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = makeQrStageClient({ createQrPhPayment, createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+    act(() => { void result.current.startQrPhPayment(); });
+    act(() => { result.current.addProductChecked(product); });
+
+    await act(async () => {
+      await expect(result.current.completeCashSale(100)).rejects.toMatchObject({ code: 'qr_payment_unresolved' });
+    });
+    expect(createSale).not.toHaveBeenCalled();
+    expect(result.current.cart[0].quantity).toBe(2);
+  });
+
+  it('permits cash after a cart edit once the retained QR attempt is terminal', async () => {
+    const createQrPhPayment = jest.fn().mockResolvedValue({ ...pendingPayment, status: 'failed' as const });
+    const createSale = jest.fn().mockResolvedValue(sale);
+    const client = makeQrStageClient({ createQrPhPayment, createSale });
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client}>{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper });
+    const product = sale.items[0].product;
+    act(() => { result.current.addProductChecked(product); });
+
+    await act(async () => { await result.current.startQrPhPayment(); });
+    act(() => { result.current.addProductChecked(product); });
+    await act(async () => { expect(await result.current.completeCashSale(100)).toEqual(sale); });
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(result.current.cart).toHaveLength(0);
+  });
 });
 
 it('refuses a changed cash retry when its lost receipt may be beyond the first history page', async () => {
