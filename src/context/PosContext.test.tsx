@@ -10,6 +10,7 @@ const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'o
 const pending: AuthorityCheckout = { ...open, state: 'payment_unresolved', attempts: [{ id: 7, method: 'qrph', amountCentavos: 2500, currency: 'PHP', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: 'QR', qrExpiresAt: null, reservation: null }] };
 const paid: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', financialStatus: 'paid', firstVerifiedOutcome: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: '2026-10-09' } };
 const paidUnfulfilled: AuthorityCheckout = { ...pending, state: 'paid_unfulfilled', attempts: [{ ...pending.attempts[0], status: 'paid', financialStatus: 'paid_unfulfilled', firstVerifiedOutcome: 'paid' }] };
+const readyForQrRetry: AuthorityCheckout = { ...pending, state: 'ready_for_attempt', attempts: [{ ...pending.attempts[0], status: 'non_payable', financialStatus: 'expired', firstVerifiedOutcome: 'non_payable' }] };
 function fixture() {
   let handle: CheckoutHandle | null = null;
   const store: CheckoutStorage = { load: async () => handle, save: async value => { handle = value ? JSON.parse(JSON.stringify(value)) : null; } };
@@ -72,6 +73,22 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(restarted.result.current.completeCashSale('100')).rejects.toThrow(/unresolved/); });
     expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+  });
+  it('forwards explicit terminal QR retry to rotate the stored attempt key', async () => {
+    const { wrapper, client, handle } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.startQrPhPayment(); });
+    const previousKey = handle()?.tender?.key;
+    first.unmount();
+    client.getCheckout.mockResolvedValue(readyForQrRetry);
+    const replacement: AuthorityCheckout = { ...readyForQrRetry, state: 'payment_unresolved', attempts: [...readyForQrRetry.attempts, { ...pending.attempts[0], id: 8 }] };
+    client.createCheckoutAttempt.mockResolvedValueOnce(replacement);
+    const second = renderHook(() => usePos(), { wrapper });
+    await act(async () => { await second.result.current.startQrPhPayment(true); });
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(2);
+    expect(client.createCheckoutAttempt.mock.calls[1][2]).not.toBe(previousKey);
+    expect(handle()?.tender?.key).toBe(client.createCheckoutAttempt.mock.calls[1][2]);
   });
   it('discovers other operators interrupted checkouts across pages and resolves each show', async () => {
     const { wrapper, client } = fixture();

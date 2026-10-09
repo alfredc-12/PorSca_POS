@@ -623,11 +623,11 @@ export function PosProvider({
     return sale;
   }), [authority, client, commitCart, refreshInventory, refreshSales]);
 
-  const startQrPhPayment = useCallback(async () => authority.exclusive(async () => {
+  const startQrPhPayment = useCallback(async (forceNew = false) => authority.exclusive(async () => {
     commitCart({ type: 'discard-undo' });
     if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     if (!cartRef.current.lines.length) throw new ApiClientError('The cart is empty.');
-    try { return checkoutPayment(await authority.tender(cartRef.current.lines, 'qrph')); }
+    try { return checkoutPayment(await authority.tender(cartRef.current.lines, 'qrph', undefined, forceNew)); }
     finally { setAuthorityCheckout(authority.current); }
   }), [authority, client, commitCart]);
 

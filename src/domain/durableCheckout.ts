@@ -73,6 +73,17 @@ export class DurableCheckout {
     }
   }
   private async persist() { await this.storage.save(this.handle ?? null); }
+  private async createCheckout(items: { productId: number; quantity: number }[], creationKey: string) {
+    try { return await this.client.createCheckout(items, creationKey); }
+    catch (error) {
+      if (error instanceof ApiClientError && isDefinitiveQrRejection({ status: error.status }) && !this.handle?.id && this.handle?.key === creationKey) {
+        await this.storage.save(null);
+        this.handle = undefined;
+        this.current = undefined;
+      }
+      throw error;
+    }
+  }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
   private async discoverCheckouts() {
     const checkouts: AuthorityCheckout[] = [];
@@ -121,7 +132,7 @@ export class DurableCheckout {
     } else if (this.handle) {
       if (!this.handle.id) {
         const items = validateItems(itemsFromSignature(this.handle.signature));
-        this.current = await this.client.createCheckout(items, this.handle.key);
+        this.current = await this.createCheckout(items, this.handle.key);
         this.handle.id = this.current.id; await this.persist();
       }
       this.current = await this.client.recoverCheckout(this.handle.id!);
@@ -139,13 +150,13 @@ export class DurableCheckout {
       await this.persist(); // save before I/O, including a lost creation response
     }
     if (!this.handle.id) {
-      this.current = await this.client.createCheckout(items, this.handle.key);
+      this.current = await this.createCheckout(items, this.handle.key);
       this.handle.id = this.current.id;
       await this.persist();
     } else this.current = await this.client.getCheckout(this.handle.id);
     return this.current!;
   }
-  async tender(lines: CartLine[], method: 'cash' | 'qrph', cashInput?: string) {
+  async tender(lines: CartLine[], method: 'cash' | 'qrph', cashInput?: string, forceNew = false) {
     const checkout = await this.prepare(lines);
     if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale?.method === method) return checkout;
     if (!canAcceptCheckoutTender(this.machine)) {
@@ -155,6 +166,10 @@ export class DurableCheckout {
     const localAmount = lines.reduce((sum, l) => sum + Math.round(l.product.price * 100) * l.quantity, 0);
     const changedSnapshot = checkout.items.some(item => !lines.some(line => Number(line.product.id) === item.productId && line.quantity === item.quantity && Math.round(line.product.price * 100) === item.unitPriceCentavos));
     if (checkout.amountCentavos !== localAmount || changedSnapshot) throw new ApiClientError('Review the authoritative quote before confirming payment.', 409, 'revalidation_required');
+    const latestAttempt = this.machine?.attempts[this.machine.attempts.length - 1];
+    if (method === 'qrph' && forceNew && this.machine?.state === 'ready-for-new-attempt' && latestAttempt?.method === 'qr' && latestAttempt.payment === 'non-payable') {
+      this.handle!.tender = undefined;
+    }
     const tender: CheckoutTender = { revision: checkout.revision, acceptedAmountCentavos: checkout.amountCentavos };
     if (method === 'cash') {
       const cash = checkoutCashTender(cashInput ?? '', checkout.amountCentavos);
@@ -200,7 +215,7 @@ export class DurableCheckout {
       }
       throw error;
     }
-    if (this.current.attempts.every(a => a.status === 'non_payable')) {
+    if (this.machine?.state === 'ready-for-new-attempt' && canAcceptCheckoutTender(this.machine) && this.current.attempts.length > 0 && this.current.attempts.every(a => a.status === 'non_payable')) {
       this.handle.tender = undefined; await this.persist();
     }
     return this.current;
@@ -209,7 +224,9 @@ export class DurableCheckout {
     await this.recover();
     if (!this.current) throw new ApiClientError('No checkout to revalidate.');
     this.current = await this.client.revalidateCheckout(this.current.id);
-    this.handle!.tender = undefined; await this.persist();
+    if (canAcceptCheckoutTender(this.machine)) {
+      this.handle!.tender = undefined; await this.persist();
+    }
     return this.current;
   }
   async abandon(reason: string) {
