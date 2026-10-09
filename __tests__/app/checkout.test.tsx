@@ -198,6 +198,18 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
   });
 
+  it('draws a scannable QR symbol for a raw payload instead of printing the payload text', async () => {
+    const rawPayload = '00020101021226680014ph.paymongo0015QRPH-TXN-100015204999953035605802PH5910PORSCA POS6009PASIG CITY6304ABCD';
+    const startQrPhPayment = jest.fn().mockResolvedValue({ ...pendingQrPayment, qrPayload: rawPayload, qrCode: rawPayload });
+    setContext({ startQrPhPayment });
+    const view = await openQrCheckout();
+
+    expect(view.getByTestId('qr-payment-code')).toBeTruthy();
+    expect(view.queryByText(rawPayload)).toBeNull();
+    expect(view.queryByTestId('qr-payment-image')).toBeNull();
+    expect(view.getByText('Payment pending…')).toBeTruthy();
+  });
+
   // Supplemental INV-03 / AC-08/32/34/36 coverage overlaps the protected
   // baseline oracle, but uses today's Laravel-backed checkout interface.
   it('offers no local paid simulation and cannot complete a pending QR through cashier actions', async () => {

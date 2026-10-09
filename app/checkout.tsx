@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { FailureNotice } from '@/src/components/FailureNotice';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
+import { QrPaymentCode } from '@/src/components/QrPaymentCode';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { usePos } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
@@ -365,7 +366,7 @@ export default function CheckoutScreen() {
             </View>
           ) : (
             <View style={styles.qrPanel}>
-              {qrPayment?.qrPayload ? <QrPayload payload={qrPayment.qrPayload} /> : (
+              {qrPayment?.qrPayload ? <QrPaymentCode payload={qrPayment.qrPayload} /> : (
                 <View style={styles.qrPlaceholder}>
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
@@ -419,21 +420,6 @@ export default function CheckoutScreen() {
         </View>
       </Screen>
     </KeyboardAvoidingView>
-  );
-}
-
-function QrPayload({ payload }: { payload: string }) {
-  const imagePayload = payload.startsWith('data:image/') || /^https?:\/\//i.test(payload);
-  if (imagePayload) {
-    return <Image testID="qr-payment-image" accessibilityLabel="QR Ph payment code" source={{ uri: payload }} style={styles.qrImage} resizeMode="contain" />;
-  }
-
-  return (
-    <View testID="qr-payment-payload" style={styles.qrPayloadCard}>
-      <Ionicons name="qr-code" size={64} color={colors.text} />
-      <Text style={styles.qrPayloadLabel}>Scan this QR Ph payload</Text>
-      <Text selectable style={styles.qrPayloadText}>{payload}</Text>
-    </View>
   );
 }
 
@@ -529,10 +515,6 @@ const styles = StyleSheet.create({
   changeValue: { color: colors.primary, fontSize: typography.heading, fontWeight: '900' },
   qrPanel: { gap: spacing.md, alignItems: 'center', paddingTop: spacing.sm },
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
-  qrImage: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white },
-  qrPayloadCard: { width: '100%', minHeight: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', padding: spacing.md, gap: spacing.sm },
-  qrPayloadLabel: { color: colors.text, fontSize: typography.caption, fontWeight: '800' },
-  qrPayloadText: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
   qrTitle: { color: colors.text, textAlign: 'center', fontSize: typography.title, fontWeight: '900' },
   qrBody: { color: colors.textMuted, textAlign: 'center', fontSize: typography.label, lineHeight: 20, maxWidth: 390 },
   qrStatus: { textAlign: 'center', fontSize: typography.label, fontWeight: '800', lineHeight: 20 },
