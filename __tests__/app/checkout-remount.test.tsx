@@ -38,11 +38,30 @@ describe('checkout remount with durable machine state', () => {
   it('restores the retained QR inspection action and blocks cash after leaving and reopening', async () => {
     const { tree, client } = fixture(); const view = render(tree); await start(view);
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-    expect(client.checkoutCash).not.toHaveBeenCalled(); expect(view.getByTestId('checkout-cash-error')).toBeTruthy();
-    fireEvent.press(view.getByTestId('checkout-payment-qrph')); expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    expect(view.getByTestId('checkout-payment-qrph')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the recovered QR selected and unlocks cash after authoritative non-payability', async () => {
+    const { tree, client } = fixture(); const view = render(tree); await start(view);
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
+    client.refreshCheckoutAttempt.mockResolvedValueOnce({
+      ...pending,
+      state: 'ready_for_attempt',
+      attempts: [{ ...pending.attempts[0], status: 'non_payable', financialStatus: 'expired', firstVerifiedOutcome: 'non_payable' }],
+    });
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(view.getByTestId('checkout-payment-qrph')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+    expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
+    expect(view.getByTestId('retry-qr-payment')).toBeEnabled();
+    expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('keeps reversible unknown inspectable after refresh transport failure and remount', async () => {
     const { tree, client } = fixture(); const view = render(tree); await start(view);

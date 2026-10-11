@@ -1,5 +1,5 @@
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 import QRCode from 'react-native-qrcode-svg';
 import {
   QrPaymentCode,
@@ -53,6 +53,28 @@ describe('QrPaymentCode', () => {
     expect(image.props.source).toEqual({ uri: 'data:image/png;base64,qr-fixture' });
     expect(image.props.accessibilityLabel).toBe('QR Ph payment code');
     expect(view.queryByTestId('qr-payment-code')).toBeNull();
+  });
+
+  it.each(['https://provider.example/qr.png', 'data:image/png;base64,broken'])(
+    'shows a plain visible status when the provider image cannot load: %s', (payload) => {
+      const view = render(<QrPaymentCode payload={payload} />);
+      fireEvent(view.getByTestId('qr-payment-image'), 'error', { nativeEvent: { error: 'Private provider error' } });
+      expect(view.getByTestId('qr-payment-image-error')).toHaveTextContent('The QR payment image could not be loaded. Check the payment status before trying another payment.');
+      expect(view.queryByTestId('qr-payment-image')).toBeNull();
+      expect(view.queryByTestId('qr-payment-code')).toBeNull();
+      expect(view.queryByText(payload)).toBeNull();
+      expect(view.queryByText('Private provider error')).toBeNull();
+    },
+  );
+
+  it('tries a replacement provider image after the previous image failed', () => {
+    const view = render(<QrPaymentCode payload="https://provider.example/old.png" />);
+    fireEvent(view.getByTestId('qr-payment-image'), 'error');
+    view.rerender(<QrPaymentCode payload="https://provider.example/new.png" />);
+    expect(view.getByTestId('qr-payment-image').props.source).toEqual({ uri: 'https://provider.example/new.png' });
+    expect(view.queryByTestId('qr-payment-image-error')).toBeNull();
+    view.rerender(<QrPaymentCode payload={emvcoPayload} />);
+    expect(view.getByTestId('qr-payment-code')).toBeTruthy();
   });
 
   it('encodes a raw payload into a QR symbol instead of printing the payload text', () => {

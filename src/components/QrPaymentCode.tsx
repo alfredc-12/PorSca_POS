@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { Ionicons } from '@expo/vector-icons';
@@ -62,15 +62,7 @@ export function QrPaymentCode({ payload, size = QR_CODE_SIZE }: { payload?: stri
   const quietZone = Math.ceil(size * QUIET_ZONE_RATIO);
 
   if (presentation === 'image') {
-    return (
-      <Image
-        testID="qr-payment-image"
-        accessibilityLabel="QR Ph payment code"
-        source={{ uri: value }}
-        style={[styles.image, { width: size, height: size }]}
-        resizeMode="contain"
-      />
-    );
+    return <ProviderQrImage key={value} uri={value} size={size} />;
   }
 
   if (presentation === 'value') {
@@ -109,6 +101,31 @@ export function QrPaymentCode({ payload, size = QR_CODE_SIZE }: { payload?: stri
     <View testID="qr-payment-placeholder" style={[styles.box, styles.boxEmpty, { width: size, height: size }]}>
       <Ionicons name="qr-code" size={112} color={colors.text} />
     </View>
+  );
+}
+
+/** A replacement payload gets a fresh load attempt; image errors are not payment outcomes. */
+function ProviderQrImage({ uri, size }: { uri: string; size: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <View testID="qr-payment-image-error" style={[styles.payloadCard, { minHeight: size }]}>
+        <Ionicons name="qr-code" size={64} color={colors.text} />
+        <Text accessibilityLiveRegion="polite" style={styles.payloadLabel}>
+          The QR payment image could not be loaded. Check the payment status before trying another payment.
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      testID="qr-payment-image"
+      accessibilityLabel="QR Ph payment code"
+      source={{ uri }}
+      style={[styles.image, { width: size, height: size }]}
+      resizeMode="contain"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
