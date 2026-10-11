@@ -24,7 +24,7 @@
 
 ## Mobile/API handshake
 
-- The live contract name is `porsca-mobile-api-v3`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Treat that document as authoritative and reconcile any mismatch with this map before proceeding.
+- The live contract name is `porsca-mobile-api-v3`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Treat that document as authoritative and reconcile any mismatch with this map before proceeding. Read the selected revision's contract header before API health or smoke checks; this map's version does not prove what is deployed on staging.
 - Before formal QA, compare the exact mobile and API `staging` revisions with the human-created cycle record; repository setup does not create that record.
 - Cash checkout/history wire fields, receipt-completeness checks, QR attempt lifecycle, and authoritative Laravel routes are defined in [docs/API-CONTRACT.md](docs/API-CONTRACT.md); local API pairing uses the isolated `/tmp` procedure in [docs/SETUP.md](docs/SETUP.md).
 - Promote matching mobile and API revisions together only after human QA approval; never promote one side alone.
@@ -38,7 +38,7 @@
 
 ## Keeping this map fresh
 
-When a PR changes setup, the contract, or the workflow, update this file in the same PR. Keep it short and point to the owning document instead of copying its detail. Before opening the PR, compare this map with the changed documents for stale facts.
+When a PR changes setup, the contract, or the workflow, update this file in the same PR. Before opening a PR, load [PR preparation](.agents/skills/shell-pr-body/SKILL.md) for map reconciliation and shell-safe descriptions.
 
 Keep this file useful to every agent session. Do not add supervisor-specific mechanics, machine paths, private nicknames, or harness-specific instructions.
 
