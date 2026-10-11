@@ -2,6 +2,7 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
+import { AppButton } from '@/src/components/AppButton';
 import { router } from 'expo-router';
 import { usePos } from '@/src/context/PosContext';
 import { ApiClientError, Payment } from '@/src/api/client';
@@ -252,12 +253,15 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
         await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
       }
       if (state !== 'creating') expect(mockUsePos().checkoutMachine.state).toBe('payment-unresolved');
+      expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+      expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ disabled: true, selected: false }));
+      expect(view.getByTestId('checkout-payment-qrph')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+      expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/payment/i);
       fireEvent.press(view.getByTestId('checkout-payment-cash'));
-      fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-      await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+      expect(view.queryByTestId('cash-received-input')).toBeNull();
+      expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
       expect(completeCashSale).not.toHaveBeenCalled();
       expect(resetCart).not.toHaveBeenCalled();
-      expect(view.getByTestId('checkout-cash-error')).toHaveTextContent(/QR payment.*unresolved/);
       if (state === 'creating') await act(async () => { resolve(pendingQrPayment); });
     },
   );
@@ -266,10 +270,26 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const completeCashSale = jest.fn().mockResolvedValue(sale);
     setContext({ completeCashSale, startQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status }) });
     const view = await openQrCheckout();
+    expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
+    expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ disabled: false }));
+    expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
     expect(completeCashSale).toHaveBeenCalledWith('100');
+  });
+
+  it.each(['failed', 'cancelled', 'expired'] as const)('unlocks the selector only after a pending QR is server-verified %s', async (status) => {
+    setContext({ refreshQrPhPayment: jest.fn().mockResolvedValue({ ...pendingQrPayment, status }) });
+    const view = await openQrCheckout();
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(view.getByTestId('checkout-payment-qrph')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+    expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
+    expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
+    fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
   });
 
   it('leaves a pending payment without cancelling it and keeps the cart', async () => {
@@ -386,6 +406,40 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(completeCashSale).toHaveBeenCalledWith('100');
   });
 
+  it.each(['payment-in-progress', 'payment-unresolved', 'completed', 'abandoned', 'paid-but-unfulfilled'] as const)(
+    'disables a stale cash panel confirmation and opposite selector when the machine is %s', (state) => {
+      const completeCashSale = jest.fn();
+      setContext({ completeCashSale, checkoutMachine: { ...openCheckout('test-checkout', 3500), state } });
+      const view = render(<CheckoutScreen />);
+      expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
+      expect(view.getByTestId('checkout-payment-qrph')).toHaveProp('accessibilityState', expect.objectContaining({ disabled: true }));
+      expect(view.getByTestId('checkout-tender-lock-reason')).toBeTruthy();
+      fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+      expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+      const confirm = view.getByTestId('confirm-cash-payment');
+      expect(confirm).toBeDisabled();
+      fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+      fireEvent.press(confirm);
+      expect(completeCashSale).not.toHaveBeenCalled();
+      // Presentation does not replace confirmation-time machine guards.
+      const confirmHandler = view.UNSAFE_getAllByType(AppButton).find(button => button.props.testID === 'confirm-cash-payment')!.props.onPress;
+      act(() => { void confirmHandler(); });
+      expect(completeCashSale).not.toHaveBeenCalled();
+      expect(view.getByTestId('checkout-cash-error')).toBeTruthy();
+    },
+  );
+
+  it('keeps a verified non-payable QR locked when reconciliation is required', () => {
+    setContext({
+      checkoutMachine: { ...openCheckout('test-checkout', 3500), state: 'ready-for-new-attempt', reconciliationRequired: true },
+    });
+    const view = render(<CheckoutScreen />);
+    expect(mockUsePos().checkoutMachine.state).toBe('ready-for-new-attempt');
+    expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/locked/i);
+  });
+
   it('offers no QR Ph start while a cash sale is being recorded', async () => {
     let resolveSale!: (value: Sale) => void;
     const completeCashSale = jest.fn().mockReturnValue(new Promise<Sale>((done) => { resolveSale = done; }));
@@ -397,9 +451,9 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.press(view.getByTestId('confirm-cash-payment'));
     fireEvent.press(view.getByTestId('checkout-payment-qrph'));
 
-    const startButton = view.getByTestId('start-qrph-payment');
-    expect(startButton).toBeDisabled();
-    fireEvent.press(startButton);
+    expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
+    expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+    expect(view.queryByTestId('start-qrph-payment')).toBeNull();
     expect(startQrPhPayment).not.toHaveBeenCalled();
 
     await act(async () => { resolveSale(sale); });

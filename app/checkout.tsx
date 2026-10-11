@@ -38,7 +38,7 @@ export default function CheckoutScreen() {
     revalidateCheckout,
     abandonCheckout,
   } = usePos();
-  const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
+  const [selectedMode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
   const [cash, setCash] = useState('');
   const [qrStatus, setQrStatus] = useState<QrViewStatus>(() => unresolvedQrPayment()?.status ?? 'idle');
   const [qrPayment, setQrPayment] = useState<Payment | undefined>(() => unresolvedQrPayment());
@@ -68,6 +68,26 @@ export default function CheckoutScreen() {
     } catch { setRecoveryError('Recovery could not be completed. The purchase is retained; retry before taking payment.'); }
     finally { setRecoveryBusy(false); }
   };
+
+  // Mirror the authority gate in presentation without replacing any handler
+  // guard. A verified non-payable attempt remains eligible for a new tender.
+  const authorityTenderLocked = !canAcceptCheckoutTender(checkoutMachine);
+  const tenderLocked = authorityTenderLocked || qrBusy || cashSubmitting;
+  const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
+  // Recovery/deep links must display the retained tender, not a route default.
+  const mode = authorityTenderLocked && activeAttempt
+    ? activeAttempt.method === 'qr' ? 'qrph' : 'cash'
+    : selectedMode;
+  // Retain a recovered tender even after verified non-payability unlocks it.
+  // Adjust only when authority changes the displayed tender, not in an effect.
+  if (selectedMode !== mode) setMode(mode);
+  const terminalLocked = checkoutMachine?.reconciliationRequired
+    || checkoutMachine?.state === 'completed'
+    || checkoutMachine?.state === 'abandoned'
+    || checkoutMachine?.state === 'paid-but-unfulfilled';
+  const tenderLockReason = terminalLocked
+    ? 'This checkout is locked and cannot accept another payment.'
+    : 'A payment is being processed or remains unresolved. Check the existing payment before accepting another payment.';
 
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
@@ -320,17 +340,19 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Choose one</Text>
           </View>
           <View style={styles.segmentRow}>
-            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash' }} onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash', disabled: tenderLocked && mode !== 'cash' }} disabled={tenderLocked && mode !== 'cash'} onPress={() => { if (!tenderLocked) setMode('cash'); }} style={[styles.segment, mode === 'cash' && styles.segmentActive, tenderLocked && mode !== 'cash' && styles.segmentDisabled]}>
               <Ionicons name="cash-outline" size={22} color={mode === 'cash' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>Cash</Text>
               <Ionicons name={mode === 'cash' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'cash' ? colors.primary : colors.outline} />
             </Pressable>
-            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph' }} onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph', disabled: tenderLocked && mode !== 'qrph' }} disabled={tenderLocked && mode !== 'qrph'} onPress={() => { if (!tenderLocked) setMode('qrph'); }} style={[styles.segment, mode === 'qrph' && styles.segmentActive, tenderLocked && mode !== 'qrph' && styles.segmentDisabled]}>
               <Ionicons name="qr-code-outline" size={22} color={mode === 'qrph' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>QR Ph</Text>
               <Ionicons name={mode === 'qrph' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'qrph' ? colors.primary : colors.outline} />
             </Pressable>
           </View>
+
+          {tenderLocked ? <Text testID="checkout-tender-lock-reason" accessibilityLiveRegion="polite" style={styles.tenderLockReason}>{tenderLockReason}</Text> : null}
 
           {mode === 'cash' ? (
             <View style={styles.cashPanel}>
@@ -360,7 +382,7 @@ export default function CheckoutScreen() {
                 testID="confirm-cash-payment"
                 label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
                 onPress={finishCash}
-                disabled={cashSubmitting || recoveryBusy}
+                disabled={tenderLocked || recoveryBusy}
                 style={styles.fullButton}
               />
             </View>
@@ -504,6 +526,8 @@ const styles = StyleSheet.create({
   segmentRow: { flexDirection: 'row', gap: spacing.sm },
   segment: { flex: 1, minHeight: 58, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outline, paddingHorizontal: spacing.md, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   segmentActive: { backgroundColor: colors.primaryWash, borderColor: colors.primary },
+  segmentDisabled: { opacity: 0.5 },
+  tenderLockReason: { color: colors.textMuted, fontSize: typography.label, lineHeight: 20 },
   segmentText: { flex: 1, color: colors.text, fontSize: typography.label, fontWeight: '800' },
   cashPanel: { gap: spacing.md, paddingTop: 2 },
   label: { color: colors.text, fontSize: typography.label, fontWeight: '800' },
