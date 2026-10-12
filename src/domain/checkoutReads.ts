@@ -23,6 +23,7 @@ export class CheckoutReads {
   markHistoryReady(generation: number, saleId: string) {
     if (this.generation === generation && this.saleId === saleId) this.handoff = { generation, saleId };
   }
+  invalidateHistoryHandoff() { this.handoff = undefined; }
   consumeHistoryHandoff() {
     const valid = this.handoff?.generation === this.generation && this.handoff?.saleId === this.saleId;
     this.handoff = undefined;

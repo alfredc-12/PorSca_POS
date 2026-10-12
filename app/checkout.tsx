@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,6 +39,7 @@ export default function CheckoutScreen() {
     checkoutProgress,
     checkoutCompletion,
     acknowledgeCheckout,
+    claimCheckoutCompletionAlert,
     recoverCheckout,
     revalidateCheckout,
     abandonCheckout,
@@ -58,6 +59,7 @@ export default function CheckoutScreen() {
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
   const navigatedDone = useRef(false);
+  const visibleRef = useRef(false);
   const done = useCallback(() => {
     if (navigatedDone.current) return;
     navigatedDone.current = true;
@@ -65,11 +67,12 @@ export default function CheckoutScreen() {
     router.replace('/(tabs)/transactions');
   }, [acknowledgeCheckout]);
   const alertCompletion = useCallback((sale: Sale) => {
-    if (handledPaidPayment.current === sale.id) return;
+    if (!visibleRef.current || handledPaidPayment.current === sale.id) return;
+    if (claimCheckoutCompletionAlert && !claimCheckoutCompletionAlert(sale.id)) return;
     handledPaidPayment.current = sale.id;
     Alert.alert('Payment completed', receiptText(sale), [{ text: 'Done', onPress: done }]);
-  }, [done]);
-  useEffect(() => { if (checkoutCompletion && !checkoutMachine?.reconciliationRequired && checkoutProgress?.recoveryFailure !== 'inconsistent') alertCompletion(checkoutCompletion.sale); }, [checkoutCompletion, checkoutMachine?.reconciliationRequired, checkoutProgress?.recoveryFailure, alertCompletion]);
+  }, [done, claimCheckoutCompletionAlert]);
+
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
   const initialRetainedPayment = useRef(retainedPayment);
 
@@ -80,7 +83,7 @@ export default function CheckoutScreen() {
   const operationRef = useRef(false);
   const [receiptRefresh, setReceiptRefresh] = useState<'running' | 'failed' | 'ready'>();
   const recoveryAction = async (action: () => Promise<void>) => {
-    if (operationRef.current) return;
+    if (operationRef.current || administratorRequired) return;
     operationRef.current = true;
     setRecoveryBusy(true);
     setRecoveryError(undefined);
@@ -89,7 +92,10 @@ export default function CheckoutScreen() {
       const retained = unresolvedQrPayment();
       if (retained) await showQrPayment(retained);
       else { setQrPayment(undefined); setQrStatus('idle'); }
-    } catch { setRecoveryError('Recovery could not be completed. The purchase is retained; retry before taking payment.'); }
+    } catch (error) {
+      setQrError(describeQrVerification(error));
+      setRecoveryError('We could not recover this purchase. Keep it open and try again before taking payment.');
+    }
     finally { operationRef.current = false; setRecoveryBusy(false); }
   };
 
@@ -98,7 +104,8 @@ export default function CheckoutScreen() {
   const authorityTenderLocked = !canAcceptCheckoutTender(checkoutMachine);
   const guidance = checkoutGuidance({ authority: authorityCheckout, machine: checkoutMachine, progress: checkoutProgress,
     operation: cashSubmitting ? 'cash' : qrStatus === 'creating' ? 'qr-create' : recoveryBusy ? 'recover' : qrBusy ? 'check' : undefined,
-    receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured });
+    receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
+  const administratorRequired = Boolean(guidance?.admin);
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
   const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
@@ -137,7 +144,7 @@ export default function CheckoutScreen() {
     // errors are unresolved too: the provider may still collect payment.
     // Only a server-confirmed unpaid terminal state permits another tender.
     if (operationRef.current || guidance?.admin || !canAcceptCheckoutTender(checkoutMachine) || checkoutProgress?.uncertainTender === 'qrph') {
-      const failure = localFailure('QR payment is unresolved', 'Cash cannot be recorded while the QR payment is unresolved. Return to QR Ph and check its status before accepting another payment.');
+      const failure = localFailure('Payment is still waiting', 'Do not take another payment. Check this purchase before accepting cash.');
       setCashError(failure);
       Alert.alert(failure.title, failure.body);
       return;
@@ -189,7 +196,7 @@ export default function CheckoutScreen() {
     }
   };
 
-  const showQrPayment = useCallback(async (payment: Payment) => {
+  const showQrPayment = useCallback(async (payment: Payment, isCurrent: () => boolean = () => true) => {
     setMode('qrph');
     setQrPayment(payment);
     setQrStatus(payment.status === 'paid' ? 'verification' : payment.status);
@@ -223,10 +230,12 @@ export default function CheckoutScreen() {
     try {
       const sale = await confirmQrPhPayment(payment);
       if (!sale) throw new Error('No completed receipt was returned.');
+      if (!isCurrent()) return;
       setReceiptRefresh('ready');
       setQrStatus('paid');
       alertCompletion(sale);
     } catch (error) {
+      if (!isCurrent()) return;
       setReceiptRefresh('failed');
       setQrStatus('verification');
       setQrError(describeQrVerification(error));
@@ -240,7 +249,7 @@ export default function CheckoutScreen() {
   }, [showQrPayment]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
-    if (operationRef.current || guidance?.admin) return;
+    if (operationRef.current || administratorRequired) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
@@ -261,16 +270,16 @@ export default function CheckoutScreen() {
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, guidance?.admin]);
+  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired]);
 
   const performQrCheck = useCallback(async (isCurrent: () => boolean) => {
-    if (!qrPayment || operationRef.current || guidance?.admin) return;
+    if (!qrPayment || operationRef.current || administratorRequired) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     try {
       const payment = await refreshQrPhPayment(qrPayment.id);
-      if (isCurrent()) await showQrPayment(payment);
+      if (isCurrent()) await showQrPayment(payment, isCurrent);
     } catch (error) {
       if (isCurrent()) { setQrStatus('verification'); setQrError(describeQrVerification(error)); }
     } finally {
@@ -278,28 +287,30 @@ export default function CheckoutScreen() {
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [qrPayment, refreshQrPhPayment, showQrPayment, guidance?.admin]);
+  }, [qrPayment, refreshQrPhPayment, showQrPayment, administratorRequired]);
 
   const retryReceiptRefresh = useCallback(async () => {
-    if (operationRef.current || !qrPayment || guidance?.admin || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
+    if (operationRef.current || !qrPayment || administratorRequired || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
       || String(authorityCheckout.attempts[authorityCheckout.attempts.length - 1]?.id) !== qrPayment.id) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     try { await showQrPayment(qrPayment); }
     finally { operationRef.current = false; qrBusyRef.current = false; setQrBusy(false); }
-  }, [authorityCheckout, guidance?.admin, qrPayment, showQrPayment]);
+  }, [authorityCheckout, administratorRequired, qrPayment, showQrPayment]);
 
   // Leaving never cancels an attempt. Hold expiry does not establish financial finality.
   const leaveQrPayment = useCallback(() => {
     router.back();
   }, []);
 
-  const checkQrPayment = useCheckoutPaymentPolling({
+  const { checkNow: checkQrPayment, visible } = useCheckoutPaymentPolling({
     identity: qrPayment ? `${authorityCheckout?.id ?? checkoutMachine?.id}:${qrPayment.id}` : undefined,
-    eligible: mode === 'qrph' && qrStatus === 'pending' && !guidance?.admin && receiptRefresh !== 'running' && receiptRefresh !== 'failed',
+    eligible: mode === 'qrph' && qrStatus === 'pending' && activeAttempt?.payment === 'pending' && !activeAttempt.finalEvidence && !terminalLocked && !guidance?.admin && receiptRefresh !== 'running' && receiptRefresh !== 'failed',
     busy: operationBusy, check: performQrCheck,
   });
+  useLayoutEffect(() => { visibleRef.current = visible; return () => { visibleRef.current = false; }; }, [visible]);
+  useEffect(() => { if (visible && checkoutCompletion && !guidance?.admin) alertCompletion(checkoutCompletion.sale); }, [visible, checkoutCompletion, guidance?.admin, alertCompletion]);
 
   if (checkoutCompletion && !guidance?.admin) {
     const sale = checkoutCompletion.sale;
@@ -351,7 +362,7 @@ export default function CheckoutScreen() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
         {guidance ? <View testID="checkout-guidance" style={styles.paymentCard} accessibilityLiveRegion="polite">
-          <Text style={styles.sectionTitle}>{guidance.headline}</Text>
+          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
           <Text>{guidance.body}</Text>
           <Text>{guidance.safety}</Text>
           {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : guidance.action !== 'done' ? <AppButton
@@ -382,7 +393,7 @@ export default function CheckoutScreen() {
             <TextInput accessibilityLabel="Abandonment reason" placeholder="Reason for abandoning purchase" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
             <AppButton label="Abandon purchase" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
           </> : null}
-          {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
+          {recoveryError && !guidance ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           <CheckoutOrderSummary cart={cart} />
         </View>
 
@@ -392,12 +403,12 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Choose one</Text>
           </View>
           <View style={styles.segmentRow}>
-            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash', disabled: tenderLocked && mode !== 'cash' }} disabled={tenderLocked && mode !== 'cash'} onPress={() => { if (!tenderLocked) setMode('cash'); }} style={[styles.segment, mode === 'cash' && styles.segmentActive, tenderLocked && mode !== 'cash' && styles.segmentDisabled]}>
+            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash', disabled: (guidance?.admin || tenderLocked && mode !== 'cash') }} disabled={(guidance?.admin || tenderLocked && mode !== 'cash')} onPress={() => { if (!tenderLocked) setMode('cash'); }} style={[styles.segment, mode === 'cash' && styles.segmentActive, (guidance?.admin || tenderLocked && mode !== 'cash') && styles.segmentDisabled]}>
               <Ionicons name="cash-outline" size={22} color={mode === 'cash' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>Cash</Text>
               <Ionicons name={mode === 'cash' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'cash' ? colors.primary : colors.outline} />
             </Pressable>
-            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph', disabled: tenderLocked && mode !== 'qrph' }} disabled={tenderLocked && mode !== 'qrph'} onPress={() => { if (!tenderLocked) setMode('qrph'); }} style={[styles.segment, mode === 'qrph' && styles.segmentActive, tenderLocked && mode !== 'qrph' && styles.segmentDisabled]}>
+            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph', disabled: (guidance?.admin || tenderLocked && mode !== 'qrph') }} disabled={(guidance?.admin || tenderLocked && mode !== 'qrph')} onPress={() => { if (!tenderLocked) setMode('qrph'); }} style={[styles.segment, mode === 'qrph' && styles.segmentActive, (guidance?.admin || tenderLocked && mode !== 'qrph') && styles.segmentDisabled]}>
               <Ionicons name="qr-code-outline" size={22} color={mode === 'qrph' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>QR Ph</Text>
               <Ionicons name={mode === 'qrph' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'qrph' ? colors.primary : colors.outline} />
@@ -441,7 +452,7 @@ export default function CheckoutScreen() {
             </View>
           ) : (
             <View style={styles.qrPanel}>
-              {guidance?.admin ? null : qrPayment?.qrPayload ? <QrPaymentCode payload={qrPayment.qrPayload} /> : (
+              {guidance?.admin || authorityCheckout?.sale ? null : qrPayment?.qrPayload ? <QrPaymentCode payload={qrPayment.qrPayload} /> : (
                 <View style={styles.qrPlaceholder}>
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
@@ -450,7 +461,7 @@ export default function CheckoutScreen() {
               <Text style={styles.qrBody}>Leaving does not cancel this payment.</Text>
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
-                  {qrStatusText(qrStatus)}
+                  {receiptRefresh === 'running' ? 'Payment pending…' : qrStatusText(qrStatus)}
                 </Text>
               ) : null}
               {qrError && !guidance ? <FailureNotice testID="qr-payment-error" failure={qrError} /> : null}

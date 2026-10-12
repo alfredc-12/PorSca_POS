@@ -10,11 +10,6 @@ export function useCheckoutPaymentPolling({ identity, eligible, busy, check }: {
 }) {
   const [focused, setFocused] = useState(false);
   const [active, setActive] = useState(AppState.currentState === 'active');
-  useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', state => setActive(state === 'active'));
-    return () => subscription.remove();
-  }, []);
   const latest = useRef({ identity, eligible, busy, check, focused, active });
   useLayoutEffect(() => { latest.current = { identity, eligible, busy, check, focused, active }; }, [identity, eligible, busy, check, focused, active]);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -24,6 +19,20 @@ export function useCheckoutPaymentPolling({ identity, eligible, busy, check }: {
   const mounted = useRef(true);
   const cancel = useCallback(() => { clearTimeout(timer.current); timer.current = undefined; }, []);
   const schedule = useRef<() => void>(() => undefined);
+  useFocusEffect(useCallback(() => {
+    latest.current.focused = true;
+    setFocused(true);
+    return () => { latest.current.focused = false; epoch.current += 1; cancel(); setFocused(false); };
+  }, [cancel]));
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      const nextActive = state === 'active';
+      latest.current.active = nextActive;
+      if (!nextActive) { epoch.current += 1; cancel(); }
+      setActive(nextActive);
+    });
+    return () => subscription.remove();
+  }, [cancel]);
   const run = useCallback(async (manual = false) => {
     const current = latest.current;
     if (running.current || current.busy || !current.identity || !current.focused || !current.active) return;
@@ -49,5 +58,6 @@ export function useCheckoutPaymentPolling({ identity, eligible, busy, check }: {
   }, [identity, focused, active, cancel]);
   useEffect(() => { schedule.current(); return cancel; }, [busy, eligible, cancel]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; epoch.current += 1; cancel(); }; }, [cancel]);
-  return useCallback(() => run(true), [run]);
+  const checkNow = useCallback(() => run(true), [run]);
+  return { checkNow, visible: focused && active };
 }

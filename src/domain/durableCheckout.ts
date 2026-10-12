@@ -56,10 +56,14 @@ export class DurableCheckout {
   private handle?: CheckoutHandle;
   private loaded = false;
   private corruptStorage = false;
+  private corruptWithoutChoice = false;
   private busy = false;
   private recoveryFailure?: CheckoutProgress['recoveryFailure'];
+  private unresolvedCashRefusal = false;
   get progress(): CheckoutProgress {
+    if (this.corruptStorage && this.corruptWithoutChoice) return { recoveryFailure: 'identity' };
     const result: CheckoutProgress = { recoveryFailure: this.recoveryFailure };
+    if (this.unresolvedCashRefusal && !this.current?.sale && !this.current?.attempts.some(a => a.method === 'cash')) return { ...result, uncertainTender: 'cash' };
     if (!this.handle?.tender || this.current?.sale || this.current?.attempts.length) return result;
     try {
       const [method, tender] = JSON.parse(this.handle.tender.signature);
@@ -82,6 +86,7 @@ export class DurableCheckout {
       if (this.recoveryFailure !== 'inconsistent') this.recoveryFailure = undefined;
       return result;
     } catch (error) {
+      if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
         this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && isDefinitiveQrRejection(error) ? undefined : 'interrupted';
       }
@@ -111,6 +116,7 @@ export class DurableCheckout {
     }
   }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
+  confirmEmptyRecoveryDiscovery() { if (this.corruptStorage) this.corruptWithoutChoice = true; }
   private async discoverCheckouts() {
     const checkouts: AuthorityCheckout[] = [];
     for (let page = 1; ; page++) {
@@ -139,13 +145,17 @@ export class DurableCheckout {
   async recover(id?: string) {
     await this.load();
     if (this.corruptStorage) {
-      if (!id) throw new ApiClientError('The stored checkout identity is unreadable. Select a checkout from server discovery to reattach it; payment remains unresolved.', 409, 'checkout_recovery_required');
+      if (!id) {
+        if (this.corruptWithoutChoice) throw new CheckoutIdentityError('No safe checkout identity was found.', 409, 'checkout_recovery_required');
+        throw new ApiClientError('The stored checkout identity is unreadable. Select a checkout from server discovery to reattach it; payment remains unresolved.', 409, 'checkout_recovery_required');
+      }
       await this.verifyDiscoveredCheckout(id);
       const checkout = await this.client.recoverCheckout(id);
       const handle: CheckoutHandle = { id, key: key(), signature: signatureForItems(checkout.items) };
       await this.storage.save(handle);
       this.handle = handle;
       this.corruptStorage = false;
+      this.corruptWithoutChoice = false;
       this.current = checkout;
       return this.current;
     }
@@ -183,11 +193,18 @@ export class DurableCheckout {
       this.current = await this.createCheckout(items, this.handle.key);
       this.handle.id = this.current.id;
       await this.persist();
-    } else this.current = await this.client.getCheckout(this.handle.id);
+    } else {
+      try { this.current = await this.client.getCheckout(this.handle.id); }
+      catch (error) {
+        if (error instanceof ApiClientError && error.status === 404) throw new CheckoutIdentityError('Retained checkout was not found.', 404);
+        throw error;
+      }
+    }
     return this.current!;
   }
   async tender(lines: CartLine[], method: 'cash' | 'qrph', cashInput?: string, forceNew = false) {
     const checkout = await this.prepare(lines);
+    if (this.unresolvedCashRefusal && !checkout.sale && !checkout.attempts.some(a => a.method === 'cash')) throw new ApiClientError('Recover the earlier cash sale before taking payment.', 409, 'cash_attempt_unresolved');
     if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale?.method === method) return checkout;
     if (!canAcceptCheckoutTender(this.machine)) {
       if (method === 'qrph' && this.machine?.attempts.some(a => a.method === 'qr')) return checkout;
@@ -270,7 +287,7 @@ export class DurableCheckout {
   async retire() {
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
-    await this.storage.save(null); this.handle = undefined; this.current = undefined;
+    await this.storage.save(null); this.handle = undefined; this.current = undefined; this.unresolvedCashRefusal = false;
   }
 }
 

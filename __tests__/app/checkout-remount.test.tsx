@@ -114,9 +114,49 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByText('Receipt 9')).toBeTruthy(); expect(view.getByText('Paid ₱25.00')).toBeTruthy();
     expect(view.queryByText('The cart is empty')).toBeNull(); expect(view.queryByTestId('qr-payment-code')).toBeNull();
     expect(view.queryByTestId('start-qrph-payment')).toBeNull();
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
+    expect(view.getByTestId('checkout-completed-receipt')).toBeTruthy(); expect(Alert.alert).toHaveBeenCalledTimes(1);
     const done = (Alert.alert as jest.Mock).mock.calls[0][2][0].onPress;
     act(() => { done(); done(); }); expect(router.replace).toHaveBeenCalledTimes(1);
-    fireEvent.press(view.getByTestId('seed')); expect(view.queryByTestId('checkout-completed-receipt')).toBeNull();
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
+    expect(view.queryByTestId('checkout-completed-receipt')).toBeNull(); expect(view.queryByText('Receipt 9')).toBeNull();
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
+  });
+  it('restores uncertain cash read-only on remount and exactly replays its saved key and amount', async () => {
+    const { tree, client, setCheckout } = fixture();
+    client.checkoutCash.mockRejectedValueOnce(new ApiClientError('lost response'));
+    const view = render(tree); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The cash sale may already be recorded/);
+    expect(view.getByTestId('cash-received-input')).toHaveProp('value', '100.00'); expect(view.getByTestId('cash-received-input')).toHaveProp('editable', false);
+    expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled(); expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    client.checkoutCash.mockImplementationOnce(async () => { const receipt: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 20, method: 'cash', amountCentavos: 2500, cashReceivedCentavos: 10000, changeAmountCentavos: 7500, completedAt: 'today' } }; setCheckout(receipt); return receipt; });
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Retry saving cash payment' })); });
+    expect(client.checkoutCash).toHaveBeenCalledTimes(2); expect(client.checkoutCash.mock.calls[1]).toEqual(client.checkoutCash.mock.calls[0]);
+    expect(view.getByText('Change to give ₱75.00')).toBeTruthy(); expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+  });
+  it('keeps paid-unfulfilled administrator guidance and readable ids when both reads fail', async () => {
+    const { tree, client, setCheckout } = fixture();
+    const unfulfilled: AuthorityCheckout = { ...pending, state: 'paid_unfulfilled', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid_unfulfilled' }], exceptions: [{ caseId: 22, reason: 'stock', state: 'open' }] };
+    client.createCheckoutAttempt.mockImplementationOnce(async () => { setCheckout(unfulfilled); return unfulfilled; });
+    client.listInventory.mockRejectedValue(new Error('offline')); client.listSales.mockRejectedValue(new Error('offline'));
+    const view = render(tree); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+    expect(view.getByText('Payment was received, but the sale could not be completed.')).toBeTruthy(); expect(view.getByText('Call the shop administrator now.')).toBeTruthy();
+    expect(view.getByText('Checkout server-uuid')).toBeTruthy(); expect(view.getByText('Attempt 7')).toBeTruthy(); expect(view.getByText('Case 22')).toBeTruthy();
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled(); expect(view.queryByTestId('refresh-qr-payment')).toBeNull(); expect(view.queryByTestId('retry-qr-payment')).toBeNull();
+    expect(view.queryByTestId('qr-payment-code')).toBeNull(); expect(view.queryByTestId('checkout-completed-receipt')).toBeNull();
+  });
+  it('does not confuse uncertain QR creation without an attempt id with a cash sale', async () => {
+    const { tree, client } = fixture(); client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('lost response')); client.recoverCheckout.mockRejectedValueOnce(new ApiClientError('offline'));
+    const view = render(tree); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/We could not confirm the payment status/);
+    expect(view.getByTestId('start-qrph-payment')).toHaveTextContent(/Retry QR Ph Payment/); expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+    expect(client.createCheckoutAttempt.mock.calls[1]).toEqual(client.createCheckoutAttempt.mock.calls[0]); expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('keeps an authoritative cash receipt behind its alert while history is still loading', async () => {
     const { tree, client, setCheckout } = fixture();
@@ -143,7 +183,12 @@ describe('checkout remount with durable machine state', () => {
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Conflicting payment records found/);
     expect(view.getByText('Case 17')).toBeTruthy(); expect(view.queryByTestId('retry-qr-verification')).toBeNull();
-    expect(view.queryByTestId('qr-payment-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(view.getByText('Administrator required')).toBeTruthy(); expect(view.getByText('Call the shop administrator now.')).toBeTruthy();
+    expect(view.getByText('Do not take another payment, hand over goods, refund, or abandon this purchase while you wait.')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Review current price' })).toBeDisabled(); expect(view.getByRole('button', { name: 'Abandon purchase' })).toBeDisabled();
+    expect(view.getByLabelText('Abandonment reason')).toHaveProp('editable', false);
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled(); expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
+    expect(view.queryByTestId('qr-payment-code-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
   it('reattaches ambiguous QR creation to the server attempt rather than starting another', async () => {
     const { tree, client } = fixture();

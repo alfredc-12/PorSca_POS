@@ -30,6 +30,15 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('keeps a cash-unresolved refusal recovery-only even when a stale open read has no attempt', async () => {
+    const { wrapper, client } = fixture(); const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('cash still pending', 409, 'cash_attempt_unresolved'));
+    client.recoverCheckout.mockResolvedValue(open);
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow('cash still pending'); });
+    expect(result.current.checkoutProgress?.uncertainTender).toBe('cash'); expect(result.current.checkoutProgress?.cashInput).toBeUndefined();
+    await act(async () => { await result.current.recoverCheckout(); await expect(result.current.completeCashSale('100')).rejects.toThrow(/Recover the earlier cash sale/); });
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
   it('keeps checkout subscribers isolated from catalog, search, inventory and history updates', async () => {
     const { client, store } = fixture(); let renders = 0;
     function CheckoutProbe() { useCheckout(); renders += 1; return null; }

@@ -73,6 +73,7 @@ type PosContextValue = {
   checkoutProgress?: CheckoutProgress;
   checkoutCompletion?: { checkoutId: string; sale: Sale };
   acknowledgeCheckout: () => void;
+  claimCheckoutCompletionAlert: (saleId: string) => boolean;
   recoverableCheckouts: AuthorityCheckout[];
   checkoutRecoveryError?: string;
   canDiscardCorruptCheckout: boolean;
@@ -96,7 +97,7 @@ type PosContextValue = {
   unresolvedQrPayment: () => Payment | undefined;
 };
 
-type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
+type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'claimCheckoutCompletionAlert' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
 const PosContext = createContext<PosContextValue | null>(null);
 export function useCheckout() {
@@ -144,6 +145,11 @@ export function PosProvider({
   const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
   const [checkoutCompletion, setCheckoutCompletion] = useState<PosContextValue['checkoutCompletion']>();
   const acknowledgeCheckout = useCallback(() => setCheckoutCompletion(undefined), []);
+  const completionAlerts = useRef(new Set<string>());
+  const claimCheckoutCompletionAlert = useCallback((saleId: string) => {
+    if (completionAlerts.current.has(saleId)) return false;
+    completionAlerts.current.add(saleId); return true;
+  }, []);
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }
@@ -523,6 +529,7 @@ export function PosProvider({
   const refreshSales = useCallback(() => {
     const generation = reads.generation;
     return reads.run('sales-refresh', generation, async () => {
+    reads.invalidateHistoryHandoff();
     setSalesState('loading');
     setSalesError(undefined);
 
@@ -621,11 +628,13 @@ export function PosProvider({
       setRecoverableCheckouts(live);
       if (emptyDiscovery) {
         corruptLocalStorage = await authority.hasCorruptStorage();
+        authority.confirmEmptyRecoveryDiscovery();
         setCanDiscardCorruptCheckout(corruptLocalStorage);
       }
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
       await recoverCheckoutInternal(undefined, automatic);
     } catch {
+      setCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
       setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
@@ -766,8 +775,8 @@ export function PosProvider({
 
   const checkoutMachine = authority.machine;
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
-    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, recoverCheckout, revalidateCheckout, abandonCheckout
-  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
+    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
+  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
 
   return (
     <CheckoutContext.Provider value={checkoutValue}>
@@ -808,6 +817,7 @@ export function PosProvider({
         checkoutProgress,
         checkoutCompletion,
         acknowledgeCheckout,
+        claimCheckoutCompletionAlert,
         recoverableCheckouts,
         checkoutRecoveryError,
         canDiscardCorruptCheckout,

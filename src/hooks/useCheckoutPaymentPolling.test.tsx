@@ -18,7 +18,7 @@ describe('bounded checkout polling', () => {
     const check = jest.fn().mockImplementation(() => new Promise<void>(resolve => { settle = resolve; }));
     const { result } = renderHook(() => useCheckoutPaymentPolling({ identity: 'c:7', eligible: true, busy: false, check }));
     await flush(2500);
-    await act(async () => { void result.current(); void result.current(); });
+    await act(async () => { void result.current.checkNow(); void result.current.checkNow(); });
     await flush(60000);
     expect(check).toHaveBeenCalledTimes(1);
     await act(async () => { settle(); });
@@ -29,7 +29,7 @@ describe('bounded checkout polling', () => {
     const check = jest.fn().mockResolvedValue(undefined);
     const { result } = renderHook(() => useCheckoutPaymentPolling({ identity: 'c:7', eligible: true, busy: false, check }));
     await flush(1000);
-    await act(async () => { await result.current(); });
+    await act(async () => { await result.current.checkNow(); });
     expect(check).toHaveBeenCalledTimes(1);
     await flush(4999); expect(check).toHaveBeenCalledTimes(1);
     await flush(1); expect(check).toHaveBeenCalledTimes(2);
@@ -37,11 +37,21 @@ describe('bounded checkout polling', () => {
   it('stops for unknown and shared operations but allows explicit checks and reversible pending', async () => {
     const check = jest.fn().mockResolvedValue(undefined);
     const { result, rerender } = renderHook(({ eligible, busy }: { eligible: boolean; busy: boolean }) => useCheckoutPaymentPolling({ identity: 'c:7', eligible, busy, check }), { initialProps: { eligible: false, busy: true } });
-    await flush(60000); await act(async () => { await result.current(); }); expect(check).not.toHaveBeenCalled();
+    await flush(60000); await act(async () => { await result.current.checkNow(); }); expect(check).not.toHaveBeenCalled();
     rerender({ eligible: false, busy: false });
-    await act(async () => { await result.current(); }); expect(check).toHaveBeenCalledTimes(1);
+    await act(async () => { await result.current.checkNow(); }); expect(check).toHaveBeenCalledTimes(1);
     rerender({ eligible: true, busy: false });
     await flush(5000); expect(check).toHaveBeenCalledTimes(2);
+  });
+  it('resumes a single timer when focus returns before an obsolete slow request settles', async () => {
+    let settle!: () => void; let current!: () => boolean;
+    const check = jest.fn((isCurrent: () => boolean) => { current = isCurrent; return new Promise<void>(resolve => { settle = resolve; }); });
+    const { rerender } = renderHook(({ identity }: { identity: string }) => useCheckoutPaymentPolling({ identity, eligible: true, busy: false, check }), { initialProps: { identity: 'c:7' } });
+    await flush(2500); mockFocused = false; rerender({ identity: 'c:7' });
+    mockFocused = true; rerender({ identity: 'c:7' });
+    expect(current()).toBe(false); await flush(60000); expect(check).toHaveBeenCalledTimes(1);
+    await act(async () => { settle(); });
+    await flush(2499); expect(check).toHaveBeenCalledTimes(1); await flush(1); expect(check).toHaveBeenCalledTimes(2);
   });
   it('cleans up on blur, background, identity replacement and unmount; ignores obsolete delivery', async () => {
     let listener!: (state: AppStateStatus) => void;
