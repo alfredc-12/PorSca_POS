@@ -11,7 +11,7 @@ import { useResponsive } from '@/src/hooks/useResponsive';
 type Filter = 'all' | 'today' | PaymentMethod;
 
 export default function TransactionsScreen() {
-  const { sales, salesState, salesError, refreshSales } = usePos();
+  const { sales, salesState, salesError, refreshSales, consumeSalesHandoff } = usePos();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [showFilters, setShowFilters] = useState(true);
@@ -37,8 +37,8 @@ export default function TransactionsScreen() {
   const qrCount = sales.filter((sale) => sale.paymentMethod === 'qrph').length;
 
   React.useEffect(() => {
-    void refreshSales();
-  }, [refreshSales]);
+    if (!consumeSalesHandoff?.()) void refreshSales();
+  }, [refreshSales, consumeSalesHandoff]);
 
   return (
     <Screen>

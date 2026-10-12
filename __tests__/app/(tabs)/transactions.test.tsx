@@ -47,6 +47,14 @@ describe('TransactionsScreen history states', () => {
     expect(getByText('₱37.00')).toBeTruthy();
   });
 
+  it('consumes a verified one-use history handoff without a mount request, but a later mount refreshes', () => {
+    const consumeSalesHandoff = jest.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    mockUsePos.mockReturnValue({ sales: [completedCashSale], salesState: 'ready', refreshSales: mockRefreshSales, consumeSalesHandoff });
+    const first = render(<TransactionsScreen />);
+    expect(first.getByTestId('transaction-42')).toBeTruthy(); expect(mockRefreshSales).not.toHaveBeenCalled();
+    first.unmount(); render(<TransactionsScreen />); expect(mockRefreshSales).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a retryable unavailable state without hiding the last known sale', () => {
     setSales([completedCashSale], 'unavailable', 'Laravel history request failed.');
     const { getByRole, getByTestId, getByText } = render(<TransactionsScreen />);

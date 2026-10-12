@@ -30,6 +30,42 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
+    const { wrapper, client } = fixture();
+    let products!: (value: typeof product[]) => void;
+    let history!: (value: never[]) => void;
+    client.listProducts.mockImplementation(() => new Promise(resolve => { products = resolve; }));
+    client.listSales.mockImplementation(() => new Promise(resolve => { history = resolve; }));
+    const { result } = renderHook(() => usePos(), { wrapper });
+    let calls!: Promise<boolean>[];
+    act(() => { calls = [result.current.refreshProducts(), result.current.refreshInventory(), result.current.refreshInventory(), result.current.refreshSales(), result.current.refreshSales()]; });
+    expect(client.listProducts).toHaveBeenCalledTimes(1);
+    expect(client.listInventory).toHaveBeenCalledTimes(1);
+    expect(client.listSales).toHaveBeenCalledTimes(1);
+    await act(async () => { products([product]); history([]); expect(await Promise.all(calls)).toEqual([true, true, true, true, true]); });
+    client.listSales.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([]);
+    await act(async () => { expect(await result.current.refreshSales()).toBe(false); expect(await result.current.refreshSales()).toBe(true); });
+    expect(result.current.salesState).toBe('ready');
+  });
+  it('starts confirmation reads after commitment and cannot publish older pre-sale history or inventory', async () => {
+    const { wrapper, client } = fixture();
+    let oldHistory!: (value: never[]) => void;
+    let oldCatalog!: (value: typeof product[]) => void;
+    client.listSales.mockImplementationOnce(() => new Promise(resolve => { oldHistory = resolve; }));
+    client.listProducts.mockImplementationOnce(() => new Promise(resolve => { oldCatalog = resolve; }));
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    let oldSales!: Promise<boolean>; let oldInventory!: Promise<boolean>;
+    act(() => { oldSales = result.current.refreshSales(); oldInventory = result.current.refreshInventory(); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+    client.recoverCheckout.mockResolvedValue(paid);
+    client.listProducts.mockResolvedValue([{ ...product, stock: 19 }]);
+    await act(async () => { await result.current.confirmQrPhPayment({ id: '7', amount: 25, status: 'paid' }); });
+    expect(client.listSales).toHaveBeenCalledTimes(2); expect(client.listProducts).toHaveBeenCalledTimes(2);
+    await act(async () => { oldHistory([]); oldCatalog([{ ...product, stock: 100 }]); expect(await oldSales).toBe(false); expect(await oldInventory).toBe(false); });
+    expect(result.current.products[0].stock).toBe(19);
+    expect(result.current.salesState).toBe('ready'); expect(result.current.inventoryState).toBe('ready');
+    expect(result.current.consumeSalesHandoff()).toBe(true); expect(result.current.consumeSalesHandoff()).toBe(false);
+  });
   it('records cash through v3 and refreshes inventory/history, never legacy checkout', async () => {
     const { wrapper, client, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper });

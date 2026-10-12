@@ -11,6 +11,7 @@ import { checkoutStorage } from '@/src/api/checkoutStorage';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from '@/src/domain/checkoutMachine';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
+import { CheckoutReads } from '@/src/domain/checkoutReads';
 import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
@@ -84,6 +85,7 @@ type PosContextValue = {
   refreshProducts: () => Promise<boolean>;
   refreshInventory: () => Promise<boolean>;
   refreshSales: () => Promise<boolean>;
+  consumeSalesHandoff: () => boolean;
   startQrPhPayment: (forceNew?: boolean) => Promise<Payment>;
   /** Authoritative provider-verified check; never cancels the payment. */
   refreshQrPhPayment: (paymentId: string) => Promise<Payment>;
@@ -126,6 +128,9 @@ export function PosProvider({
   /** The query whose request is currently in flight, so the same query is never read twice. */
   const inFlightQuery = useRef<string | undefined>(undefined);
   const authority = useMemo(() => new DurableCheckout(client, checkoutStore ?? checkoutStorage(client.baseUrl ?? 'unconfigured')), [client, checkoutStore]);
+  const reads = useMemo(() => new CheckoutReads(client), [client]);
+  const readCatalog = useCallback((generation: number) => reads.run('catalog', generation, () => client.listProducts()), [reads, client]);
+  const consumeSalesHandoff = useCallback(() => reads.consumeHistoryHandoff(), [reads]);
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
   const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
@@ -421,7 +426,9 @@ export function PosProvider({
     }
   }, [client, demoCatalogEnabled, rememberProducts]);
 
-  const refreshProducts = useCallback(async () => {
+  const refreshProducts = useCallback(() => {
+    const generation = reads.generation;
+    return reads.run('products-refresh', generation, async () => {
     if (!client.isConfigured) {
       setCatalogState('unavailable');
       setCatalogError(OFFLINE_COPY.catalogNotConfigured);
@@ -429,21 +436,26 @@ export function PosProvider({
       return false;
     }
     try {
-      const remoteProducts = await client.listProducts();
+      const remoteProducts = await readCatalog(generation);
+      if (reads.generation !== generation) return false;
       rememberProducts(remoteProducts);
       setCatalogState('ready');
       setCatalogError(undefined);
       setCatalogUsingFallback(false);
       return true;
     } catch {
+      if (reads.generation !== generation) return false;
       setCatalogState('unavailable');
       setCatalogError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing items saved on this device.' : OFFLINE_COPY.catalogUnavailable);
       setCatalogUsingFallback(demoCatalogEnabled);
       return false;
     }
-  }, [client, demoCatalogEnabled, rememberProducts]);
+    });
+  }, [reads, readCatalog, client, demoCatalogEnabled, rememberProducts]);
 
-  const refreshInventory = useCallback(async () => {
+  const refreshInventory = useCallback(() => {
+    const generation = reads.generation;
+    return reads.run('inventory-refresh', generation, async () => {
     setInventoryState('loading');
     setInventoryError(undefined);
     setInventoryUsingFallback(false);
@@ -457,7 +469,8 @@ export function PosProvider({
     }
 
     try {
-      const [remoteInventory, remoteCatalog] = await Promise.all([client.listInventory(), client.listProducts()]);
+      const [remoteInventory, remoteCatalog] = await Promise.all([client.listInventory(), readCatalog(generation)]);
+      if (reads.generation !== generation) return false;
       const nextInventory = remoteInventory.map((item) => {
         const knownProduct = remoteCatalog.find((product) => product.id === item.productId || product.barcode === item.barcode);
         return {
@@ -482,15 +495,19 @@ export function PosProvider({
       setInventoryState('ready');
       return true;
     } catch {
+      if (reads.generation !== generation) return false;
       setInventoryProducts((current) => current.length ? current : demoCatalogEnabled ? seedProducts : []);
       setInventoryState('unavailable');
       setInventoryError(demoCatalogEnabled ? 'We cannot reach the shop server. Showing stock saved on this device.' : OFFLINE_COPY.inventoryUnavailable);
       setInventoryUsingFallback(demoCatalogEnabled);
       return false;
     }
-  }, [client, demoCatalogEnabled]);
+    });
+  }, [reads, readCatalog, client, demoCatalogEnabled]);
 
-  const refreshSales = useCallback(async () => {
+  const refreshSales = useCallback(() => {
+    const generation = reads.generation;
+    return reads.run('sales-refresh', generation, async () => {
     setSalesState('loading');
     setSalesError(undefined);
 
@@ -502,15 +519,18 @@ export function PosProvider({
 
     try {
       const remoteSales = await client.listSales();
+      if (reads.generation !== generation) return false;
       setSales(remoteSales);
       setSalesState('ready');
       return true;
     } catch {
+      if (reads.generation !== generation) return false;
       setSalesState('unavailable');
       setSalesError('We cannot reach the shop server. Showing the last known transaction history.');
       return false;
     }
-  }, [client, demoCatalogEnabled]);
+    });
+  }, [reads, client, demoCatalogEnabled]);
   const applyCheckout = useCallback(async (checkout: AuthorityCheckout, canReplace?: () => boolean) => {
     // Recover the original basket, not whatever happens to be on the POS screen.
     const lines = await Promise.all(checkout.items.map(async item => ({
@@ -527,6 +547,7 @@ export function PosProvider({
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
     const checkout = await authority.recover(id);
     if (!checkout) return;
+    if (checkout.sale) reads.observeSale(String(checkout.sale.id));
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
     await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     if (checkout.state === 'abandoned') {
@@ -543,12 +564,13 @@ export function PosProvider({
       const saleLines = cartRef.current.lines;
       const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
       if (!inventory || !history) throw new ApiClientError('Retry cash receipt inventory and history verification.');
+      reads.markHistoryReady(reads.generation, String(checkout.sale.id));
       setSales(current => mergeSales(current, [checkoutSale(checkout, saleLines)]));
       await authority.retire();
       setAuthorityCheckout(undefined);
       if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
     }
-  }), [exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
+  }), [reads, exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
   const recoverCheckout = useCallback(async (id?: string) => {
     await recoverCheckoutInternal(id);
     setCanDiscardCorruptCheckout(false);
@@ -622,13 +644,16 @@ export function PosProvider({
     try { checkout = await authority.tender(lines, 'cash', typeof cashReceived === 'string' ? cashReceived : cashReceived.toFixed(2)); }
     finally { setAuthorityCheckout(authority.current); }
     const sale = checkoutSale(checkout, lines);
+    reads.observeSale(sale.id);
     setSales(current => mergeSales(current, [sale]));
     await authority.retire();
     setAuthorityCheckout(undefined);
     if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
-    await Promise.allSettled([refreshInventory(), refreshSales()]);
+    const generation = reads.generation;
+    const [, history] = await Promise.all([refreshInventory(), refreshSales()]);
+    if (history) reads.markHistoryReady(generation, sale.id);
     return sale;
-  }), [exclusive, authority, client, commitCart, refreshInventory, refreshSales]);
+  }), [reads, exclusive, authority, client, commitCart, refreshInventory, refreshSales]);
 
   const startQrPhPayment = useCallback(async (forceNew = false) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });
@@ -652,6 +677,7 @@ export function PosProvider({
     const checkout = await authority.recover();
     if (!checkout) throw new ApiClientError('Recover the checkout first.');
     setAuthorityCheckout(checkout);
+    if (checkout.sale) reads.observeSale(String(checkout.sale.id));
     // Caller/UI status is not authority. Contradictions and unfulfilled money stay locked.
     if (checkout.state === 'paid_unfulfilled') {
       const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
@@ -661,11 +687,12 @@ export function PosProvider({
     if (checkout.state !== 'completed' || !checkout.sale || checkoutPayment(checkout).id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
+    reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     const matches = JSON.stringify(checkout.items.map(i => [String(i.productId), i.quantity]).sort()) === JSON.stringify(cartRef.current.lines.map(l => [l.product.id, l.quantity]).sort());
     await authority.retire();
     setAuthorityCheckout(undefined);
     if (matches) commitCart({ type: 'reset' });
-  }), [exclusive, authority, commitCart, refreshInventory, refreshSales]);
+  }), [reads, exclusive, authority, commitCart, refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
@@ -763,6 +790,7 @@ export function PosProvider({
         refreshProducts,
         refreshInventory,
         refreshSales,
+        consumeSalesHandoff,
         startQrPhPayment,
         refreshQrPhPayment,
         confirmQrPhPayment,
