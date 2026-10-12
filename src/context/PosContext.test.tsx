@@ -109,10 +109,28 @@ describe('POS durable checkout integration', () => {
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', change: 75 }); });
     expect(result.current.checkoutCompletion?.sale.id).toBe('9'); expect(result.current.checkoutMachine?.state).toBe('completed'); expect(handle()?.id).toBe('durable-uuid');
+    await waitFor(() => expect(result.current.salesState).toBe('ready'));
+    expect(result.current.consumeSalesHandoff()).toBe(false);
     const cashReceipt = { ...open, state: 'completed' as const, sale: { ...paid.sale!, method: 'cash' as const, cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };
     client.recoverCheckout.mockResolvedValue(cashReceipt); store.save = original;
     await act(async () => { await result.current.recoverCheckout(); });
     expect(handle()).toBeNull(); expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+  });
+  it('does not publish the history handoff when recovered cash retirement fails', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.checkoutCash.mockRejectedValueOnce(new ApiClientError('lost response'));
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toThrow('lost response'); });
+    expect(handle()?.id).toBe('durable-uuid');
+    client.recoverCheckout.mockResolvedValue({ ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } });
+    const save = store.save.bind(store);
+    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+
+    await act(async () => { await result.current.recoverCheckout(); });
+    await waitFor(() => expect(result.current.salesState).toBe('ready'));
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(result.current.consumeSalesHandoff()).toBe(false);
+    expect(client.checkoutCash).toHaveBeenCalledTimes(1);
   });
   it('records cash through v3 and refreshes inventory/history, never legacy checkout', async () => {
     const { wrapper, client, handle } = fixture();
@@ -403,6 +421,20 @@ describe('POS durable checkout integration', () => {
     expect(handle()).toBeNull();
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
     expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('does not publish the history handoff when QR retirement fails', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+    const save = store.save.bind(store);
+    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+    client.recoverCheckout.mockResolvedValue(paid);
+
+    await act(async () => { await expect(result.current.confirmQrPhPayment({ id: '7', status: 'paid', amount: 25 })).rejects.toThrow('storage unavailable'); });
+    expect(client.listSales).toHaveBeenCalledTimes(1);
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(result.current.consumeSalesHandoff()).toBe(false);
   });
   it('ignores a caller-supplied paid status unless Laravel records a completed sale', async () => {
     const { wrapper } = fixture(); const { result } = renderHook(() => usePos(), { wrapper });

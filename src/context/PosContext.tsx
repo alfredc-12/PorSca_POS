@@ -587,13 +587,15 @@ export function PosProvider({
       const sale = checkoutSale(checkout, saleLines);
       setCheckoutCompletion({ checkoutId: checkout.id, sale });
       setSales(current => mergeSales(current, [sale]));
+      let retired = false;
       try {
         await authority.retire();
+        retired = true;
         setAuthorityCheckout(undefined);
         if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
       } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
       const generation = reads.generation;
-      void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
+      void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history && retired) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
     }
   }), [reads, exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
   const recoverCheckout = useCallback(async (id?: string) => {
@@ -675,13 +677,15 @@ export function PosProvider({
     reads.observeSale(sale.id);
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setSales(current => mergeSales(current, [sale]));
+    let retired = false;
     try {
       await authority.retire();
+      retired = true;
       setAuthorityCheckout(undefined);
       if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
     } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
     const generation = reads.generation;
-    void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
+    void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history && retired) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
     return sale;
   }), [reads, exclusive, authority, client, commitCart, refreshInventory, refreshSales]);
 
@@ -733,9 +737,9 @@ export function PosProvider({
     const cartUnchanged = () => cartRevision.current === cartRevisionAtConfirmation && cartSignature(cartRef.current.lines) === cartSignatureAtConfirmation;
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
-    reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     const sale = checkoutSale(checkout, saleLines);
     await authority.retire();
+    reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setAuthorityCheckout(undefined);
     if (matches && cartUnchanged()) commitCart({ type: 'reset' });
