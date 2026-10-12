@@ -6,6 +6,8 @@ import { PosProvider, usePos } from '@/src/context/PosContext';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutHandle, CheckoutStorage } from '@/src/domain/durableCheckout';
+import { QrPaymentCode } from '@/src/components/QrPaymentCode';
+import { CheckoutOrderSummary } from '@/src/components/CheckoutOrderSummary';
 
 jest.mock('expo-router', () => ({ router: { replace: jest.fn(), back: jest.fn() }, useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]), useLocalSearchParams: () => ({ method: 'cash' }) }));
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
@@ -71,6 +73,25 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByText(/We could not confirm the payment status/)).toBeTruthy();
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     await waitFor(() => expect(view.getByText('Payment pending…')).toBeTruthy());
+  });
+  it('does not rerender unchanged order or QR for typing, same pending or unrelated reads', async () => {
+    const qrRender = jest.spyOn(QrPaymentCode as unknown as { type: React.FC<{ payload?: string }> }, 'type');
+    const orderRender = jest.spyOn(CheckoutOrderSummary as unknown as { type: React.FC<{ cart: unknown[] }> }, 'type');
+    const { tree, client, setCheckout } = fixture(); const view = render(tree);
+    fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
+    const orderBefore = orderRender.mock.calls.length;
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    expect(orderRender).toHaveBeenCalledTimes(orderBefore);
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+    const qrBefore = qrRender.mock.calls.length;
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(qrRender).toHaveBeenCalledTimes(qrBefore); expect(orderRender).toHaveBeenCalledTimes(orderBefore);
+    setCheckout({ ...pending, attempts: [{ ...pending.attempts[0], qrPayload: 'REPLACEMENT' }] });
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(qrRender).toHaveBeenCalledTimes(qrBefore + 1);
+    fireEvent.press(view.getByTestId('seed')); expect(orderRender).toHaveBeenCalledTimes(orderBefore + 1);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('retains a committed QR through failed reads and remount, then retries only receipt reads', async () => {
     const { tree, client, handle, setCheckout } = fixture(); const view = render(tree); await start(view);

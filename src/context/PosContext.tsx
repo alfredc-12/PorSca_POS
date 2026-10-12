@@ -94,7 +94,14 @@ type PosContextValue = {
   unresolvedQrPayment: () => Payment | undefined;
 };
 
+type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
+const CheckoutContext = createContext<CheckoutContextValue | null>(null);
 const PosContext = createContext<PosContextValue | null>(null);
+export function useCheckout() {
+  const value = useContext(CheckoutContext);
+  if (!value) throw new Error('useCheckout must be used within PosProvider');
+  return value;
+}
 
 /** How many times a pre-checkout read retries after the cart changes under it. */
 const MAX_REVALIDATION_ATTEMPTS = 3;
@@ -740,7 +747,13 @@ export function PosProvider({
     'created',
   ), [client, saveRemoteProduct]);
 
+  const checkoutMachine = authority.machine;
+  const checkoutValue = useMemo<CheckoutContextValue>(() => ({
+    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, recoverCheckout, revalidateCheckout, abandonCheckout
+  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
+
   return (
+    <CheckoutContext.Provider value={checkoutValue}>
     <PosContext.Provider
       value={{
         products,
@@ -799,6 +812,7 @@ export function PosProvider({
     >
       {children}
     </PosContext.Provider>
+    </CheckoutContext.Provider>
   );
 }
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { Ionicons } from '@expo/vector-icons';
@@ -56,7 +56,7 @@ export function classifyQrPayload(payload: string | null | undefined): QrPayload
  * presents what the shop server returned; it never changes payment state, so a
  * drawn code is not a payment result.
  */
-export function QrPaymentCode({ payload, size = QR_CODE_SIZE }: { payload?: string | null; size?: number }) {
+export const QrPaymentCode = memo(function QrPaymentCode({ payload, size = QR_CODE_SIZE }: { payload?: string | null; size?: number }) {
   const presentation = useMemo(() => classifyQrPayload(payload), [payload]);
   const value = payload?.trim() ?? '';
   const quietZone = Math.ceil(size * QUIET_ZONE_RATIO);
@@ -102,7 +102,7 @@ export function QrPaymentCode({ payload, size = QR_CODE_SIZE }: { payload?: stri
       <Ionicons name="qr-code" size={112} color={colors.text} />
     </View>
   );
-}
+});
 
 /** A replacement payload gets a fresh load attempt; image errors are not payment outcomes. */
 function ProviderQrImage({ uri, size }: { uri: string; size: number }) {

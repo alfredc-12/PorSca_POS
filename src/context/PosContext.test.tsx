@@ -2,7 +2,7 @@ import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
-import { PosProvider, usePos } from './PosContext';
+import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
@@ -30,6 +30,20 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('keeps checkout subscribers isolated from catalog, search, inventory and history updates', async () => {
+    const { client, store } = fixture(); let renders = 0;
+    function CheckoutProbe() { useCheckout(); renders += 1; return null; }
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client as unknown as ApiClient} checkoutStore={store}><CheckoutProbe />{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    const initial = renders;
+    await act(async () => { await result.current.refreshProducts(); await result.current.refreshInventory(); await result.current.refreshSales(); await result.current.searchProducts('Coffee'); });
+    expect(renders).toBe(initial);
+    await act(async () => { await result.current.startQrPhPayment(); }); expect(renders).toBeGreaterThan(initial);
+    const pendingRenders = renders;
+    client.refreshCheckoutAttempt.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { await expect(result.current.refreshQrPhPayment('7')).rejects.toThrow('offline'); });
+    expect(renders).toBeGreaterThan(pendingRenders); expect(result.current.checkoutMachine?.attempts[0].payment).toBe('unknown');
+  });
   it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
     const { wrapper, client } = fixture();
     let products!: (value: typeof product[]) => void;

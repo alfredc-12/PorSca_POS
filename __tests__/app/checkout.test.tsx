@@ -17,7 +17,7 @@ jest.mock('expo-router', () => ({
   useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]),
   useLocalSearchParams: () => ({ method: 'cash' }),
 }));
-jest.mock('@/src/context/PosContext', () => ({ usePos: jest.fn() }));
+jest.mock('@/src/context/PosContext', () => { const usePos = jest.fn(); return { usePos, useCheckout: usePos }; });
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 

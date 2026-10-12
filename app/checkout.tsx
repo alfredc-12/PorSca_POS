@@ -5,10 +5,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
 import { FailureNotice } from '@/src/components/FailureNotice';
-import { ProductThumbnail } from '@/src/components/ProductThumbnail';
+import { CheckoutOrderSummary } from '@/src/components/CheckoutOrderSummary';
 import { QrPaymentCode } from '@/src/components/QrPaymentCode';
 import { ApiClientError, Payment } from '@/src/api/client';
-import { usePos } from '@/src/context/PosContext';
+import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
@@ -40,12 +40,13 @@ export default function CheckoutScreen() {
     recoverCheckout,
     revalidateCheckout,
     abandonCheckout,
-  } = usePos();
-  const [selectedMode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
+  } = useCheckout();
+  const [retainedPayment] = useState(() => unresolvedQrPayment());
+  const [selectedMode, setMode] = useState<'cash' | 'qrph'>(() => retainedPayment || method === 'qrph' ? 'qrph' : 'cash');
   const [enteredCash, setCash] = useState('');
   const cash = checkoutProgress?.cashInput ?? enteredCash;
-  const [qrStatus, setQrStatus] = useState<QrViewStatus>(() => unresolvedQrPayment()?.status ?? 'idle');
-  const [qrPayment, setQrPayment] = useState<Payment | undefined>(() => unresolvedQrPayment());
+  const [qrStatus, setQrStatus] = useState<QrViewStatus>(retainedPayment?.status ?? 'idle');
+  const [qrPayment, setQrPayment] = useState<Payment | undefined>(retainedPayment);
   const [qrError, setQrError] = useState<DescribedFailure>();
   const [qrFailure, setQrFailure] = useState<DescribedFailure>();
   const [cashError, setCashError] = useState<DescribedFailure>();
@@ -55,7 +56,7 @@ export default function CheckoutScreen() {
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
-  const initialRetainedPayment = useRef(unresolvedQrPayment());
+  const initialRetainedPayment = useRef(retainedPayment);
 
   const cashResult = useMemo(() => checkoutCashTender(cash, Math.round(total * 100)), [cash, total]);
   const [abandonReason, setAbandonReason] = useState('');
@@ -90,9 +91,6 @@ export default function CheckoutScreen() {
   const mode = checkoutProgress?.uncertainTender ?? (authorityTenderLocked && activeAttempt
     ? activeAttempt.method === 'qr' ? 'qrph' : 'cash'
     : selectedMode);
-  // Retain a recovered tender even after verified non-payability unlocks it.
-  // Adjust only when authority changes the displayed tender, not in an effect.
-  if (selectedMode !== mode) setMode(mode);
   const terminalLocked = checkoutMachine?.reconciliationRequired
     || checkoutMachine?.state === 'completed'
     || checkoutMachine?.state === 'abandoned'
@@ -101,7 +99,8 @@ export default function CheckoutScreen() {
     ? 'This purchase is locked. Do not take another payment.'
     : 'Do not take another payment while this payment is waiting.';
 
-  const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const itemCount = useMemo(() => cart.reduce((sum, line) => sum + line.quantity, 0), [cart]);
+  const presets = useMemo(() => cashTenderPresets(Math.round(total * 100)), [total]);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
   // end: show the stored authority attempt with its status check. Ambiguous
@@ -176,6 +175,7 @@ export default function CheckoutScreen() {
   };
 
   const showQrPayment = useCallback(async (payment: Payment) => {
+    setMode('qrph');
     setQrPayment(payment);
     setQrStatus(payment.status === 'paid' ? 'verification' : payment.status);
     setQrError(undefined);
@@ -364,17 +364,7 @@ export default function CheckoutScreen() {
             <AppButton label="Abandon purchase" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
           </> : null}
           {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
-          <Text style={styles.sectionTitle}>Order summary</Text>
-          {cart.map((line, index) => (
-            <View key={line.product.id} style={[styles.orderLine, index > 0 && styles.orderBorder]}>
-              <ProductThumbnail product={line.product} size={46} />
-              <View style={styles.orderCopy}>
-                <Text numberOfLines={1} style={styles.orderName}>{line.product.name}</Text>
-                <Text style={styles.orderMeta}>Qty {line.quantity} • ₱{line.product.price.toFixed(2)} each</Text>
-              </View>
-              <Text style={styles.orderAmount}>₱{(line.quantity * line.product.price).toFixed(2)}</Text>
-            </View>
-          ))}
+          <CheckoutOrderSummary cart={cart} />
         </View>
 
         <View style={styles.paymentCard}>
@@ -415,7 +405,7 @@ export default function CheckoutScreen() {
                 />
               </View>
               <View style={styles.segmentRow}>
-                {cashTenderPresets(Math.round(total * 100)).map(preset => <Pressable key={preset.label} accessibilityRole="button" accessibilityLabel={`Cash ${preset.label}`} disabled={tenderLocked} onPress={() => { if (!tenderLocked) setCash(preset.input); }}><Text>{preset.label}</Text></Pressable>)}
+                {presets.map(preset => <Pressable key={preset.label} accessibilityRole="button" accessibilityLabel={`Cash ${preset.label}`} disabled={tenderLocked} onPress={() => { if (!tenderLocked) setCash(preset.input); }}><Text>{preset.label}</Text></Pressable>)}
               </View>
               <View style={styles.changeBox}>
                 <Text style={styles.changeLabel}>Change to customer</Text>
