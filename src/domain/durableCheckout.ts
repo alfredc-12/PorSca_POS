@@ -287,6 +287,7 @@ export function checkoutPayment(checkout: AuthorityCheckout): Payment {
 }
 export function checkoutSale(checkout: AuthorityCheckout, lines: CartLine[]): Sale {
   const sale = checkout.sale;
-  if (!sale) throw new ApiClientError('The server has not recorded a sale.');
+  if (!sale || checkout.state !== 'completed' || !Number.isSafeInteger(sale.id) || !Number.isSafeInteger(sale.amountCentavos)
+    || !sale.completedAt || (sale.method === 'cash' && (!Number.isSafeInteger(sale.cashReceivedCentavos) || !Number.isSafeInteger(sale.changeAmountCentavos)))) throw new ApiClientError('The completed receipt is incomplete. Recover the purchase.');
   return { id: String(sale.id), items: lines, total: sale.amountCentavos / 100, paymentMethod: sale.method, status: 'paid', createdAt: sale.completedAt, cashReceived: sale.cashReceivedCentavos === null ? undefined : sale.cashReceivedCentavos / 100, change: sale.changeAmountCentavos === null ? undefined : sale.changeAmountCentavos / 100 };
 }

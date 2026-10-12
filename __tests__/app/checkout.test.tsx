@@ -53,7 +53,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
     apiConfigured: true,
     completeCashSale: jest.fn().mockResolvedValue(sale),
     resetCart: jest.fn(),
-    confirmQrPhPayment: jest.fn().mockResolvedValue(undefined),
+    confirmQrPhPayment: jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph', cashReceived: undefined, change: undefined }),
     unresolvedQrPayment: jest.fn(() => undefined),
     checkoutMachine: openCheckout('test-checkout', 3500),
     authorityCheckout: undefined as AuthorityCheckout | undefined,
@@ -142,7 +142,7 @@ describe('CheckoutScreen cash states', () => {
     });
 
     expect(completeCashSale).toHaveBeenCalledWith('100');
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', '42 was completed successfully.', expect.any(Array));
+    expect(alertSpy).toHaveBeenCalledWith('Payment completed', 'Cash payment and sale are recorded.\nReceipt 42\nPaid ₱35.00\nCash received ₱100.00\nChange to give ₱65.00', expect.any(Array));
     const actions = alertSpy.mock.calls[0][2] as { onPress?: () => void }[];
     actions[0].onPress?.();
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/transactions');
@@ -352,12 +352,12 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
   });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
-    const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
+    const confirmQrPhPayment = jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph' });
     setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment });
     await openQrCheckout();
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(paidPayment);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
+    expect(alertSpy).toHaveBeenCalledWith('Payment completed', expect.stringContaining('Payment confirmed. Stock and history updated.'), expect.any(Array));
   });
 
   it('shows a recoverable verification state after a Laravel status error', async () => {

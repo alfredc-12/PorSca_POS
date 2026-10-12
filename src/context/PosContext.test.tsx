@@ -80,6 +80,31 @@ describe('POS durable checkout integration', () => {
     expect(result.current.salesState).toBe('ready'); expect(result.current.inventoryState).toBe('ready');
     expect(result.current.consumeSalesHandoff()).toBe(true); expect(result.current.consumeSalesHandoff()).toBe(false);
   });
+  it('returns a committed cash receipt before slow reads, and failed background reads preserve it', async () => {
+    const { wrapper, client, handle } = fixture();
+    let rejectHistory!: (error: Error) => void;
+    client.listSales.mockImplementation(() => new Promise((_resolve, reject) => { rejectHistory = reject; }));
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', cashReceived: 100, change: 75 }); });
+    expect(handle()).toBeNull(); expect(result.current.cart).toHaveLength(0); expect(result.current.salesState).toBe('loading');
+    expect(result.current.checkoutCompletion?.sale).toMatchObject({ total: 25, cashReceived: 100, change: 75 });
+    await act(async () => { rejectHistory(new Error('offline')); });
+    expect(result.current.salesState).toBe('unavailable'); expect(result.current.checkoutCompletion?.sale.id).toBe('9');
+    expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+    act(() => result.current.acknowledgeCheckout()); expect(result.current.checkoutCompletion).toBeUndefined();
+    await add(result); expect(result.current.checkoutCompletion).toBeUndefined();
+  });
+  it('keeps cash receipt truth and its handle when retirement storage fails, without another cash post', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const original = store.save; store.save = async value => { if (value === null) throw new Error('storage unavailable'); await original(value); };
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', change: 75 }); });
+    expect(result.current.checkoutCompletion?.sale.id).toBe('9'); expect(result.current.checkoutMachine?.state).toBe('completed'); expect(handle()?.id).toBe('durable-uuid');
+    const cashReceipt = { ...open, state: 'completed' as const, sale: { ...paid.sale!, method: 'cash' as const, cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };
+    client.recoverCheckout.mockResolvedValue(cashReceipt); store.save = original;
+    await act(async () => { await result.current.recoverCheckout(); });
+    expect(handle()).toBeNull(); expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+  });
   it('records cash through v3 and refreshes inventory/history, never legacy checkout', async () => {
     const { wrapper, client, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper });

@@ -71,6 +71,8 @@ type PosContextValue = {
   authorityCheckout?: AuthorityCheckout;
   checkoutMachine?: CheckoutMachine;
   checkoutProgress?: CheckoutProgress;
+  checkoutCompletion?: { checkoutId: string; sale: Sale };
+  acknowledgeCheckout: () => void;
   recoverableCheckouts: AuthorityCheckout[];
   checkoutRecoveryError?: string;
   canDiscardCorruptCheckout: boolean;
@@ -89,12 +91,12 @@ type PosContextValue = {
   startQrPhPayment: (forceNew?: boolean) => Promise<Payment>;
   /** Authoritative provider-verified check; never cancels the payment. */
   refreshQrPhPayment: (paymentId: string) => Promise<Payment>;
-  confirmQrPhPayment: (payment: Payment) => Promise<void>;
+  confirmQrPhPayment: (payment: Payment) => Promise<Sale | undefined>;
   /** The retained QR Ph payment that may still collect money, if any. */
   unresolvedQrPayment: () => Payment | undefined;
 };
 
-type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
+type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
 const PosContext = createContext<PosContextValue | null>(null);
 export function useCheckout() {
@@ -140,6 +142,9 @@ export function PosProvider({
   const consumeSalesHandoff = useCallback(() => reads.consumeHistoryHandoff(), [reads]);
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
   const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
+  const [checkoutCompletion, setCheckoutCompletion] = useState<PosContextValue['checkoutCompletion']>();
+  const acknowledgeCheckout = useCallback(() => setCheckoutCompletion(undefined), []);
+  useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }
     finally { setAuthorityCheckout(authority.current); setCheckoutProgress(authority.progress); }
@@ -163,7 +168,10 @@ export function PosProvider({
 
   const commitCart = useCallback((action: CartAction): CartReduction => {
     const reduction = reduceCart(cartRef.current, action);
-    if (reduction.state !== cartRef.current) cartRevision.current += 1;
+    if (reduction.state !== cartRef.current) {
+      cartRevision.current += 1;
+      if (action.type === 'add' || action.type === 'increment' || action.type === 'decrement' || action.type === 'replace-lines') setCheckoutCompletion(undefined);
+    }
     cartRef.current = reduction.state;
     dispatchCart(action);
     return reduction;
@@ -569,13 +577,16 @@ export function PosProvider({
     if (checkout.state === 'completed' && checkout.sale?.method === 'cash' && !authority.machine?.reconciliationRequired) {
       const restoredRevision = cartRevision.current;
       const saleLines = cartRef.current.lines;
-      const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
-      if (!inventory || !history) throw new ApiClientError('Retry cash receipt inventory and history verification.');
-      reads.markHistoryReady(reads.generation, String(checkout.sale.id));
-      setSales(current => mergeSales(current, [checkoutSale(checkout, saleLines)]));
-      await authority.retire();
-      setAuthorityCheckout(undefined);
-      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
+      const sale = checkoutSale(checkout, saleLines);
+      setCheckoutCompletion({ checkoutId: checkout.id, sale });
+      setSales(current => mergeSales(current, [sale]));
+      try {
+        await authority.retire();
+        setAuthorityCheckout(undefined);
+        if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
+      } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
+      const generation = reads.generation;
+      void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
     }
   }), [reads, exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
   const recoverCheckout = useCallback(async (id?: string) => {
@@ -650,15 +661,18 @@ export function PosProvider({
     let checkout: AuthorityCheckout;
     try { checkout = await authority.tender(lines, 'cash', typeof cashReceived === 'string' ? cashReceived : cashReceived.toFixed(2)); }
     finally { setAuthorityCheckout(authority.current); }
+    if (checkout.state !== 'completed' || authority.machine?.reconciliationRequired || checkout.sale?.method !== 'cash') throw new ApiClientError('The cash sale is not confirmed. Recover this purchase.');
     const sale = checkoutSale(checkout, lines);
     reads.observeSale(sale.id);
+    setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setSales(current => mergeSales(current, [sale]));
-    await authority.retire();
-    setAuthorityCheckout(undefined);
-    if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
+    try {
+      await authority.retire();
+      setAuthorityCheckout(undefined);
+      if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
+    } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
     const generation = reads.generation;
-    const [, history] = await Promise.all([refreshInventory(), refreshSales()]);
-    if (history) reads.markHistoryReady(generation, sale.id);
+    void Promise.all([refreshInventory(), refreshSales()]).then(([, history]) => { if (reads.generation !== generation) return; setSales(current => mergeSales(current, [sale])); if (history) reads.markHistoryReady(generation, sale.id); }).catch(() => undefined);
     return sale;
   }), [reads, exclusive, authority, client, commitCart, refreshInventory, refreshSales]);
 
@@ -696,9 +710,12 @@ export function PosProvider({
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     const matches = JSON.stringify(checkout.items.map(i => [String(i.productId), i.quantity]).sort()) === JSON.stringify(cartRef.current.lines.map(l => [l.product.id, l.quantity]).sort());
+    const sale = checkoutSale(checkout, cartRef.current.lines);
     await authority.retire();
+    setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setAuthorityCheckout(undefined);
     if (matches) commitCart({ type: 'reset' });
+    return sale;
   }), [reads, exclusive, authority, commitCart, refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
@@ -749,8 +766,8 @@ export function PosProvider({
 
   const checkoutMachine = authority.machine;
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
-    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, recoverCheckout, revalidateCheckout, abandonCheckout
-  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
+    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, recoverCheckout, revalidateCheckout, abandonCheckout
+  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
 
   return (
     <CheckoutContext.Provider value={checkoutValue}>
@@ -789,6 +806,8 @@ export function PosProvider({
         authorityCheckout,
         checkoutMachine: authority.machine,
         checkoutProgress,
+        checkoutCompletion,
+        acknowledgeCheckout,
         recoverableCheckouts,
         checkoutRecoveryError,
         canDiscardCorruptCheckout,

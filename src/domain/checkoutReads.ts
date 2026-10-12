@@ -5,6 +5,7 @@ export class CheckoutReads {
   private saleId?: string;
   private handoff?: { saleId: string; generation: number };
   private flights = new Map<string, Promise<unknown>>();
+  dispose() { this.generation += 1; this.handoff = undefined; }
   observeSale(id: string) {
     if (this.saleId === id) return;
     this.saleId = id;

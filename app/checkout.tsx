@@ -18,7 +18,7 @@ import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout'
 import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
 import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { OFFLINE_COPY } from '@/src/config/offline';
-import { PaymentStatus } from '@/src/types';
+import { PaymentStatus, Sale } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 type QrViewStatus = PaymentStatus | 'idle' | 'creating' | 'verification';
@@ -37,6 +37,8 @@ export default function CheckoutScreen() {
     authorityCheckout,
     checkoutMachine,
     checkoutProgress,
+    checkoutCompletion,
+    acknowledgeCheckout,
     recoverCheckout,
     revalidateCheckout,
     abandonCheckout,
@@ -55,6 +57,19 @@ export default function CheckoutScreen() {
   const cashBusyRef = useRef(false);
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
+  const navigatedDone = useRef(false);
+  const done = useCallback(() => {
+    if (navigatedDone.current) return;
+    navigatedDone.current = true;
+    acknowledgeCheckout?.();
+    router.replace('/(tabs)/transactions');
+  }, [acknowledgeCheckout]);
+  const alertCompletion = useCallback((sale: Sale) => {
+    if (handledPaidPayment.current === sale.id) return;
+    handledPaidPayment.current = sale.id;
+    Alert.alert('Payment completed', receiptText(sale), [{ text: 'Done', onPress: done }]);
+  }, [done]);
+  useEffect(() => { if (checkoutCompletion && !checkoutMachine?.reconciliationRequired && checkoutProgress?.recoveryFailure !== 'inconsistent') alertCompletion(checkoutCompletion.sale); }, [checkoutCompletion, checkoutMachine?.reconciliationRequired, checkoutProgress?.recoveryFailure, alertCompletion]);
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
   const initialRetainedPayment = useRef(retainedPayment);
 
@@ -155,7 +170,7 @@ export default function CheckoutScreen() {
         Alert.alert(failure.title, failure.body);
         return;
       }
-      Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
+      alertCompletion(sale);
     } catch (error) {
       surfaceRetainedQrAttempt(error);
       const apiError = error instanceof ApiClientError ? error : undefined;
@@ -206,23 +221,17 @@ export default function CheckoutScreen() {
 
     setReceiptRefresh('running');
     try {
-      await confirmQrPhPayment(payment);
+      const sale = await confirmQrPhPayment(payment);
+      if (!sale) throw new Error('No completed receipt was returned.');
       setReceiptRefresh('ready');
       setQrStatus('paid');
-      if (handledPaidPayment.current !== payment.id) {
-        handledPaidPayment.current = payment.id;
-        Alert.alert(
-          'Payment recorded',
-          `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by the shop server.`,
-          [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }],
-        );
-      }
+      alertCompletion(sale);
     } catch (error) {
       setReceiptRefresh('failed');
       setQrStatus('verification');
       setQrError(describeQrVerification(error));
     }
-  }, [confirmQrPhPayment]);
+  }, [confirmQrPhPayment, alertCompletion]);
 
   useEffect(() => {
     const retained = initialRetainedPayment.current;
@@ -292,7 +301,17 @@ export default function CheckoutScreen() {
     busy: operationBusy, check: performQrCheck,
   });
 
-  if (cart.length === 0) {
+  if (checkoutCompletion && !guidance?.admin) {
+    const sale = checkoutCompletion.sale;
+    return <Screen title="Checkout" back>
+      <View testID="checkout-completed-receipt" style={styles.paymentCard}>
+        <View style={styles.headingRow}><Ionicons name="checkmark-circle" size={26} color={colors.primary} /><Text style={styles.sectionTitle}>Payment completed</Text></View>
+        {receiptText(sale).split('\n').map(line => <Text key={line}>{line}</Text>)}
+      </View>
+    </Screen>;
+  }
+
+  if (cart.length === 0 && !guidance) {
     return (
       <Screen title="Checkout" subtitle="There is nothing to pay yet." back>
         <View style={styles.emptyCard}>
@@ -478,6 +497,13 @@ export default function CheckoutScreen() {
       </Screen>
     </KeyboardAvoidingView>
   );
+}
+
+function receiptText(sale: Sale) {
+  const facts = [sale.paymentMethod === 'cash' ? 'Cash payment and sale are recorded.' : 'Payment confirmed. Stock and history updated.', `Receipt ${sale.id}`, `Paid ₱${sale.total.toFixed(2)}`];
+  if (sale.paymentMethod === 'cash') facts.push(`Cash received ₱${sale.cashReceived!.toFixed(2)}`, `Change to give ₱${sale.change!.toFixed(2)}`);
+  else facts.push('Payment method: QR Ph');
+  return facts.join('\n');
 }
 
 function qrStatusText(status: QrViewStatus) {

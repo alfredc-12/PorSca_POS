@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppState, Alert, Button, View } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
+import { router } from 'expo-router';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
@@ -35,7 +36,7 @@ async function start(view: ReturnType<typeof render>) {
 }
 
 describe('checkout remount with durable machine state', () => {
-  beforeEach(() => { Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); jest.spyOn(Alert, 'alert').mockImplementation(() => undefined); });
+  beforeEach(() => { jest.clearAllMocks(); Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); jest.spyOn(Alert, 'alert').mockImplementation(() => undefined); });
   afterEach(() => jest.restoreAllMocks());
   it('restores the retained QR inspection action and blocks cash after leaving and reopening', async () => {
     const { tree, client } = fixture(); const view = render(tree); await start(view);
@@ -109,6 +110,29 @@ describe('checkout remount with durable machine state', () => {
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(client.recoverCheckout).toHaveBeenCalledTimes(3); expect(handle()).toBeNull();
     expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Payment confirmed\. Stock and history updated\./);
+    expect(view.getByText('Receipt 9')).toBeTruthy(); expect(view.getByText('Paid ₱25.00')).toBeTruthy();
+    expect(view.queryByText('The cart is empty')).toBeNull(); expect(view.queryByTestId('qr-payment-code')).toBeNull();
+    expect(view.queryByTestId('start-qrph-payment')).toBeNull();
+    const done = (Alert.alert as jest.Mock).mock.calls[0][2][0].onPress;
+    act(() => { done(); done(); }); expect(router.replace).toHaveBeenCalledTimes(1);
+    fireEvent.press(view.getByTestId('seed')); expect(view.queryByTestId('checkout-completed-receipt')).toBeNull();
+  });
+  it('keeps an authoritative cash receipt behind its alert while history is still loading', async () => {
+    const { tree, client, setCheckout } = fixture();
+    let finishHistory!: (value: never[]) => void;
+    client.listSales.mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+    client.checkoutCash.mockImplementation(async () => {
+      const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 20, method: 'cash', amountCentavos: 2500, cashReceivedCentavos: 10000, changeAmountCentavos: 7500, completedAt: 'today' } };
+      setCheckout(cashReceipt); return cashReceipt;
+    });
+    const view = render(tree); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+    expect(Alert.alert).toHaveBeenCalledTimes(1); expect(Alert.alert).toHaveBeenCalledWith('Payment completed', expect.stringContaining('Change to give ₱75.00'), expect.any(Array));
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Cash payment and sale are recorded/);
+    expect(view.queryByTestId('cash-received-input')).toBeNull(); expect(view.queryByText('The cart is empty')).toBeNull();
+    await act(async () => { finishHistory([]); }); expect(Alert.alert).toHaveBeenCalledTimes(1);
   });
   it('shows an administrator case from receipt recovery even when history is unavailable', async () => {
     const { tree, client, setCheckout } = fixture(); const view = render(tree); await start(view);
