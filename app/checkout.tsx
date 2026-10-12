@@ -12,6 +12,7 @@ import { usePos } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
+import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
 import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
@@ -253,17 +254,16 @@ export default function CheckoutScreen() {
     }
   }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, guidance?.admin]);
 
-  const checkQrPayment = useCallback(async () => {
+  const performQrCheck = useCallback(async (isCurrent: () => boolean) => {
     if (!qrPayment || operationRef.current || guidance?.admin) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     try {
       const payment = await refreshQrPhPayment(qrPayment.id);
-      await showQrPayment(payment);
+      if (isCurrent()) await showQrPayment(payment);
     } catch (error) {
-      setQrStatus('verification');
-      setQrError(describeQrVerification(error));
+      if (isCurrent()) { setQrStatus('verification'); setQrError(describeQrVerification(error)); }
     } finally {
       operationRef.current = false;
       qrBusyRef.current = false;
@@ -276,13 +276,11 @@ export default function CheckoutScreen() {
     router.back();
   }, []);
 
-  useEffect(() => {
-    if (mode !== 'qrph' || qrStatus !== 'pending' || !qrPayment) return;
-    const timer = setInterval(() => {
-      void checkQrPayment();
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [checkQrPayment, mode, qrPayment, qrStatus]);
+  const checkQrPayment = useCheckoutPaymentPolling({
+    identity: qrPayment ? `${authorityCheckout?.id ?? checkoutMachine?.id}:${qrPayment.id}` : undefined,
+    eligible: mode === 'qrph' && qrStatus === 'pending' && !guidance?.admin && receiptRefresh !== 'running' && receiptRefresh !== 'failed',
+    busy: operationBusy, check: performQrCheck,
+  });
 
   if (cart.length === 0) {
     return (

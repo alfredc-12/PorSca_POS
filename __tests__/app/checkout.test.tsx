@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { AppState, Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
 import { AppButton } from '@/src/components/AppButton';
@@ -14,6 +14,7 @@ import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
+  useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]),
   useLocalSearchParams: () => ({ method: 'cash' }),
 }));
 jest.mock('@/src/context/PosContext', () => ({ usePos: jest.fn() }));
@@ -33,6 +34,7 @@ const sale: Sale = {
   items: cart,
 };
 
+beforeEach(() => { Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); });
 const mockReplace = router.replace as jest.Mock;
 const mockUsePos = usePos as jest.Mock;
 

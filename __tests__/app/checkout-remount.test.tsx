@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, Button, View } from 'react-native';
+import { AppState, Alert, Button, View } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
 import { PosProvider, usePos } from '@/src/context/PosContext';
@@ -7,7 +7,7 @@ import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutHandle, CheckoutStorage } from '@/src/domain/durableCheckout';
 
-jest.mock('expo-router', () => ({ router: { replace: jest.fn(), back: jest.fn() }, useLocalSearchParams: () => ({ method: 'cash' }) }));
+jest.mock('expo-router', () => ({ router: { replace: jest.fn(), back: jest.fn() }, useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]), useLocalSearchParams: () => ({ method: 'cash' }) }));
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
@@ -33,7 +33,7 @@ async function start(view: ReturnType<typeof render>) {
 }
 
 describe('checkout remount with durable machine state', () => {
-  beforeEach(() => jest.spyOn(Alert, 'alert').mockImplementation(() => undefined));
+  beforeEach(() => { Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); jest.spyOn(Alert, 'alert').mockImplementation(() => undefined); });
   afterEach(() => jest.restoreAllMocks());
   it('restores the retained QR inspection action and blocks cash after leaving and reopening', async () => {
     const { tree, client } = fixture(); const view = render(tree); await start(view);
