@@ -139,7 +139,7 @@ describe('no raw error text reaches the screen', () => {
     const view = await openSeededCheckout(checkoutClient({}));
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-    await waitFor(() => expect(view.getByTestId('checkout-cash-error')).toBeTruthy());
+    await waitFor(() => expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The cash sale may already be recorded\./));
     expectNoRawText(view);
   });
 
@@ -148,7 +148,7 @@ describe('no raw error text reaches the screen', () => {
     const view = await openSeededCheckout(client, true);
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
-    await waitFor(() => expect(view.getByTestId('qr-payment-error')).toBeTruthy());
+    await waitFor(() => expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Payment interrupted/));
     expectNoRawText(view);
   });
 

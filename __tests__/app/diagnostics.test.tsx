@@ -71,7 +71,7 @@ describe('Diagnostics screen', () => {
 
     // Hidden from the cashier...
     expect(`${described.title} ${described.body}`).not.toMatch(/Illuminate|Exception|SQLSTATE/);
-    expect(described.body).toContain('Check the connection');
+    expect(described.body).toContain('Do not take another payment');
     // ...but kept on the device, keyed by the code.
     const stored = diagnostics.find(described.reference!);
     expect(stored?.screen).toBe('cash-sale');

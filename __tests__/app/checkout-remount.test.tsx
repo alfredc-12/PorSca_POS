@@ -68,7 +68,7 @@ describe('checkout remount with durable machine state', () => {
     client.refreshCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('offline'));
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
-    expect(view.getByText(/Payment outcome is unknown/)).toBeTruthy();
+    expect(view.getByText(/We could not confirm the payment status/)).toBeTruthy();
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     await waitFor(() => expect(view.getByText('Payment pending…')).toBeTruthy());
   });

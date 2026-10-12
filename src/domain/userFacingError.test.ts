@@ -41,12 +41,12 @@ describe('describeFailure', () => {
     expect(described('cash-sale', { code: 'qr_payment_unresolved' })).toMatchObject({ title: 'Check the QR Ph payment first', action: 'check-payment' });
     expect(described('cash-sale', { status: 409, message: 'The idempotency key was already used.' })).toMatchObject({ title: 'This sale is already being saved', action: 'check-transactions' });
     expect(described('cash-sale', { code: 'product_missing' })).toMatchObject({ title: 'Product no longer available' });
-    expect(described('cash-sale', { status: 500 })).toMatchObject({ title: 'The sale was not saved', action: 'retry' });
+    expect(described('cash-sale', { status: 500 })).toMatchObject({ title: 'Payment interrupted', action: 'retry' });
   });
 
   it('keeps a QR Ph decline and a reconciliation apart', () => {
     expect(described('qr-payment', { code: 'failed' })).toMatchObject({ title: "The customer's payment did not go through", action: 'new-payment' });
-    expect(described('qr-payment', { code: 'paid_unfulfilled' })).toMatchObject({ title: 'Payment received, sale not recorded', action: 'contact-operator' });
+    expect(described('qr-payment', { code: 'paid_unfulfilled' })).toMatchObject({ title: 'Administrator required', action: 'contact-operator' });
   });
 
   it('tells the cashier why they were signed out, without a code', () => {

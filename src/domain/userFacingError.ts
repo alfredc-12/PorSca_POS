@@ -123,7 +123,7 @@ function describeFailureBody(failure: Failure, screen: FailureScreen): Omit<Desc
 
     case 'qr-payment':
       if (failure.code === 'paid_unfulfilled') {
-        return { title: 'Payment received, sale not recorded', body: 'The customer was charged but no sale was saved. Ask the operator to reconcile before refunding.', actionLabel: 'Leave payment', action: 'contact-operator' };
+        return { title: 'Administrator required', body: 'Payment was received, but the sale could not be completed. Call the shop administrator now. Do not take another payment, hand over goods, refund, or abandon this purchase while you wait.', actionLabel: 'Call the shop administrator now.', action: 'contact-operator' };
       }
       return { title: "The customer's payment did not go through", body: 'No sale was recorded and stock did not change. Ask the customer to pay another way.', actionLabel: 'Start a new payment', action: 'new-payment' };
 
@@ -166,7 +166,7 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
   if (failure.status === 409 || (failure.code?.toLowerCase().includes('idempot') ?? false)) {
     return { title: 'This sale is already being saved', body: 'We are checking whether it went through. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
   }
-  return { title: 'The sale was not saved', body: 'Nothing was charged and no stock changed. Check the connection, then confirm again. Your cart is still here.', actionLabel: 'Try again', action: 'retry' };
+  return { title: 'Payment interrupted', body: 'The cash sale may already be recorded. Keep the cash received. Do not take another payment or hand over the goods.', actionLabel: 'Recover device purchase', action: 'retry' };
 }
 
 /**

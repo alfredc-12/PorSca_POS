@@ -10,6 +10,7 @@ import { CheckoutStorage, DurableCheckout, checkoutPayment, checkoutSale } from 
 import { checkoutStorage } from '@/src/api/checkoutStorage';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from '@/src/domain/checkoutMachine';
+import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
 import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
@@ -68,6 +69,7 @@ type PosContextValue = {
   completeCashSale: (cashReceived: number | string) => Promise<Sale | null>;
   authorityCheckout?: AuthorityCheckout;
   checkoutMachine?: CheckoutMachine;
+  checkoutProgress?: CheckoutProgress;
   recoverableCheckouts: AuthorityCheckout[];
   checkoutRecoveryError?: string;
   canDiscardCorruptCheckout: boolean;
@@ -125,6 +127,11 @@ export function PosProvider({
   const inFlightQuery = useRef<string | undefined>(undefined);
   const authority = useMemo(() => new DurableCheckout(client, checkoutStore ?? checkoutStorage(client.baseUrl ?? 'unconfigured')), [client, checkoutStore]);
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
+  const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
+  const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
+    try { return await authority.exclusive(action); }
+    finally { setAuthorityCheckout(authority.current); setCheckoutProgress(authority.progress); }
+  }, [authority]);
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
   const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
   const [canDiscardCorruptCheckout, setCanDiscardCorruptCheckout] = useState(false);
@@ -515,7 +522,7 @@ export function PosProvider({
     setAuthorityCheckout(checkout);
   }, [client, commitCart]);
 
-  const recoverCheckoutInternal = useCallback(async (id?: string, automatic?: { revision: number; signature: string }) => authority.exclusive(async () => {
+  const recoverCheckoutInternal = useCallback(async (id?: string, automatic?: { revision: number; signature: string }) => exclusive(async () => {
     const cartUnchanged = () => automatic !== undefined && cartRevision.current === automatic.revision && cartSignature(cartRef.current.lines) === automatic.signature;
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
     const checkout = await authority.recover(id);
@@ -541,7 +548,7 @@ export function PosProvider({
       setAuthorityCheckout(undefined);
       if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
     }
-  }), [authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
+  }), [exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
   const recoverCheckout = useCallback(async (id?: string) => {
     await recoverCheckoutInternal(id);
     setCanDiscardCorruptCheckout(false);
@@ -586,7 +593,7 @@ export function PosProvider({
 
   const discardCorruptCheckout = useCallback(async (reason: string) => {
     if (!canDiscardCorruptCheckout) throw new ApiClientError('Complete empty server discovery before discarding the unreadable checkout identity.', 409, 'checkout_recovery_required');
-    return authority.exclusive(async () => {
+    return exclusive(async () => {
       const attributedReason = await authority.discardCorruptIdentity(reason);
       setAuthorityCheckout(undefined);
       setRecoverableCheckouts([]);
@@ -594,19 +601,19 @@ export function PosProvider({
       setCanDiscardCorruptCheckout(false);
       return attributedReason;
     });
-  }, [authority, canDiscardCorruptCheckout]);
+  }, [exclusive, authority, canDiscardCorruptCheckout]);
 
-  const revalidateCheckout = useCallback(async () => authority.exclusive(async () => {
+  const revalidateCheckout = useCallback(async () => exclusive(async () => {
     await applyCheckout(await authority.revalidate());
-  }), [authority, applyCheckout]);
+  }), [exclusive, authority, applyCheckout]);
 
-  const abandonCheckout = useCallback(async (reason: string) => authority.exclusive(async () => {
+  const abandonCheckout = useCallback(async (reason: string) => exclusive(async () => {
     await authority.abandon(reason);
     setAuthorityCheckout(undefined);
     commitCart({ type: 'reset' });
-  }), [authority, commitCart]);
+  }), [exclusive, authority, commitCart]);
 
-  const completeCashSale = useCallback(async (cashReceived: number | string) => authority.exclusive(async () => {
+  const completeCashSale = useCallback(async (cashReceived: number | string) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });
     if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     const lines = cartRef.current.lines;
@@ -621,27 +628,27 @@ export function PosProvider({
     if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
     await Promise.allSettled([refreshInventory(), refreshSales()]);
     return sale;
-  }), [authority, client, commitCart, refreshInventory, refreshSales]);
+  }), [exclusive, authority, client, commitCart, refreshInventory, refreshSales]);
 
-  const startQrPhPayment = useCallback(async (forceNew = false) => authority.exclusive(async () => {
+  const startQrPhPayment = useCallback(async (forceNew = false) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });
     if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     if (!cartRef.current.lines.length) throw new ApiClientError('The cart is empty.');
     try { return checkoutPayment(await authority.tender(cartRef.current.lines, 'qrph', undefined, forceNew)); }
     finally { setAuthorityCheckout(authority.current); }
-  }), [authority, client, commitCart]);
+  }), [exclusive, authority, client, commitCart]);
 
   const unresolvedQrPayment = useCallback(() => authority.retainedPayment(), [authority]);
 
-  const refreshQrPhPayment = useCallback(async (id: string) => authority.exclusive(async () => {
+  const refreshQrPhPayment = useCallback(async (id: string) => exclusive(async () => {
     try {
       const checkout = await authority.refresh(id);
       setAuthorityCheckout(checkout);
       return checkoutPayment(checkout);
     } catch (error) { setAuthorityCheckout(authority.current); throw error; }
-  }), [authority]);
+  }), [exclusive, authority]);
 
-  const confirmQrPhPayment = useCallback(async (payment: Payment) => authority.exclusive(async () => {
+  const confirmQrPhPayment = useCallback(async (payment: Payment) => exclusive(async () => {
     const checkout = await authority.recover();
     if (!checkout) throw new ApiClientError('Recover the checkout first.');
     setAuthorityCheckout(checkout);
@@ -658,7 +665,7 @@ export function PosProvider({
     await authority.retire();
     setAuthorityCheckout(undefined);
     if (matches) commitCart({ type: 'reset' });
-  }), [authority, commitCart, refreshInventory, refreshSales]);
+  }), [exclusive, authority, commitCart, refreshInventory, refreshSales]);
 
   const saveRemoteProduct = useCallback(async (
     operation: () => Promise<Product>,
@@ -741,6 +748,7 @@ export function PosProvider({
         completeCashSale,
         authorityCheckout,
         checkoutMachine: authority.machine,
+        checkoutProgress,
         recoverableCheckouts,
         checkoutRecoveryError,
         canDiscardCorruptCheckout,
