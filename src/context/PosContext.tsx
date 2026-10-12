@@ -704,6 +704,9 @@ export function PosProvider({
   }), [exclusive, authority]);
 
   const confirmQrPhPayment = useCallback(async (payment: Payment) => exclusive(async () => {
+    const cartAtConfirmation = cartRef.current.lines;
+    const cartRevisionAtConfirmation = cartRevision.current;
+    const cartSignatureAtConfirmation = cartSignature(cartAtConfirmation);
     const checkout = await authority.recover();
     if (!checkout) throw new ApiClientError('Recover the checkout first.');
     setAuthorityCheckout(checkout);
@@ -715,15 +718,27 @@ export function PosProvider({
       return;
     }
     if (checkout.state !== 'completed' || !checkout.sale || checkoutPayment(checkout).id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
+    const saleLines = checkout.items.map(item => {
+      const id = String(item.productId);
+      const price = item.unitPriceCentavos / 100;
+      const knownProduct = productsRef.current.find(product => product.id === id && product.name === item.name && Math.round(product.price * 100) === item.unitPriceCentavos);
+      return {
+        product: knownProduct ? { ...knownProduct, id, name: item.name, price } : { id, barcode: '', name: item.name, price, stock: 0 },
+        quantity: item.quantity,
+      };
+    });
+    const checkoutBasket = checkout.items.map(item => [String(item.productId), item.quantity, item.unitPriceCentavos]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const cartBasket = cartAtConfirmation.map(line => [line.product.id, line.quantity, Math.round(line.product.price * 100)]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const matches = JSON.stringify(checkoutBasket) === JSON.stringify(cartBasket);
+    const cartUnchanged = () => cartRevision.current === cartRevisionAtConfirmation && cartSignature(cartRef.current.lines) === cartSignatureAtConfirmation;
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
-    const matches = JSON.stringify(checkout.items.map(i => [String(i.productId), i.quantity]).sort()) === JSON.stringify(cartRef.current.lines.map(l => [l.product.id, l.quantity]).sort());
-    const sale = checkoutSale(checkout, cartRef.current.lines);
+    const sale = checkoutSale(checkout, saleLines);
     await authority.retire();
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setAuthorityCheckout(undefined);
-    if (matches) commitCart({ type: 'reset' });
+    if (matches && cartUnchanged()) commitCart({ type: 'reset' });
     return sale;
   }), [reads, exclusive, authority, commitCart, refreshInventory, refreshSales]);
 

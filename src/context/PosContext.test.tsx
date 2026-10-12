@@ -356,6 +356,56 @@ describe('POS durable checkout integration', () => {
     expect(second.result.current.cart).toHaveLength(0);
   });
 
+  it('builds QR receipt items from the committed checkout and preserves a cart changed before and during reads', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    const committed: AuthorityCheckout = {
+      ...paid,
+      items: [{ productId: 1, name: 'Authority Coffee', quantity: 1, unitPriceCentavos: 2500 }],
+    };
+    client.recoverCheckout.mockResolvedValue(committed);
+    let finishInventory!: (value: Awaited<ReturnType<ApiClient['listInventory']>>) => void;
+    let finishHistory!: (value: Awaited<ReturnType<ApiClient['listSales']>>) => void;
+    client.listInventory.mockImplementation(() => new Promise(resolve => { finishInventory = resolve; }));
+    client.listSales.mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+
+    let confirmation!: ReturnType<typeof result.current.confirmQrPhPayment>;
+    await act(async () => {
+      confirmation = result.current.confirmQrPhPayment({ id: '7', status: 'paid', amount: 25 });
+      await waitFor(() => {
+        expect(client.listInventory).toHaveBeenCalledTimes(1);
+        expect(client.listSales).toHaveBeenCalledTimes(1);
+      });
+    });
+    await act(async () => { result.current.addProductChecked({ id: '3', name: 'Cocoa', barcode: '33333333', price: 12, stock: 20 }); });
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(handle()?.id).toBe('durable-uuid');
+
+    await act(async () => {
+      finishInventory([]);
+      await waitFor(() => expect(result.current.inventoryState).toBe('ready'));
+    });
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(handle()?.id).toBe('durable-uuid');
+    await act(async () => {
+      finishHistory([]);
+      await expect(confirmation).resolves.toMatchObject({
+        id: '9',
+        items: [{ product: { id: '1', name: 'Authority Coffee', price: 25 }, quantity: 1 }],
+      });
+    });
+    expect(result.current.checkoutCompletion?.sale.items).toEqual([
+      { product: { id: '1', barcode: '', name: 'Authority Coffee', price: 25, stock: 0 }, quantity: 1 },
+    ]);
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2', '3']);
+    expect(handle()).toBeNull();
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
   it('ignores a caller-supplied paid status unless Laravel records a completed sale', async () => {
     const { wrapper } = fixture(); const { result } = renderHook(() => usePos(), { wrapper });
     await add(result); await act(async () => { await result.current.startQrPhPayment(); });
