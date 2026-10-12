@@ -271,6 +271,16 @@ export default function CheckoutScreen() {
     }
   }, [qrPayment, refreshQrPhPayment, showQrPayment, guidance?.admin]);
 
+  const retryReceiptRefresh = useCallback(async () => {
+    if (operationRef.current || !qrPayment || guidance?.admin || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
+      || String(authorityCheckout.attempts[authorityCheckout.attempts.length - 1]?.id) !== qrPayment.id) return;
+    operationRef.current = true;
+    qrBusyRef.current = true;
+    setQrBusy(true);
+    try { await showQrPayment(qrPayment); }
+    finally { operationRef.current = false; qrBusyRef.current = false; setQrBusy(false); }
+  }, [authorityCheckout, guidance?.admin, qrPayment, showQrPayment]);
+
   // Leaving never cancels an attempt. Hold expiry does not establish financial finality.
   const leaveQrPayment = useCallback(() => {
     router.back();
@@ -328,7 +338,7 @@ export default function CheckoutScreen() {
           {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : guidance.action !== 'done' ? <AppButton
             testID={guidance.action === 'check' ? qrStatus === 'pending' ? 'refresh-qr-payment' : 'retry-qr-verification' : guidance.action === 'start' ? 'start-qrph-payment' : guidance.action === 'refresh' ? 'retry-qr-verification' : undefined}
             label={guidance.label} disabled={guidance.action === 'wait' || operationBusy}
-            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover') void recoveryAction(() => recoverCheckout()); }} /> : null}
+            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover') void recoveryAction(() => recoverCheckout()); }} /> : null}
           {authorityCheckout ? <>
             <Text>Checkout {authorityCheckout.id}</Text>
             {activeAttempt ? <Text>Attempt {activeAttempt.id}</Text> : null}

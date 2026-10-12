@@ -24,7 +24,7 @@ function fixture() {
     createCheckoutAttempt: jest.fn(async () => { checkout = pending; return pending; }), refreshCheckoutAttempt: jest.fn(async () => checkout),
     checkoutCash: jest.fn(), listProducts: jest.fn().mockResolvedValue([]), listInventory: jest.fn().mockResolvedValue([]), listSales: jest.fn().mockResolvedValue([]), getProduct: jest.fn().mockResolvedValue(product) };
   const tree = <PosProvider client={client as unknown as ApiClient} checkoutStore={storage}><Shop /></PosProvider>;
-  return { tree, client };
+  return { tree, client, handle: () => handle, setCheckout: (value: AuthorityCheckout) => { checkout = value; } };
 }
 async function start(view: ReturnType<typeof render>) {
   fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
@@ -71,6 +71,34 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByText(/We could not confirm the payment status/)).toBeTruthy();
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     await waitFor(() => expect(view.getByText('Payment pending…')).toBeTruthy());
+  });
+  it('retains a committed QR through failed reads and remount, then retries only receipt reads', async () => {
+    const { tree, client, handle, setCheckout } = fixture(); const view = render(tree); await start(view);
+    const completed: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' } };
+    setCheckout(completed);
+    client.listSales.mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    expect(view.getByTestId('retry-qr-verification')).toHaveTextContent(/Retry receipt refresh/);
+    expect(handle()?.id).toBe('server-uuid'); expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    fireEvent.press(view.getByTestId('leave'));
+    await act(async () => { fireEvent.press(view.getByTestId('open')); });
+    expect(view.getByTestId('retry-qr-verification')).toHaveTextContent(/Retry receipt refresh/);
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
+    await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.recoverCheckout).toHaveBeenCalledTimes(3); expect(handle()).toBeNull();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+  });
+  it('shows an administrator case from receipt recovery even when history is unavailable', async () => {
+    const { tree, client, setCheckout } = fixture(); const view = render(tree); await start(view);
+    const completed: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' } };
+    setCheckout(completed); client.listSales.mockRejectedValue(new Error('offline'));
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+    setCheckout({ ...completed, state: 'provider_contradiction', attempts: [{ ...completed.attempts[0], status: 'contradiction' }], exceptions: [{ caseId: 17, reason: 'provider_contradiction', state: 'open' }] });
+    await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Conflicting payment records found/);
+    expect(view.getByText('Case 17')).toBeTruthy(); expect(view.queryByTestId('retry-qr-verification')).toBeNull();
+    expect(view.queryByTestId('qr-payment-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
   it('reattaches ambiguous QR creation to the server attempt rather than starting another', async () => {
     const { tree, client } = fixture();
