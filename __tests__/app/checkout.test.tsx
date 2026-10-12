@@ -214,6 +214,30 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
   });
 
+  it('keeps the retained checkout amount when the cart changes while payment is away', () => {
+    const retainedCheckout: AuthorityCheckout = {
+      id: 'test-checkout', storeId: '1', state: 'payment_unresolved', revision: 1, amountCentavos: 3500, currency: 'PHP',
+      items: [{ productId: 1, name: product.name, quantity: 1, unitPriceCentavos: 3500 }],
+      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: pendingQrPayment.qrPayload!, qrExpiresAt: null, reservation: null }],
+      sale: null, exceptions: [], history: [],
+    };
+    const barako = { ...product, id: '2', name: 'Barako Coffee', price: 185 };
+    setContext({
+      total: 220,
+      cart: [...cart, { product: barako, quantity: 1 }],
+      authorityCheckout: retainedCheckout,
+      checkoutMachine: authorityObservation(retainedCheckout),
+      unresolvedQrPayment: jest.fn(() => pendingQrPayment),
+    });
+
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByText('Payment pending…')).toBeTruthy();
+    expect(view.getByText('Barako Coffee')).toBeTruthy();
+    expect(view.queryByText('₱220.00')).toBeNull();
+    expect(view.getAllByText('₱35.00').length).toBeGreaterThan(0);
+  });
+
   it('draws a scannable QR symbol for a raw payload instead of printing the payload text', async () => {
     const rawPayload = '00020101021226680014ph.paymongo0015QRPH-TXN-100015204999953035605802PH5910PORSCA POS6009PASIG CITY6304ABCD';
     const startQrPhPayment = jest.fn().mockResolvedValue({ ...pendingQrPayment, qrPayload: rawPayload, qrCode: rawPayload });

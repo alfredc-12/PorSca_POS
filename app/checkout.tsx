@@ -122,6 +122,8 @@ export default function CheckoutScreen() {
     : 'Do not take another payment while this payment is waiting.';
 
   const itemCount = useMemo(() => cart.reduce((sum, line) => sum + line.quantity, 0), [cart]);
+  const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
+  const dueItemCount = authorityCheckout?.items.reduce((sum, item) => sum + item.quantity, 0) ?? itemCount;
   const presets = useMemo(() => cashTenderPresets(Math.round(total * 100)), [total]);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
@@ -379,8 +381,8 @@ export default function CheckoutScreen() {
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>
-            <Text style={styles.dueTotal}>₱{total.toFixed(2)}</Text>
-            <Text style={styles.dueItems}>{itemCount} {itemCount === 1 ? 'item' : 'items'} in this sale</Text>
+            <Text style={styles.dueTotal}>₱{(dueAmountCentavos / 100).toFixed(2)}</Text>
+            <Text style={styles.dueItems}>{dueItemCount} {dueItemCount === 1 ? 'item' : 'items'} in this sale</Text>
           </View>
           <View style={styles.dueIcon}><Ionicons name="bag-check-outline" size={30} color={colors.primary} /></View>
         </View>

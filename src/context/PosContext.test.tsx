@@ -385,10 +385,8 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutCompletion).toBeUndefined();
     expect(handle()?.id).toBe('durable-uuid');
 
-    await act(async () => {
-      finishInventory([]);
-      await waitFor(() => expect(result.current.inventoryState).toBe('ready'));
-    });
+    await act(async () => { finishInventory([]); });
+    await waitFor(() => expect(result.current.inventoryState).toBe('ready'));
     expect(result.current.checkoutCompletion).toBeUndefined();
     expect(handle()?.id).toBe('durable-uuid');
     await act(async () => {
