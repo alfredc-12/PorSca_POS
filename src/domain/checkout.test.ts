@@ -66,7 +66,7 @@ describe('checkout failure copy', () => {
       details: { cash_received: ['Cash received is below the amount due.'] },
     });
 
-    expect(failure.title).toBe('The sale was not saved');
+    expect(failure.title).toBe('Payment interrupted');
     expect(failure.body).not.toContain('Cash received is below the amount due.');
     expect(`${failure.title} ${failure.body}`).not.toMatch(/SQLSTATE|Illuminate|Exception|fetch/i);
   });
@@ -74,8 +74,8 @@ describe('checkout failure copy', () => {
   it('falls back to a plain retryable message for a transport failure', () => {
     const failure = saleFailureCopy({ message: 'Unable to reach PorSca API: timeout' });
 
-    expect(failure.title).toBe('The sale was not saved');
-    expect(failure.body).toContain('Check the connection');
+    expect(failure.title).toBe('Payment interrupted');
+    expect(failure.body).toContain('Do not take another payment');
     expect(failure.body).not.toContain('Unable to reach PorSca API');
     expect(failure.reference).toMatch(/^PRS-/);
   });

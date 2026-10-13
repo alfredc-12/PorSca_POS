@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { AppState, Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CheckoutScreen from '@/app/checkout';
 import { AppButton } from '@/src/components/AppButton';
@@ -9,12 +9,16 @@ import { ApiClientError, Payment } from '@/src/api/client';
 import { CartLine, Sale } from '@/src/types';
 import { CheckoutMachine, openCheckout, transitionCheckout } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection } from '@/src/domain/checkout';
+import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
+import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
+import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
+  useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]),
   useLocalSearchParams: () => ({ method: 'cash' }),
 }));
-jest.mock('@/src/context/PosContext', () => ({ usePos: jest.fn() }));
+jest.mock('@/src/context/PosContext', () => { const usePos = jest.fn(); return { usePos, useCheckout: usePos }; });
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
@@ -31,6 +35,7 @@ const sale: Sale = {
   items: cart,
 };
 
+beforeEach(() => { Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); });
 const mockReplace = router.replace as jest.Mock;
 const mockUsePos = usePos as jest.Mock;
 
@@ -49,9 +54,11 @@ function setContext(overrides: Record<string, unknown> = {}) {
     apiConfigured: true,
     completeCashSale: jest.fn().mockResolvedValue(sale),
     resetCart: jest.fn(),
-    confirmQrPhPayment: jest.fn().mockResolvedValue(undefined),
+    confirmQrPhPayment: jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph', cashReceived: undefined, change: undefined }),
     unresolvedQrPayment: jest.fn(() => undefined),
     checkoutMachine: openCheckout('test-checkout', 3500),
+    authorityCheckout: undefined as AuthorityCheckout | undefined,
+    checkoutProgress: undefined as CheckoutProgress | undefined,
     ...overrides,
   };
   const observe = (state: CheckoutMachine['state']) => {
@@ -61,8 +68,15 @@ function setContext(overrides: Record<string, unknown> = {}) {
     }).checkout;
   };
   const observePayment = (payment: Payment) => {
-    observe(payment.status === 'failed' || payment.status === 'expired' || payment.status === 'cancelled'
-      ? 'ready-for-new-attempt' : payment.status === 'paid' ? 'completed' : 'payment-unresolved');
+    const unpaid = ['failed', 'expired', 'cancelled'].includes(payment.status);
+    const paid = payment.status === 'paid' || payment.status === 'paid_unfulfilled';
+    context.authorityCheckout = {
+      id: 'test-checkout', storeId: '1', revision: 1, currency: 'PHP', amountCentavos: 3500, items: [], history: [], exceptions: [],
+      state: unpaid ? 'ready_for_attempt' : payment.status === 'paid' ? 'completed' : payment.status === 'paid_unfulfilled' ? 'paid_unfulfilled' : 'payment_unresolved',
+      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: unpaid ? 'non_payable' : paid ? 'paid' : payment.status === 'unknown' ? 'unknown' : 'pending', financialStatus: paid ? payment.status as 'paid' | 'paid_unfulfilled' : unpaid ? 'failed' : 'pending', firstVerifiedOutcome: paid ? 'paid' : unpaid ? 'non_payable' : null, qrPayload: payment.qrPayload ?? null, qrExpiresAt: null, reservation: null }],
+      sale: payment.status === 'paid' ? { id: 42, method: 'qrph', amountCentavos: 3500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: sale.createdAt } : null,
+    };
+    context.checkoutMachine = authorityObservation(context.authorityCheckout);
     return payment;
   };
   const start = (overrides.startQrPhPayment ?? jest.fn().mockResolvedValue(pendingQrPayment)) as jest.Mock;
@@ -71,6 +85,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
   const startQrPhPayment = async (...args: unknown[]) => {
     try { return observePayment(await start(...args)); }
     catch (error) {
+      if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') context.checkoutProgress = { uncertainTender: 'cash' };
       if (!(error instanceof ApiClientError) || error.code !== 'cash_attempt_unresolved' && !isDefinitiveQrRejection(error)) observe('payment-unresolved');
       throw error;
     }
@@ -130,7 +145,7 @@ describe('CheckoutScreen cash states', () => {
     });
 
     expect(completeCashSale).toHaveBeenCalledWith('100');
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', '42 was completed successfully.', expect.any(Array));
+    expect(alertSpy).toHaveBeenCalledWith('Payment completed', 'Cash payment and sale are recorded.\nReceipt 42\nPaid ₱35.00\nCash received ₱100.00\nChange to give ₱65.00', expect.any(Array));
     const actions = alertSpy.mock.calls[0][2] as { onPress?: () => void }[];
     actions[0].onPress?.();
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/transactions');
@@ -157,7 +172,7 @@ describe('CheckoutScreen cash states', () => {
 
     // A deep link or stale navigation to this route cannot record a local sale
     // (defect F1).
-    expect(view.getByTestId('checkout-offline-notice')).toHaveTextContent(/No sale was recorded and stock was not changed/);
+    expect(view.getByTestId('checkout-offline-notice')).toHaveTextContent(/Do not take payment or hand over goods until the administrator fixes this phone/);
     expect(view.queryByTestId('cash-received-input')).toBeNull();
     expect(view.queryByTestId('confirm-cash-payment')).toBeNull();
     expect(view.queryByTestId('checkout-payment-qrph')).toBeNull();
@@ -197,6 +212,30 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
+  });
+
+  it('keeps the retained checkout amount when the cart changes while payment is away', () => {
+    const retainedCheckout: AuthorityCheckout = {
+      id: 'test-checkout', storeId: '1', state: 'payment_unresolved', revision: 1, amountCentavos: 3500, currency: 'PHP',
+      items: [{ productId: 1, name: product.name, quantity: 1, unitPriceCentavos: 3500 }],
+      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: 'pending', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: pendingQrPayment.qrPayload!, qrExpiresAt: null, reservation: null }],
+      sale: null, exceptions: [], history: [],
+    };
+    const barako = { ...product, id: '2', name: 'Barako Coffee', price: 185 };
+    setContext({
+      total: 220,
+      cart: [...cart, { product: barako, quantity: 1 }],
+      authorityCheckout: retainedCheckout,
+      checkoutMachine: authorityObservation(retainedCheckout),
+      unresolvedQrPayment: jest.fn(() => pendingQrPayment),
+    });
+
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByText('Payment pending…')).toBeTruthy();
+    expect(view.getByText('Barako Coffee')).toBeTruthy();
+    expect(view.queryByText('₱220.00')).toBeNull();
+    expect(view.getAllByText('₱35.00').length).toBeGreaterThan(0);
   });
 
   it('draws a scannable QR symbol for a raw payload instead of printing the payload text', async () => {
@@ -329,23 +368,23 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(unfulfilled);
     expect(resetCart).not.toHaveBeenCalled();
-    expect(view.getByText('Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.')).toBeTruthy();
-    expect(view.getByTestId('qr-payment-failure')).toHaveTextContent(/Payment received, sale not recorded/);
+    expect(view.getByText('Payment was received, but the sale could not be completed.')).toBeTruthy();
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
     expect(view.getByText(/Support code: PRS-/)).toBeTruthy();
     // A new payment could double-charge money already received.
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
-    expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
+    expect(view.queryByTestId('refresh-qr-payment')).toBeNull();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
-    expect(alertSpy).toHaveBeenCalledWith('Payment received, sale not recorded', expect.stringContaining('reconcile'));
+    expect(alertSpy).toHaveBeenCalledWith('Administrator required', expect.stringContaining('Call the shop administrator now.'));
   });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
-    const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
+    const confirmQrPhPayment = jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph' });
     setContext({ startQrPhPayment: jest.fn().mockResolvedValue(paidPayment), confirmQrPhPayment });
     await openQrCheckout();
 
     expect(confirmQrPhPayment).toHaveBeenCalledWith(paidPayment);
-    expect(alertSpy).toHaveBeenCalledWith('Payment recorded', expect.stringContaining('confirmed by the shop server'), expect.any(Array));
+    expect(alertSpy).toHaveBeenCalledWith('Payment completed', expect.stringContaining('Payment confirmed. Stock and history updated.'), expect.any(Array));
   });
 
   it('shows a recoverable verification state after a Laravel status error', async () => {
@@ -357,8 +396,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
       fireEvent.press(view.getByTestId('refresh-qr-payment'));
     });
 
-    expect(view.getByTestId('qr-payment-status')).toHaveTextContent(/Payment verification needs attention/);
-    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Do not hand over the goods/);
+    expect(view.getByTestId('qr-payment-status')).toHaveTextContent(/Payment interrupted/);
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Do not take another payment or hand over the goods/);
     expect(view.getByText(/Support code: PRS-/)).toBeTruthy();
     expect(view.getByTestId('retry-qr-verification')).toBeTruthy();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
@@ -383,27 +422,25 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(completeCashSale).toHaveBeenCalledWith('100');
   });
 
-  it('leaves cash retryable after a QR start is refused because that cash attempt is unresolved', async () => {
+  it('offers recovery only after a QR start is refused because cash is unresolved', async () => {
     const completeCashSale = jest.fn().mockResolvedValue(sale);
+    const recoverCheckout = jest.fn().mockResolvedValue(undefined);
     setContext({
-      completeCashSale,
+      completeCashSale, recoverCheckout,
       startQrPhPayment: jest.fn().mockRejectedValue(new ApiClientError('A cash payment for this cart is still unresolved.', undefined, 'cash_attempt_unresolved')),
     });
     const view = render(<CheckoutScreen />);
     fireEvent.press(view.getByTestId('checkout-payment-qrph'));
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
 
-    // The refusal is not a QR outcome: no verification status and no QR retry
-    // affordance appear, and the cash attempt stays the thing to retry.
-    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/Check the earlier attempt first/);
-    expect(view.queryByTestId('qr-payment-status')).toBeNull();
-    expect(view.getByTestId('start-qrph-payment')).toHaveTextContent('Start QR Ph Payment');
-
-    fireEvent.press(view.getByTestId('checkout-payment-cash'));
-    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
-    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-
-    expect(completeCashSale).toHaveBeenCalledWith('100');
+    // This refusal is not a QR outcome and cannot authorize another cash post.
+    expect(view.queryByTestId('start-qrph-payment')).toBeNull();
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Payment interrupted/);
+    expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
+    expect(view.getByTestId('cash-received-input')).toHaveProp('editable', false);
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Recover device purchase' })); });
+    expect(recoverCheckout).toHaveBeenCalledTimes(1); expect(completeCashSale).not.toHaveBeenCalled();
   });
 
   it.each(['payment-in-progress', 'payment-unresolved', 'completed', 'abandoned', 'paid-but-unfulfilled'] as const)(
@@ -425,7 +462,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
       const confirmHandler = view.UNSAFE_getAllByType(AppButton).find(button => button.props.testID === 'confirm-cash-payment')!.props.onPress;
       act(() => { void confirmHandler(); });
       expect(completeCashSale).not.toHaveBeenCalled();
-      expect(view.getByTestId('checkout-cash-error')).toBeTruthy();
+      expect(view.getByTestId(state === 'paid-but-unfulfilled' || state === 'completed' ? 'checkout-guidance' : 'checkout-cash-error')).toBeTruthy();
     },
   );
 

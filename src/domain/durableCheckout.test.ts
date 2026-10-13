@@ -1,6 +1,6 @@
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
-import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError, DurableCheckout, checkoutPayment } from './durableCheckout';
+import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError, DurableCheckout, checkoutPayment, checkoutSale } from './durableCheckout';
 import { canAcceptCheckoutTender } from './checkoutMachine';
 
 const lines = [{ product: { id: '1', name: 'Coffee', barcode: '12345678', price: 10.1, stock: 20 }, quantity: 1 }];
@@ -28,6 +28,21 @@ function fixture() {
 }
 
 describe('durable authority workflow and machine integration', () => {
+  it('does not guess missing cash receipt fields as zero', () => {
+    const completed: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 9, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'now' } };
+    expect(() => checkoutSale(completed, lines)).toThrow(/receipt is incomplete/);
+  });
+  it('rehydrates exact cash uncertainty from stored tender without exposing its key', async () => {
+    const { client, storage } = fixture();
+    storage.load = jest.fn().mockResolvedValue({ key: 'creation-key', id: open.id, signature: '[[1,1]]', tender: { key: 'private-key', signature: JSON.stringify(['cash', { revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 2000 }]) } });
+    client.recoverCheckout.mockResolvedValue(open);
+    const authority = new DurableCheckout(client as unknown as ApiClient, storage);
+    await authority.exclusive(() => authority.recover());
+    expect(authority.progress).toMatchObject({ uncertainTender: 'cash', cashInput: '20.00' });
+    expect(JSON.stringify(authority.progress)).not.toMatch(/private-key|creation-key/);
+    await expect(authority.exclusive(() => authority.revalidate())).rejects.toThrow(/previous payment/); expect(client.revalidateCheckout).not.toHaveBeenCalled();
+    await expect(authority.exclusive(() => authority.abandon('wrongly unlock'))).rejects.toThrow(/previous payment/); expect(client.abandonCheckout).not.toHaveBeenCalled();
+  });
   it('uses server checkout identity and integer quote/tender amounts, persisting keys before I/O', async () => {
     const { authority, client, saved } = fixture();
     client.checkoutCash.mockImplementation(async () => { expect(saved()?.tender?.key).toBeTruthy(); return { ...open, state: 'completed', sale: { id: 9, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } }; });

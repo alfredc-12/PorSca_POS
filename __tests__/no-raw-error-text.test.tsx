@@ -9,7 +9,7 @@
  * owns the words.
  */
 import React from 'react';
-import { Pressable, Text } from 'react-native';
+import { AppState, Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { ApiClient, apiClient, ApiClientError } from '@/src/api/client';
 import { AuthProvider } from '@/src/context/AuthContext';
@@ -31,7 +31,8 @@ jest.mock('expo-router', () => {
   return {
     Redirect: ({ href }: { href: string }) => <RNText>{href}</RNText>,
     router: { replace: jest.fn(), back: jest.fn(), push: jest.fn() },
-    useLocalSearchParams: () => ({ method: 'cash' }),
+    useFocusEffect: (callback: () => void) => jest.requireActual<typeof import('react')>('react').useEffect(callback, [callback]),
+  useLocalSearchParams: () => ({ method: 'cash' }),
   };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -109,7 +110,7 @@ async function openSeededCheckout(client: ApiClient, qr = false) {
 }
 
 describe('no raw error text reaches the screen', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => { Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' }); jest.clearAllMocks(); });
 
   it('sign-in failure: a JavaScript runtime error is not shown', async () => {
     const client = new ApiClient({
@@ -139,7 +140,7 @@ describe('no raw error text reaches the screen', () => {
     const view = await openSeededCheckout(checkoutClient({}));
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
-    await waitFor(() => expect(view.getByTestId('checkout-cash-error')).toBeTruthy());
+    await waitFor(() => expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The cash sale may already be recorded\./));
     expectNoRawText(view);
   });
 
@@ -148,7 +149,7 @@ describe('no raw error text reaches the screen', () => {
     const view = await openSeededCheckout(client, true);
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
-    await waitFor(() => expect(view.getByTestId('qr-payment-error')).toBeTruthy());
+    await waitFor(() => expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Payment interrupted/));
     expectNoRawText(view);
   });
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
-import { PosProvider, usePos } from './PosContext';
+import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
@@ -30,6 +30,108 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('keeps a cash-unresolved refusal recovery-only even when a stale open read has no attempt', async () => {
+    const { wrapper, client } = fixture(); const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('cash still pending', 409, 'cash_attempt_unresolved'));
+    client.recoverCheckout.mockResolvedValue(open);
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toThrow('cash still pending'); });
+    expect(result.current.checkoutProgress?.uncertainTender).toBe('cash'); expect(result.current.checkoutProgress?.cashInput).toBeUndefined();
+    await act(async () => { await result.current.recoverCheckout(); await expect(result.current.completeCashSale('100')).rejects.toThrow(/Recover the earlier cash sale/); });
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('keeps checkout subscribers isolated from catalog, search, inventory and history updates', async () => {
+    const { client, store } = fixture(); let renders = 0;
+    function CheckoutProbe() { useCheckout(); renders += 1; return null; }
+    const wrapper = ({ children }: { children: React.ReactNode }) => <PosProvider client={client as unknown as ApiClient} checkoutStore={store}><CheckoutProbe />{children}</PosProvider>;
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    const initial = renders;
+    await act(async () => { await result.current.refreshProducts(); await result.current.refreshInventory(); await result.current.refreshSales(); await result.current.searchProducts('Coffee'); });
+    expect(renders).toBe(initial);
+    await act(async () => { await result.current.startQrPhPayment(); }); expect(renders).toBeGreaterThan(initial);
+    const pendingRenders = renders;
+    client.refreshCheckoutAttempt.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { await expect(result.current.refreshQrPhPayment('7')).rejects.toThrow('offline'); });
+    expect(renders).toBeGreaterThan(pendingRenders); expect(result.current.checkoutMachine?.attempts[0].payment).toBe('unknown');
+  });
+  it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
+    const { wrapper, client } = fixture();
+    let products!: (value: typeof product[]) => void;
+    let history!: (value: never[]) => void;
+    client.listProducts.mockImplementation(() => new Promise(resolve => { products = resolve; }));
+    client.listSales.mockImplementation(() => new Promise(resolve => { history = resolve; }));
+    const { result } = renderHook(() => usePos(), { wrapper });
+    let calls!: Promise<boolean>[];
+    act(() => { calls = [result.current.refreshProducts(), result.current.refreshInventory(), result.current.refreshInventory(), result.current.refreshSales(), result.current.refreshSales()]; });
+    expect(client.listProducts).toHaveBeenCalledTimes(1);
+    expect(client.listInventory).toHaveBeenCalledTimes(1);
+    expect(client.listSales).toHaveBeenCalledTimes(1);
+    await act(async () => { products([product]); history([]); expect(await Promise.all(calls)).toEqual([true, true, true, true, true]); });
+    client.listSales.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([]);
+    await act(async () => { expect(await result.current.refreshSales()).toBe(false); expect(await result.current.refreshSales()).toBe(true); });
+    expect(result.current.salesState).toBe('ready');
+  });
+  it('starts confirmation reads after commitment and cannot publish older pre-sale history or inventory', async () => {
+    const { wrapper, client } = fixture();
+    let oldHistory!: (value: never[]) => void;
+    let oldCatalog!: (value: typeof product[]) => void;
+    client.listSales.mockImplementationOnce(() => new Promise(resolve => { oldHistory = resolve; }));
+    client.listProducts.mockImplementationOnce(() => new Promise(resolve => { oldCatalog = resolve; }));
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    let oldSales!: Promise<boolean>; let oldInventory!: Promise<boolean>;
+    act(() => { oldSales = result.current.refreshSales(); oldInventory = result.current.refreshInventory(); });
+    await act(async () => { await result.current.startQrPhPayment(); });
+    client.recoverCheckout.mockResolvedValue(paid);
+    client.listProducts.mockResolvedValue([{ ...product, stock: 19 }]);
+    await act(async () => { await result.current.confirmQrPhPayment({ id: '7', amount: 25, status: 'paid' }); });
+    expect(client.listSales).toHaveBeenCalledTimes(2); expect(client.listProducts).toHaveBeenCalledTimes(2);
+    await act(async () => { oldHistory([]); oldCatalog([{ ...product, stock: 100 }]); expect(await oldSales).toBe(false); expect(await oldInventory).toBe(false); });
+    expect(result.current.products[0].stock).toBe(19);
+    expect(result.current.salesState).toBe('ready'); expect(result.current.inventoryState).toBe('ready');
+    expect(result.current.consumeSalesHandoff()).toBe(true); expect(result.current.consumeSalesHandoff()).toBe(false);
+  });
+  it('returns a committed cash receipt before slow reads, and failed background reads preserve it', async () => {
+    const { wrapper, client, handle } = fixture();
+    let rejectHistory!: (error: Error) => void;
+    client.listSales.mockImplementation(() => new Promise((_resolve, reject) => { rejectHistory = reject; }));
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', cashReceived: 100, change: 75 }); });
+    expect(handle()).toBeNull(); expect(result.current.cart).toHaveLength(0); expect(result.current.salesState).toBe('loading');
+    expect(result.current.checkoutCompletion?.sale).toMatchObject({ total: 25, cashReceived: 100, change: 75 });
+    await act(async () => { rejectHistory(new Error('offline')); });
+    expect(result.current.salesState).toBe('unavailable'); expect(result.current.checkoutCompletion?.sale.id).toBe('9');
+    expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+    act(() => result.current.acknowledgeCheckout()); expect(result.current.checkoutCompletion).toBeUndefined();
+    await add(result); expect(result.current.checkoutCompletion).toBeUndefined();
+  });
+  it('keeps cash receipt truth and its handle when retirement storage fails, without another cash post', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const original = store.save; store.save = async value => { if (value === null) throw new Error('storage unavailable'); await original(value); };
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', change: 75 }); });
+    expect(result.current.checkoutCompletion?.sale.id).toBe('9'); expect(result.current.checkoutMachine?.state).toBe('completed'); expect(handle()?.id).toBe('durable-uuid');
+    await waitFor(() => expect(result.current.salesState).toBe('ready'));
+    expect(result.current.consumeSalesHandoff()).toBe(false);
+    const cashReceipt = { ...open, state: 'completed' as const, sale: { ...paid.sale!, method: 'cash' as const, cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };
+    client.recoverCheckout.mockResolvedValue(cashReceipt); store.save = original;
+    await act(async () => { await result.current.recoverCheckout(); });
+    expect(handle()).toBeNull(); expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+  });
+  it('does not publish the history handoff when recovered cash retirement fails', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.checkoutCash.mockRejectedValueOnce(new ApiClientError('lost response'));
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toThrow('lost response'); });
+    expect(handle()?.id).toBe('durable-uuid');
+    client.recoverCheckout.mockResolvedValue({ ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } });
+    const save = store.save.bind(store);
+    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+
+    await act(async () => { await result.current.recoverCheckout(); });
+    await waitFor(() => expect(result.current.salesState).toBe('ready'));
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(result.current.consumeSalesHandoff()).toBe(false);
+    expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+  });
   it('records cash through v3 and refreshes inventory/history, never legacy checkout', async () => {
     const { wrapper, client, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper });
@@ -272,6 +374,68 @@ describe('POS durable checkout integration', () => {
     expect(second.result.current.cart).toHaveLength(0);
   });
 
+  it('builds QR receipt items from the committed checkout and preserves a cart changed before and during reads', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    const committed: AuthorityCheckout = {
+      ...paid,
+      items: [{ productId: 1, name: 'Authority Coffee', quantity: 1, unitPriceCentavos: 2500 }],
+    };
+    client.recoverCheckout.mockResolvedValue(committed);
+    let finishInventory!: (value: Awaited<ReturnType<ApiClient['listInventory']>>) => void;
+    let finishHistory!: (value: Awaited<ReturnType<ApiClient['listSales']>>) => void;
+    client.listInventory.mockImplementation(() => new Promise(resolve => { finishInventory = resolve; }));
+    client.listSales.mockImplementation(() => new Promise(resolve => { finishHistory = resolve; }));
+
+    let confirmation!: ReturnType<typeof result.current.confirmQrPhPayment>;
+    await act(async () => {
+      confirmation = result.current.confirmQrPhPayment({ id: '7', status: 'paid', amount: 25 });
+      await waitFor(() => {
+        expect(client.listInventory).toHaveBeenCalledTimes(1);
+        expect(client.listSales).toHaveBeenCalledTimes(1);
+      });
+    });
+    await act(async () => { result.current.addProductChecked({ id: '3', name: 'Cocoa', barcode: '33333333', price: 12, stock: 20 }); });
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(handle()?.id).toBe('durable-uuid');
+
+    await act(async () => { finishInventory([]); });
+    await waitFor(() => expect(result.current.inventoryState).toBe('ready'));
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(handle()?.id).toBe('durable-uuid');
+    await act(async () => {
+      finishHistory([]);
+      await expect(confirmation).resolves.toMatchObject({
+        id: '9',
+        items: [{ product: { id: '1', name: 'Authority Coffee', price: 25 }, quantity: 1 }],
+      });
+    });
+    expect(result.current.checkoutCompletion?.sale.items).toEqual([
+      { product: { id: '1', barcode: '', name: 'Authority Coffee', price: 25, stock: 0 }, quantity: 1 },
+    ]);
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2', '3']);
+    expect(handle()).toBeNull();
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('does not publish the history handoff when QR retirement fails', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+    const save = store.save.bind(store);
+    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+    client.recoverCheckout.mockResolvedValue(paid);
+
+    await act(async () => { await expect(result.current.confirmQrPhPayment({ id: '7', status: 'paid', amount: 25 })).rejects.toThrow('storage unavailable'); });
+    expect(client.listSales).toHaveBeenCalledTimes(1);
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(result.current.checkoutCompletion).toBeUndefined();
+    expect(result.current.consumeSalesHandoff()).toBe(false);
+  });
   it('ignores a caller-supplied paid status unless Laravel records a completed sale', async () => {
     const { wrapper } = fixture(); const { result } = renderHook(() => usePos(), { wrapper });
     await add(result); await act(async () => { await result.current.startQrPhPayment(); });
