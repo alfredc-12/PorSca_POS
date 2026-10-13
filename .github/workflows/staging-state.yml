@@ -12,10 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Permanent staging API base. Replace <account> with the real alwaysdata account
-  # name; while the placeholder remains, this workflow records the run but skips the
-  # live health assertions.
-  STAGING_API_BASE: "https://<account>.alwaysdata.net/api/v1"
+  # Permanent Lightsail staging API base. Replace <domain> with the staging domain
+  # when it is live; while the placeholder remains, this workflow records the run
+  # but skips the live health assertions.
+  STAGING_API_BASE: "https://staging-api.<domain>/api/v1"
   # Must match DatabaseSeeder::BASELINE_VERSION in PorSca_POS_API at cycle start.
   STAGING_SEED_VERSION: qa-baseline-2026-10
 
@@ -31,7 +31,7 @@ jobs:
       - name: Check staging origin configuration
         id: origin
         run: |
-          if [[ "$STAGING_API_BASE" == *"<account>"* ]]; then
+          if [[ "$STAGING_API_BASE" == *"<domain>"* ]]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::warning::STAGING_API_BASE is still the placeholder ($STAGING_API_BASE); live staging assertions are skipped until the staging host exists."
           else
@@ -104,8 +104,8 @@ jobs:
 
           if [[ "$ORIGIN_CONFIGURED" != "true" ]]; then
             {
-              echo "**Live verification skipped:** \`STAGING_API_BASE\` is still the \`<account>\` placeholder, so no health"
-              echo "request was made. Replace the placeholder with the real alwaysdata account name to enable the assertions."
+              echo "**Live verification skipped:** \`STAGING_API_BASE\` is still the \`<domain>\` placeholder, so no health"
+              echo "request was made. Replace the placeholder with the real Lightsail staging domain to enable the assertions."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
