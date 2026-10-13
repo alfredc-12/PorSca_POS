@@ -236,7 +236,7 @@ eas build --profile preview --platform android
 eas build --profile preview --platform android
 ```
 
-Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the configured staging base, including `/api/v1` and with no trailing slash. Sign in using your own active staging account. Ask the staging API maintainer for access; never bundle or document a password or token. Do not replace the configured staging origin with a phone's `localhost` address.
+Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the Lightsail staging origin `https://staging-api.<domain>/api/v1` (including `/api/v1`, with no trailing slash). Funnel is only a break-glass fallback. Sign in using your own active staging account. Ask the staging API maintainer for access; never bundle or document a password or token. Do not replace the configured staging origin with a phone's `localhost` address.
 
 Prove the staging connection by requesting `<staging-api-origin>/health` and confirming a successful response, then load products in the installed app. PowerShell request form:
 

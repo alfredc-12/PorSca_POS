@@ -45,7 +45,7 @@ Quotas reset every month, so this rule is a temporary bridge, not a permanent lo
 Profiles are in [`eas.json`](../eas.json):
 
 - `development`: true dev-client build pinned to the `development` EAS environment. Set the developer LAN API URL in `.env` or the selected EAS environment; no fixed LAN URL is in this profile. A physical phone must never use `localhost`.
-- `preview`: internal staging build pointed at the stable staging API origin. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
+- `preview`: internal staging build pointed at the stable Lightsail staging API origin (`https://staging-api.<domain>/api/v1`). Funnel is retained only as a break-glass fallback. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
 - `production`: reserved for a separately approved production configuration; production hosting and PayMongo are out of scope for this round.
 
 The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Contract v2 adds `expo-secure-store`: existing binaries require a fresh native build (`eas build --profile development --platform android` for daily Android development). OTA updates alone cannot add the native module. Preview rebuilds still require the gate below. Tokens/passwords never belong in EAS public settings; testers sign in with individual API-managed accounts. Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
