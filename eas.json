@@ -15,9 +15,9 @@
     "preview": {
       "distribution": "internal",
       "channel": "preview",
+      "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_APP_ENV": "staging",
-        "EXPO_PUBLIC_API_URL": "https://staging-api.porsca.example"
+        "EXPO_PUBLIC_APP_ENV": "staging"
       }
     },
     "production": {
