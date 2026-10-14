@@ -52,24 +52,32 @@ The linked EAS project uses the matching `porsca-app` slug configured in [`app.j
 
 ## Preview/staging build gate
 
-Run the following gate and record the evidence before any `eas build --profile preview` command:
+Run the following gate and record the evidence before any `eas build --profile preview` command. This relaxed gate exists so a preview APK can be built to test endpoint and database connectivity; it is not a formal SQA candidate until the deferred follow-up below is complete.
+
+Required pre-build checks (all must be green):
 
 1. Mobile CI is green for the exact candidate commit, including `npm run verify`.
 2. API CI is green for the paired Laravel commit.
 3. The stable staging API answers `/health` and its required resource/payment routes.
 4. Laravel migrations have run and staging data has been seeded with the recorded data/seed version.
-5. PayMongo sandbox credentials are configured server-side, sandbox callbacks/webhooks are reachable, and webhook verification is enabled.
-6. API-track backend automation checks (Postman/Newman) are green.
-7. The required mobile smoke flows are green on the Android/Appium staging seam: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
-8. The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context.
+5. The two PayMongo confirms, both server-side: (a) sandbox keys are present on the API server, and (b) the sandbox webhook URL is registered and enabled.
 
-Only after all eight checks are green may the release owner manually build the preview candidate:
+Only after all five checks are green may the release owner manually build the preview candidate:
 
 ```bash
 eas build --profile preview --platform android
 ```
 
-A failed gate blocks the build; do not spend an EAS build to discover a staging/configuration failure.
+A failed gate blocks the build; do not spend an EAS build to discover a staging/configuration failure. Builds stay manual because the Expo build quota is limited.
+
+### Deferred follow-up (before formal SQA, non-blocking for the preview build)
+
+The following are deferred, not deleted: still recommended before formal SQA, but no longer blocking the preview build:
+
+- API-track backend automation checks (Postman/Newman) are green.
+- The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context in the formal QA cycle record (see below).
+
+The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows on the Android/Appium staging seam: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 
 ## Formal QA cycle record
 
