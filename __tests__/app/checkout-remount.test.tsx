@@ -139,7 +139,7 @@ describe('checkout remount with durable machine state', () => {
     expect(client.checkoutCash).toHaveBeenCalledTimes(2); expect(client.checkoutCash.mock.calls[1]).toEqual(client.checkoutCash.mock.calls[0]);
     expect(view.getByText('Change to give ₱75.00')).toBeTruthy(); expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
   });
-  it('keeps paid-unfulfilled administrator guidance and readable ids when both reads fail', async () => {
+  it('keeps paid-unfulfilled administrator guidance without technical ids when both reads fail', async () => {
     const { tree, client, setCheckout } = fixture();
     const unfulfilled: AuthorityCheckout = { ...pending, state: 'paid_unfulfilled', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid_unfulfilled' }], exceptions: [{ caseId: 22, reason: 'stock', state: 'open' }] };
     client.createCheckoutAttempt.mockImplementationOnce(async () => { setCheckout(unfulfilled); return unfulfilled; });
@@ -147,7 +147,7 @@ describe('checkout remount with durable machine state', () => {
     const view = render(tree); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open')); fireEvent.press(view.getByTestId('checkout-payment-qrph'));
     await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
     expect(view.getByText('Payment was received, but the sale could not be completed.')).toBeTruthy(); expect(view.getByText('Call the shop administrator now.')).toBeTruthy();
-    expect(view.getByText('Checkout server-uuid')).toBeTruthy(); expect(view.getByText('Attempt 7')).toBeTruthy(); expect(view.getByText('Case 22')).toBeTruthy();
+    expect(view.queryByText('Checkout server-uuid')).toBeNull(); expect(view.queryByText('Attempt 7')).toBeNull(); expect(view.queryByText('Case 22')).toBeNull();
     expect(view.getByTestId('checkout-payment-cash')).toBeDisabled(); expect(view.queryByTestId('refresh-qr-payment')).toBeNull(); expect(view.queryByTestId('retry-qr-payment')).toBeNull();
     expect(view.queryByTestId('qr-payment-code')).toBeNull(); expect(view.queryByTestId('checkout-completed-receipt')).toBeNull();
   });
@@ -184,11 +184,10 @@ describe('checkout remount with durable machine state', () => {
     setCheckout({ ...completed, state: 'provider_contradiction', attempts: [{ ...completed.attempts[0], status: 'contradiction' }], exceptions: [{ caseId: 17, reason: 'provider_contradiction', state: 'open' }] });
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Conflicting payment records found/);
-    expect(view.getByText('Case 17')).toBeTruthy(); expect(view.queryByTestId('retry-qr-verification')).toBeNull();
+    expect(view.queryByText('Case 17')).toBeNull(); expect(view.queryByTestId('retry-qr-verification')).toBeNull();
     expect(view.getByText('Administrator required')).toBeTruthy(); expect(view.getByText('Call the shop administrator now.')).toBeTruthy();
     expect(view.getByText('Do not take another payment, hand over goods, refund, or abandon this purchase while you wait.')).toBeTruthy();
-    expect(view.getByRole('button', { name: 'Review current price' })).toBeDisabled(); expect(view.getByRole('button', { name: 'Abandon purchase' })).toBeDisabled();
-    expect(view.getByLabelText('Abandonment reason')).toHaveProp('editable', false);
+    expect(view.queryByTestId('sale-help-toggle')).toBeNull(); expect(view.queryByRole('button', { name: 'Check the current price' })).toBeNull(); expect(view.queryByRole('button', { name: 'Cancel this sale' })).toBeNull();
     expect(view.getByTestId('checkout-payment-cash')).toBeDisabled(); expect(view.getByTestId('checkout-payment-qrph')).toBeDisabled();
     expect(view.queryByTestId('qr-payment-code-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
   });

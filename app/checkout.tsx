@@ -86,6 +86,7 @@ export default function CheckoutScreen() {
   const [abandonReason, setAbandonReason] = useState('');
   const [recoveryError, setRecoveryError] = useState<string>();
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [showSaleHelp, setShowSaleHelp] = useState(false);
   const operationRef = useRef(false);
   const [receiptRefresh, setReceiptRefresh] = useState<'running' | 'failed' | 'ready'>();
   const recoveryAction = async (action: () => Promise<void>) => {
@@ -371,11 +372,6 @@ export default function CheckoutScreen() {
             testID={guidance.action === 'check' ? qrStatus === 'pending' ? 'refresh-qr-payment' : 'retry-qr-verification' : guidance.action === 'start' ? 'start-qrph-payment' : guidance.action === 'refresh' ? 'retry-qr-verification' : undefined}
             label={guidance.label} disabled={guidance.action === 'wait' || operationBusy}
             onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover') void recoveryAction(() => recoverCheckout()); }} /> : null}
-          {authorityCheckout ? <>
-            <Text>Checkout {authorityCheckout.id}</Text>
-            {activeAttempt ? <Text>Attempt {activeAttempt.id}</Text> : null}
-            {authorityCheckout.exceptions.map(e => <Text key={e.caseId}>Case {e.caseId}</Text>)}
-          </> : null}
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
         <View style={styles.dueCard}>
@@ -388,16 +384,25 @@ export default function CheckoutScreen() {
         </View>
 
         <View style={styles.orderCard}>
-          {!guidance ? <AppButton label="Recover device purchase" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" /> : null}
-          {authorityCheckout ? <>
-            {!guidance ? <Text>Checkout {authorityCheckout.id}</Text> : null}
-            <AppButton label="Review current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
-            <TextInput accessibilityLabel="Abandonment reason" placeholder="Reason for abandoning purchase" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
-            <AppButton label="Abandon purchase" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
-          </> : null}
-          {recoveryError && !guidance ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           <CheckoutOrderSummary cart={cart} />
         </View>
+
+        {guidance?.category === 'interrupted' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
+          <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
+            <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
+          </Pressable>
+          {!showSaleHelp ? <Text style={styles.helper}>This sale needs attention. Open help only if the payment was interrupted.</Text> : null}
+          {showSaleHelp ? <>
+            <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
+            <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
+            <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
+            <Text style={styles.label}>Cancel this sale</Text>
+            <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
+            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
+            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
+            {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
+          </> : null}
+        </View> : null}
 
         <View style={styles.paymentCard}>
           <View style={styles.paymentHeader}>
