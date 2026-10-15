@@ -50,6 +50,10 @@ Profiles are in [`eas.json`](../eas.json):
 
 The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Contract v2 adds `expo-secure-store`: existing binaries require a fresh native build (`eas build --profile development --platform android` for daily Android development). OTA updates alone cannot add the native module. Preview rebuilds still require the gate below. Tokens/passwords never belong in EAS public settings; testers sign in with individual API-managed accounts. Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
 
+## Staging deployment handoff
+
+Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The current `<domain>` URL is a placeholder, not live evidence. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
+
 ## Preview/staging build gate
 
 Run the following gate and record the evidence before any `eas build --profile preview` command. This relaxed gate exists so a preview APK can be built to test endpoint and database connectivity; it is not a formal SQA candidate until the deferred follow-up below is complete.
@@ -72,7 +76,7 @@ A failed gate blocks the build; do not spend an EAS build to discover a staging/
 
 ### Deferred follow-up (before formal SQA, non-blocking for the preview build)
 
-The following are deferred, not deleted: still recommended before formal SQA, but no longer blocking the preview build:
+The following do not block a connectivity preview build, but must be complete before formal SQA:
 
 - API-track backend automation checks (Postman/Newman) are green.
 - The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context in the formal QA cycle record (see below).
@@ -90,7 +94,7 @@ Keep the record with:
 - cycle ID and owner;
 - exact mobile commit SHA and exact Laravel API commit SHA;
 - `porsca-mobile-api-v3` contract version;
-- environment/profile and staging API origin;
+- environment/profile, staging API origin, API deployment run/health evidence and EAS build/runtime/update identity (see [Test Plan 2.1 evidence](DEPLOYMENT.md#qa-evidence-test-plan-21));
 - migration and seed/data version;
 - PayMongo sandbox account/context, webhook endpoint reachability, and provider test mode;
 - mobile CI, API CI, Jest/RNTL, Appium, and Postman/Newman evidence links;
@@ -106,7 +110,7 @@ The Defect Summary is derived from GitHub Issues for the cycle/environment: coun
 
 Retain Appium screenshots/video/logs, Postman/Newman reports, Jest/RNTL output, Laravel CI/migration/seed/webhook artifacts, and the cycle record for the agreed project retention period. Large raw logs remain in artifact storage, not committed source.
 
-Final QA approval remains human. Automation supplies evidence and blocking signals; it does not merge, promote, or declare release approval. Funnel wiring, EAS execution, and any production action remain manual.
+Final QA approval remains human. Automation supplies evidence and blocking signals; it does not merge, promote, or declare release approval. Lightsail setup, staging deployment dispatch, break-glass Funnel wiring, EAS execution, and any production action remain manual.
 
 ## Out of scope this round
 
