@@ -10,8 +10,8 @@ import { Product } from '@/src/types';
 /**
  * The scan session: it owns the lock, the cooldown, the input validation, the
  * lookup and the per-status outcome so the camera screen only has to render.
- * The camera binding stays in `app/scanner.tsx`; everything decided here is
- * plain JavaScript and is driven by fixtures in Jest.
+ * The screen delegates scan events here; the decisions are plain JavaScript
+ * and are driven by fixtures in Jest.
  */
 
 /**

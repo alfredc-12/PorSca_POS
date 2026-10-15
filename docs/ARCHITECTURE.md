@@ -59,8 +59,10 @@ for the authoritative lifecycle and recovery rules.
 reconciliation goes through it, so no screen can reach an unchecked add.
 
 Scanning decisions live in `src/hooks/useBarcodeScan.ts` on top of the pure
-barcode helpers in `src/domain/barcode.ts`, and the camera binding stays in
-`app/scanner.tsx`. That seam is what makes the camera path fixture-testable.
+barcode helpers in `src/domain/barcode.ts`. `src/components/BarcodeScanner.tsx`
+owns screen orchestration, `src/components/ScannerCamera.tsx` binds Expo Camera,
+and `app/scanner.tsx` selects the route mode. The seams make scanner behavior
+fixture-testable.
 
 Before a cart is handed to checkout, `revalidateCart` re-reads every line from
 `GET /products/:id` and `src/domain/revalidation.ts` reports price and stock

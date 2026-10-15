@@ -227,6 +227,26 @@ describe('ScannerScreen', () => {
     }
   });
 
+  it('keeps inventory inspection disarmed and open after a successful scan', async () => {
+    jest.useFakeTimers();
+    try {
+      mockIsAdmin = false;
+      const scanner = renderScanner({ mode: 'inventory', fetchImpl: apiFetch() });
+      scanner.startCamera();
+      scanner.scan(EAN13_IN_STOCK);
+
+      await waitFor(() => expect(scanner.getByTestId('scanner-outcome-title')).toHaveTextContent('Product found'));
+      expect(scanner.isArmed()).toBe(false);
+      expect(scanner.cart()).toBe('lines:0 qty:0 total:0');
+
+      act(() => jest.advanceTimersByTime(ADDED_CONFIRMATION_MS));
+      expect(mockRouter.back).not.toHaveBeenCalled();
+      expect(scanner.getByTestId('scanner-outcome-title')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('pauses the success auto-close while a replacement scan is resolving', async () => {
     jest.useFakeTimers();
     try {
