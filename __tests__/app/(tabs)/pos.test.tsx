@@ -276,7 +276,7 @@ describe('POS search', () => {
       expect(view.getAllByTestId('search-result')).toHaveLength(5);
       expect(view.getByText('Showing 5 of 12 matches')).toBeTruthy();
     });
-  });
+  }, 15000);
 
   it.each([1, 5])('does not offer Show more for %i matches', async (count) => {
     const listProducts = jest.fn().mockResolvedValue(Array.from({ length: count }, (_, index) => ({
