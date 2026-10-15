@@ -10,7 +10,7 @@ import { QrPaymentCode } from '@/src/components/QrPaymentCode';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
-import { cashTenderPresets } from '@/src/domain/checkoutMoney';
+import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
@@ -76,7 +76,13 @@ export default function CheckoutScreen() {
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
   const initialRetainedPayment = useRef(retainedPayment);
 
-  const cashResult = useMemo(() => checkoutCashTender(cash, Math.round(total * 100)), [cash, total]);
+  const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
+  const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
+  const cashFeedback = cashResult.kind === 'insufficient'
+    ? `Short by ${formatCheckoutMoney(cashResult.shortfallCentavos)}. Add cash before confirming.`
+    : cashResult.kind === 'invalid'
+      ? 'Enter digits and at most two decimal places (for example, 100.00).'
+      : cashResult.kind === 'empty' ? 'Enter the cash received or choose a preset.' : undefined;
   const [abandonReason, setAbandonReason] = useState('');
   const [recoveryError, setRecoveryError] = useState<string>();
   const [recoveryBusy, setRecoveryBusy] = useState(false);
@@ -122,9 +128,8 @@ export default function CheckoutScreen() {
     : 'Do not take another payment while this payment is waiting.';
 
   const itemCount = useMemo(() => cart.reduce((sum, line) => sum + line.quantity, 0), [cart]);
-  const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
   const dueItemCount = authorityCheckout?.items.reduce((sum, item) => sum + item.quantity, 0) ?? itemCount;
-  const presets = useMemo(() => cashTenderPresets(Math.round(total * 100)), [total]);
+  const presets = useMemo(() => cashTenderPresets(dueAmountCentavos), [dueAmountCentavos]);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
   // end: show the stored authority attempt with its status check. Ambiguous
@@ -159,12 +164,7 @@ export default function CheckoutScreen() {
       Alert.alert(failure.title, failure.body);
       return;
     }
-    if (cashResult.kind !== 'sufficient') {
-      const failure = localFailure('Check cash tender', `Enter an amount using digits and at most two decimal places, at least ₱${total.toFixed(2)}.`, { action: 'retry', actionLabel: 'Confirm again' });
-      setCashError(failure);
-      Alert.alert(failure.title, failure.body);
-      return;
-    }
+    if (cashResult.kind !== 'sufficient') return;
     // Single-submit guard: the disabled button state commits a render later,
     // so a second tap before that must not record a second sale.
     if (cashBusyRef.current) return;
@@ -436,6 +436,7 @@ export default function CheckoutScreen() {
                   accessibilityLabel="Cash received"
                 />
               </View>
+              {cashFeedback ? <Text testID="cash-tender-feedback" accessibilityLiveRegion="polite">{cashFeedback}</Text> : null}
               <View style={styles.segmentRow}>
                 {presets.map(preset => <Pressable key={preset.label} accessibilityRole="button" accessibilityLabel={`Cash ${preset.label}`} disabled={tenderLocked} onPress={() => { if (!tenderLocked) setCash(preset.input); }}><Text>{preset.label}</Text></Pressable>)}
               </View>
@@ -448,7 +449,7 @@ export default function CheckoutScreen() {
                 testID="confirm-cash-payment"
                 label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
                 onPress={finishCash}
-                disabled={tenderLocked || recoveryBusy}
+                disabled={tenderLocked || recoveryBusy || cashResult.kind !== 'sufficient'}
                 style={styles.fullButton}
               />
             </View>

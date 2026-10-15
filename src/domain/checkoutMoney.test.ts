@@ -33,12 +33,18 @@ describe('strict cash grammar and integer centavos', () => {
   it.each([[0, '₱0.00'], [1, '₱0.01'], [100, '₱1.00'], [12345, '₱123.45']])('formats %s purely', (amount, expected) => {
     expect(formatCheckoutMoney(amount)).toBe(expected);
   });
-  it('supplies exact plus all decided denominations as grammar-valid input', () => {
+  it('supplies exact plus only larger denominations as sufficient input', () => {
     const presets = cashTenderPresets(12345);
-    expect(presets.map((preset) => preset.label)).toEqual(['Exact', '20', '50', '100', '200', '500', '1000']);
-    expect(presets.map((preset) => preset.input)).toEqual(['123.45', '20.00', '50.00', '100.00', '200.00', '500.00', '1000.00']);
-    for (const preset of presets) expect(validateCashTender(preset.input, 0).kind).toBe('sufficient');
+    expect(presets.map((preset) => preset.label)).toEqual(['Exact', '200', '500', '1000']);
+    expect(presets.map((preset) => preset.input)).toEqual(['123.45', '200.00', '500.00', '1000.00']);
+    for (const preset of presets) expect(validateCashTender(preset.input, 12345).kind).toBe('sufficient');
     expect(validateCashTender(cashTenderPresets(0)[0].input, 0).kind).toBe('sufficient');
+  });
+  it.each([0, 1, 2000, 100000, 100001, Number.MAX_SAFE_INTEGER])('keeps presets sufficient and unique for %s', (total) => {
+    const presets = cashTenderPresets(total);
+    expect(new Set(presets.map(preset => preset.input)).size).toBe(presets.length);
+    expect(presets[0]).toEqual({ label: 'Exact', input: formatCheckoutMoney(total).slice(1) });
+    for (const preset of presets) expect(validateCashTender(preset.input, total).kind).toBe('sufficient');
   });
   it('keeps the staging-provisional QR minimum separate from cash eligibility', () => {
     const minimum = STAGING_PROVISIONAL_QR_MINIMUM_CENTAVOS;

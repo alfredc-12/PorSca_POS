@@ -115,9 +115,39 @@ describe('CheckoutScreen cash states', () => {
     fireEvent.changeText(getByTestId('cash-received-input'), '20');
     fireEvent.press(getByTestId('confirm-cash-payment'));
 
-    expect(getByText(/Enter an amount using digits and at most two decimal places/)).toBeTruthy();
+    expect(getByText('Short by ₱15.00. Add cash before confirming.')).toBeTruthy();
+    expect(getByTestId('confirm-cash-payment')).toBeDisabled();
     expect(completeCashSale).not.toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalledWith('Check cash tender', expect.stringContaining('at least ₱35.00'));
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['', 'abc', '-1', '1e2', '35.001'])('blocks invalid cash %j inline without dialogs and clears feedback after correction', (input) => {
+    const completeCashSale = jest.fn();
+    setContext({ completeCashSale });
+    const view = render(<CheckoutScreen />);
+    fireEvent.changeText(view.getByTestId('cash-received-input'), input);
+    fireEvent.press(view.getByTestId('confirm-cash-payment'));
+    expect(view.getByTestId('cash-tender-feedback')).toBeTruthy();
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    expect(completeCashSale).not.toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
+    fireEvent.press(view.getByLabelText('Cash Exact'));
+    expect(view.getByTestId('cash-received-input')).toHaveProp('value', '35.00');
+    expect(view.queryByTestId('cash-tender-feedback')).toBeNull();
+    expect(view.getByTestId('confirm-cash-payment')).not.toBeDisabled();
+    expect(view.queryByLabelText('Cash 20')).toBeNull();
+  });
+
+  it('uses the authoritative amount for cash validation and exact presets', () => {
+    setContext({ authorityCheckout: { amountCentavos: 5000, items: [], attempts: [] } });
+    const view = render(<CheckoutScreen />);
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '35');
+    expect(view.getByTestId('cash-tender-feedback')).toHaveTextContent('Short by ₱15.00. Add cash before confirming.');
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    expect(view.queryByLabelText('Cash 50')).toBeNull();
+    fireEvent.press(view.getByLabelText('Cash Exact'));
+    expect(view.getByTestId('cash-received-input')).toHaveProp('value', '50.00');
+    expect(view.getByTestId('confirm-cash-payment')).not.toBeDisabled();
   });
 
   it('surfaces Laravel stock conflicts with a recovery action and preserves the cart', async () => {
@@ -313,8 +343,9 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ disabled: false }));
     expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
-    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
     expect(completeCashSale).toHaveBeenCalledWith('100');
   });
@@ -328,6 +359,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
     expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
   });
 

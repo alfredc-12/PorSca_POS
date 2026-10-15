@@ -149,9 +149,9 @@ describe('PorSca required cashier smoke flows', () => {
     await searchAndSelect(productSearch);
     await tap('proceed-to-payment');
     await byId('cash-received-input').setValue('1');
-    await tap('confirm-cash-payment');
-    await byText('Check cash tender').waitForDisplayed();
-    await byText('Enter an amount using digits and at most two decimal places, at least ₱').waitForDisplayed();
+    await byId('cash-tender-feedback').waitForDisplayed();
+    await byText('Add cash before confirming.').waitForDisplayed();
+    await expect(byId('confirm-cash-payment')).toBeDisabled();
   });
 
   smoke('starts the QR Ph staging flow through Laravel', async () => {

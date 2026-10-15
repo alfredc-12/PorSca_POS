@@ -63,6 +63,8 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByTestId('retry-qr-payment')).toBeEnabled();
     expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
@@ -120,7 +122,7 @@ describe('checkout remount with durable machine state', () => {
     act(() => { done(); done(); }); expect(router.replace).toHaveBeenCalledTimes(1);
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
     expect(view.queryByTestId('checkout-completed-receipt')).toBeNull(); expect(view.queryByText('Receipt 9')).toBeNull();
-    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
   });
   it('restores uncertain cash read-only on remount and exactly replays its saved key and amount', async () => {
     const { tree, client, setCheckout } = fixture();

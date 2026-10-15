@@ -46,7 +46,7 @@ export function cashTenderPresets(totalCentavos: number): readonly { label: stri
   assertCentavos(totalCentavos);
   return [
     { label: 'Exact', input: formatCheckoutMoney(totalCentavos).slice(1) },
-    ...CASH_PRESET_PESOS.map((pesos) => ({ label: String(pesos), input: `${pesos}.00` })),
+    ...CASH_PRESET_PESOS.filter((pesos) => pesos * 100 > totalCentavos).map((pesos) => ({ label: String(pesos), input: `${pesos}.00` })),
   ];
 }
 
