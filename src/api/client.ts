@@ -359,11 +359,27 @@ export class ApiClient {
     }).then(normalizeSale);
   }
 
-  listSales() {
-    return this.readSalesPage().then((payload) => {
+  async listSales(): Promise<Sale[]> {
+    // Read the entire snapshot before publishing it: a failed later page must
+    // not replace a previously complete history with a truncated one.
+    const sales = new Map<string, Sale>();
+    let page = 1;
+    while (true) {
+      const payload = await this.readSalesPage(page);
       const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeSale);
-    });
+      for (const item of items) {
+        const sale = normalizeSale(item);
+        sales.set(sale.id, sale);
+      }
+      const pagination = Array.isArray(payload) ? undefined : payload.pagination;
+      if (!pagination || pagination.last_page === undefined) break;
+      if (pagination.current_page !== page || !Number.isInteger(pagination.last_page) || pagination.last_page < page) {
+        throw new Error('Invalid transaction history pagination. Please retry.');
+      }
+      if (page === pagination.last_page) break;
+      page += 1;
+    }
+    return [...sales.values()];
   }
 
   /** A missing receipt on an incomplete history page is never proof of absence. */
@@ -381,8 +397,9 @@ export class ApiClient {
     return 'unknown';
   }
 
-  private readSalesPage() {
-    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath('/sales?per_page=100'));
+  private readSalesPage(page = 1) {
+    const suffix = page === 1 ? '' : `&page=${page}`;
+    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath(`/sales?per_page=100${suffix}`));
   }
 
   listTransactions() {

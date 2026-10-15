@@ -7,6 +7,7 @@ import { usePos } from '@/src/context/PosContext';
 import { PaymentMethod, Sale } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { filterHistory, validHistoryDate } from '@/src/domain/transactionHistory';
 
 type Filter = 'all' | 'today' | PaymentMethod;
 
@@ -15,22 +16,12 @@ export default function TransactionsScreen() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [showFilters, setShowFilters] = useState(true);
+  const [date, setDate] = useState('');
+  const [visibleCount, setVisibleCount] = useState(50);
+  const validDate = validHistoryDate(date);
   const responsive = useResponsive();
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const today = new Date().toDateString();
-    return sales.filter((sale) => {
-      const matchesFilter = filter === 'all'
-        || (filter === 'today' && new Date(sale.createdAt).toDateString() === today)
-        || sale.paymentMethod === filter;
-      const matchesQuery = !q
-        || sale.id.toLowerCase().includes(q)
-        || sale.total.toFixed(2).includes(q)
-        || sale.items.some((item) => item.product.name.toLowerCase().includes(q));
-      return matchesFilter && matchesQuery;
-    });
-  }, [filter, query, sales]);
+  const filtered = useMemo(() => filterHistory(sales, query, filter, date), [sales, query, filter, date]);
 
   const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
   const cashCount = sales.filter((sale) => sale.paymentMethod === 'cash').length;
@@ -95,6 +86,14 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
+      {showFilters ? <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <TextInput accessibilityLabel="Transaction date YYYY-MM-DD" placeholder="Date: YYYY-MM-DD (local time)" placeholderTextColor={colors.textMuted} value={date} onChangeText={setDate} style={[styles.searchInput, { minHeight: responsive.controlHeight }]} />
+          {date ? <Pressable accessibilityLabel="Clear date filter" onPress={() => setDate('')}><Text>Clear</Text></Pressable> : null}
+        </View>
+      </View> : null}
+      {!validDate ? <Text accessibilityRole="alert">Enter a date as YYYY-MM-DD.</Text> : null}
+
       {salesState === 'loading' ? (
         <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from the shop server." />
       ) : null}
@@ -117,7 +116,8 @@ export default function TransactionsScreen() {
             <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>{sales.length ? 'No matching transactions' : 'No sales yet'}</Text>
             <Text style={[styles.emptyText, { fontSize: responsive.font(typography.label) }]}>{sales.length ? 'Adjust the search or filters to see more receipts.' : 'Complete a checkout and the transaction will appear here automatically.'}</Text>
           </View>
-        ) : filtered.map((sale) => <TransactionRow key={sale.id} sale={sale} />)}
+        ) : filtered.slice(0, visibleCount).map((sale) => <TransactionRow key={sale.id} sale={sale} />)}
+        {filtered.length > visibleCount && salesState !== 'loading' ? <Pressable accessibilityRole="button" onPress={() => setVisibleCount(count => count + 50)} style={styles.chip}><Text style={styles.chipText}>Show more transactions ({visibleCount} of {filtered.length})</Text></Pressable> : null}
       </View>
     </Screen>
   );

@@ -65,6 +65,16 @@ describe('TransactionsScreen history states', () => {
     expect(mockRefreshSales).toHaveBeenCalledTimes(2);
   });
 
+  it('pages rendered rows while search finds older receipts without loading more', () => {
+    setSales(Array.from({ length: 150 }, (_, i) => ({ ...completedCashSale, id: `receipt-${i + 1}` })));
+    const { getByPlaceholderText, getByText, getByTestId, queryByTestId } = render(<TransactionsScreen />);
+    expect(queryByTestId('transaction-receipt-51')).toBeNull();
+    fireEvent.press(getByText('Show more transactions (50 of 150)'));
+    expect(getByTestId('transaction-receipt-51')).toBeTruthy();
+    fireEvent.changeText(getByPlaceholderText('Search receipt, product, or amount...'), 'receipt-150');
+    expect(getByTestId('transaction-receipt-150')).toBeTruthy();
+  });
+
   it('filters completed sales by payment method and searchable receipt details', () => {
     const qrSale: Sale = { ...completedCashSale, id: '43', paymentMethod: 'qrph', cashReceived: undefined, change: undefined };
     setSales([completedCashSale, qrSale]);
