@@ -249,17 +249,32 @@ export default function CheckoutScreen() {
     }
   }, [confirmQrPhPayment, alertCompletion]);
 
-  useEffect(() => {
-    if (operationBusy) return;
-    const retained = unresolvedQrPayment();
-    if (!retained) {
-      if (checkoutProgress?.uncertainTender === 'qrph') { setMode('qrph'); setQrPayment(undefined); setQrStatus('verification'); }
-      return;
+  const [authorityViewInputs, setAuthorityViewInputs] = useState<{
+    authorityCheckout: typeof authorityCheckout;
+    operationBusy: boolean;
+    receiptRefresh: typeof receiptRefresh;
+    unresolvedQrPayment: typeof unresolvedQrPayment;
+    uncertainTender: string | undefined;
+  }>();
+  const uncertainTender = checkoutProgress?.uncertainTender;
+  if (!authorityViewInputs
+    || authorityViewInputs.authorityCheckout !== authorityCheckout
+    || authorityViewInputs.operationBusy !== operationBusy
+    || authorityViewInputs.receiptRefresh !== receiptRefresh
+    || authorityViewInputs.unresolvedQrPayment !== unresolvedQrPayment
+    || authorityViewInputs.uncertainTender !== uncertainTender) {
+    setAuthorityViewInputs({ authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment, uncertainTender });
+    if (!operationBusy) {
+      const retained = unresolvedQrPayment();
+      if (!retained) {
+        if (uncertainTender === 'qrph') { setMode('qrph'); setQrPayment(undefined); setQrStatus('verification'); }
+      } else {
+        setMode('qrph');
+        setQrPayment(retained);
+        setQrStatus(retained.status === 'paid' ? receiptRefresh === 'ready' ? 'paid' : 'verification' : retained.status);
+      }
     }
-    setMode('qrph');
-    setQrPayment(retained);
-    setQrStatus(retained.status === 'paid' ? receiptRefresh === 'ready' ? 'paid' : 'verification' : retained.status);
-  }, [authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment, checkoutProgress?.uncertainTender]);
+  }
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (operationRef.current || administratorRequired) return;
