@@ -239,6 +239,55 @@ describe('POS search', () => {
     }
   });
 
+  it('reveals every match in batches and adds a product beyond the first five', async () => {
+    const products = Array.from({ length: 12 }, (_, index) => ({
+      ...plenty, id: `coffee-${index}`, name: `Coffee ${index + 1}`,
+    }));
+    const listProducts = jest.fn().mockResolvedValue(products);
+    const view = renderPos({ isConfigured: true, listProducts } as unknown as ApiClient);
+    const input = view.getByTestId('pos-search-input');
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+    fireEvent.changeText(input, 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(5));
+    expect(view.getByText('Showing 5 of 12 matches')).toBeTruthy();
+    expect(view.queryByLabelText('Add Coffee 6')).toBeNull();
+    const reads = listProducts.mock.calls.length;
+
+    fireEvent.press(view.getByLabelText('Show more products'));
+    expect(view.getAllByTestId('search-result')).toHaveLength(10);
+    fireEvent.press(view.getByLabelText('Show more products'));
+    expect(view.getAllByTestId('search-result')).toHaveLength(12);
+    expect(view.getByText('Showing 12 of 12 matches')).toBeTruthy();
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+    expect(listProducts).toHaveBeenCalledTimes(reads);
+
+    fireEvent.press(view.getByLabelText('Add Coffee 12'));
+    await waitFor(() => expect(view.getByText('(1 item)')).toBeTruthy());
+    expect(view.getByText('Coffee 12')).toBeTruthy();
+    expect(input.props.value).toBe('');
+    expect(view.queryAllByTestId('search-result')).toHaveLength(0);
+
+    fireEvent.changeText(input, 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(5));
+    fireEvent.press(view.getByLabelText('Show more products'));
+    fireEvent.changeText(input, 'Coffee 1');
+    await waitFor(() => expect(listProducts).toHaveBeenLastCalledWith({ search: 'Coffee 1' }));
+    await waitFor(() => {
+      expect(view.getAllByTestId('search-result')).toHaveLength(5);
+      expect(view.getByText('Showing 5 of 12 matches')).toBeTruthy();
+    });
+  }, 15000);
+
+  it.each([1, 5])('does not offer Show more for %i matches', async (count) => {
+    const listProducts = jest.fn().mockResolvedValue(Array.from({ length: count }, (_, index) => ({
+      ...plenty, id: `coffee-${index}`, name: `Coffee ${index + 1}`,
+    })));
+    const view = renderPos({ isConfigured: true, listProducts } as unknown as ApiClient);
+    fireEvent.changeText(view.getByTestId('pos-search-input'), 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(count));
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+  });
+
   it('asks for an exact barcode read when the query looks like a barcode', async () => {
     const listProducts = jest.fn().mockResolvedValue([]);
     const searchClient = { isConfigured: true, listProducts } as unknown as ApiClient;

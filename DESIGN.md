@@ -74,7 +74,7 @@ Login uses the same cream/green PorSca shell, labeled email/password inputs, a m
 
 ### POS
 
-The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. The cart provides quantity controls, stock visibility, subtotal/total, and a secure payment handoff.
+The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. POS initially shows five matches with a match count; **Show more** reveals another five at a time until every match is reachable. Editing or clearing the query resets the compact view, and selecting a product uses the same guarded cart-add flow. The cart provides quantity controls, stock visibility, subtotal/total, and a secure payment handoff.
 
 Cart states added in week 6:
 
