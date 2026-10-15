@@ -23,6 +23,7 @@ export function RootNavigator() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="scanner" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="checkout" />
+        <Stack.Screen name="transaction-detail" />
         <Stack.Protected guard={isAdmin}>
           <Stack.Screen name="product-form" />
           <Stack.Screen name="users" />

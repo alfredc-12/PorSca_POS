@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { Screen } from '@/src/components/Screen';
 import { DataState } from '@/src/components/DataState';
 import { usePos } from '@/src/context/PosContext';
@@ -171,7 +172,10 @@ function TransactionRow({ sale }: { sale: Sale }) {
   const methodLabel = sale.paymentMethod === 'cash' ? 'Cash' : 'QR Ph / PayMongo';
 
   return (
-    <View
+    <Pressable
+      onPress={() => router.push({ pathname: '/transaction-detail', params: { id: sale.id } })}
+      accessibilityRole="button"
+      accessibilityHint="View transaction details and receipt"
       testID={`transaction-${sale.id}`}
       accessibilityLabel={`${sale.paymentMethod === 'cash' ? 'Cash' : 'QR Ph'} transaction ${sale.id}, ${sale.status === 'paid' ? 'Completed' : sale.status}, ₱${sale.total.toFixed(2)}`}
       style={[
@@ -211,7 +215,7 @@ function TransactionRow({ sale }: { sale: Sale }) {
         <Text style={[styles.amount, { fontSize: responsive.font(responsive.narrow ? 16 : 18) }]}>₱{sale.total.toFixed(2)}</Text>
       </View>
       <Ionicons name="ellipsis-vertical" size={responsive.s(19)} color={colors.textMuted} />
-    </View>
+    </Pressable>
   );
 }
 

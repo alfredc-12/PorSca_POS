@@ -5,6 +5,8 @@ import { usePos } from '@/src/context/PosContext';
 import { Sale } from '@/src/types';
 
 const mockRefreshSales = jest.fn();
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) } }));
 
 jest.mock('@/src/context/PosContext', () => ({ usePos: jest.fn() }));
 jest.mock('@/src/components/Screen', () => ({ Screen: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
@@ -73,6 +75,12 @@ describe('TransactionsScreen history states', () => {
     expect(getByTestId('transaction-receipt-51')).toBeTruthy();
     fireEvent.changeText(getByPlaceholderText('Search receipt, product, or amount...'), 'receipt-150');
     expect(getByTestId('transaction-receipt-150')).toBeTruthy();
+  });
+
+  it('opens the selected receipt from a transaction row', () => {
+    const screen = render(<TransactionsScreen />);
+    fireEvent.press(screen.getByTestId('transaction-42'));
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/transaction-detail', params: { id: '42' } });
   });
 
   it('filters completed sales by payment method and searchable receipt details', () => {
