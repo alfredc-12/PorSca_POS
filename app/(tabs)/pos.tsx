@@ -13,6 +13,7 @@ import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 import { useDebouncedValue } from '@/src/hooks/useDebouncedValue';
+import { stockStatus } from '@/src/utils/stockStatus';
 
 /** Trailing debounce for search, so typing does not fire one request per keystroke. */
 export const SEARCH_DEBOUNCE_MS = 280;
@@ -216,8 +217,9 @@ export default function PosScreen() {
         <View style={[styles.resultsCard, { padding: responsive.narrow ? 10 : spacing.md }]}>
           <Text style={[styles.resultsTitle, { fontSize: responsive.font(typography.label) }]}>Search results</Text>
           {matches.map((product) => {
-            const outOfStock = product.stockStatus === 'out_of_stock' || product.stock === 0;
-            const stockLabel = outOfStock ? 'Out of stock' : product.stockStatus === 'low_stock' ? 'Low stock' : 'In stock';
+            const status = stockStatus(product);
+            const outOfStock = status === 'out_of_stock';
+            const stockLabel = status === 'out_of_stock' ? 'Out of stock' : status === 'low_stock' ? 'Low stock' : 'In stock';
             return (
               <Pressable
                 key={product.id}

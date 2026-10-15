@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import InventoryScreen from '@/app/(tabs)/inventory';
 import { ApiClient } from '@/src/api/client';
 import { PosProvider } from '@/src/context/PosContext';
@@ -74,6 +74,18 @@ function setup(options: { missing?: boolean; unavailable?: boolean; refreshFails
 }
 
 beforeEach(() => { mockIsAdmin = true; mockGranted = true; mockRequestPermission.mockReset(); });
+
+it('classifies offline demo rows by the default low-stock threshold in the summary and row badge', async () => {
+  const offline = { isConfigured: false } as unknown as ApiClient;
+  const screen = render(<PosProvider client={offline} demoCatalogEnabled><InventoryScreen /></PosProvider>);
+  await waitFor(() => expect(screen.getByText('Piattos Cheese 85g')).toBeTruthy());
+  expect(screen.getByText('Low stock (8)')).toBeTruthy();
+  expect(screen.getByText('Out of stock (0)')).toBeTruthy();
+  const metricShows = (label: string, value: number) => screen.getAllByText(label).some((node) => Boolean(node.parent?.parent && within(node.parent.parent).queryByText(String(value))));
+  expect(metricShows('Low Stock', 1)).toBe(true);
+  expect(metricShows('Out of Stock', 1)).toBe(true);
+  expect(metricShows('In Stock', 4)).toBe(true);
+});
 
 it('opens one editor with the fresh product after repeated camera events', async () => {
   const { screen, fetchImpl, scan } = setup();
