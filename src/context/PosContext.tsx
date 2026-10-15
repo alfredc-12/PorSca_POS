@@ -492,8 +492,10 @@ export function PosProvider({
     try {
       const [remoteInventory, remoteCatalog] = await Promise.all([client.listInventory(), readCatalog(generation)]);
       if (reads.generation !== generation) return false;
+      const productsById = new Map(remoteCatalog.map((product) => [product.id, product]));
+      const productsByBarcode = new Map(remoteCatalog.filter((product) => product.barcode).map((product) => [product.barcode, product]));
       const nextInventory = remoteInventory.map((item) => {
-        const knownProduct = remoteCatalog.find((product) => product.id === item.productId || product.barcode === item.barcode);
+        const knownProduct = productsById.get(item.productId) ?? productsByBarcode.get(item.barcode);
         return {
           ...(knownProduct ?? {
             id: item.productId,

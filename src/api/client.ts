@@ -305,10 +305,7 @@ export class ApiClient {
       : search
         ? `?search=${encodeURIComponent(search)}&per_page=100`
         : '?per_page=100';
-    return this.request<ApiProduct[] | { items?: ApiProduct[] }>(this.versionedPath(`/products${query}`)).then((payload) => {
-      const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeProduct);
-    });
+    return this.readAllPages<ApiProduct>(`/products${query}`).then((items) => items.map(normalizeProduct));
   }
 
   getProduct(productId: string) {
@@ -328,10 +325,26 @@ export class ApiClient {
   }
 
   listInventory() {
-    return this.request<ApiInventoryItem[] | { items?: ApiInventoryItem[] }>(this.versionedPath('/inventory')).then((payload) => {
-      const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeInventoryItem);
-    });
+    return this.readAllPages<ApiInventoryItem>('/inventory?per_page=100').then((items) => items.map(normalizeInventoryItem));
+  }
+
+  /** Publish a complete snapshot only; a later-page failure rejects the read. */
+  private async readAllPages<T>(path: string): Promise<T[]> {
+    const items: T[] = [];
+    for (let page = 1; ; page += 1) {
+      const payload = await this.request<T[] | { items?: T[]; pagination?: { current_page?: number; last_page?: number } }>(
+        this.versionedPath(page === 1 ? path : `${path}&page=${page}`),
+      );
+      if (Array.isArray(payload)) return [...items, ...payload];
+      items.push(...(payload.items ?? []));
+      const pagination = payload.pagination;
+      if (pagination?.last_page === undefined) return items;
+      if (!Number.isInteger(pagination.last_page) || pagination.last_page < 1
+        || pagination.current_page !== page) {
+        throw new ApiClientError('Invalid catalog pagination received from the shop server.');
+      }
+      if (page >= pagination.last_page) return items;
+    }
   }
 
   updateInventory(productId: string, update: InventoryUpdate) {
@@ -541,9 +554,8 @@ function normalizeProduct(product: ApiProduct): Product {
     id: String(product.id),
     barcode: product.barcode,
     name: product.name,
-    // Laravel stores PHP money as integer centavos. Legacy mock-shaped
-    // responses already use pesos and are kept compatible for local tests.
-    price: stock ? apiPrice / 100 : apiPrice,
+    // The money unit does not depend on whether a stock relation is present.
+    price: apiPrice / 100,
     stock: quantity,
     stockStatus: status,
     ...(reorderLevel === undefined ? {} : { reorderLevel }),

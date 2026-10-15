@@ -235,6 +235,20 @@ describe('POS search', () => {
 
     await waitFor(() => expect(listProducts).toHaveBeenCalledWith({ barcode: '4800010000011' }));
   });
+
+  it('labels an offline demo result without a Laravel status as low stock by the default threshold', async () => {
+    const offline = { isConfigured: false } as unknown as ApiClient;
+    const view = render(
+      <PosProvider client={offline} demoCatalogEnabled>
+        <PosScreen />
+      </PosProvider>,
+    );
+
+    fireEvent.changeText(view.getByTestId('pos-search-input'), 'Piattos');
+
+    await waitFor(() => expect(view.getByTestId('search-result')).toBeTruthy());
+    expect(view.getByText('Low stock (8) • ₱20.00')).toBeTruthy();
+  });
 });
 
 describe('POS pre-checkout revalidation', () => {
