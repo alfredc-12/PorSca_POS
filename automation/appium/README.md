@@ -42,14 +42,14 @@ The staging specs in `test/smoke.e2e.ts` cover:
 - barcode scan → cash checkout;
 - insufficient-stock rejection;
 - insufficient-cash rejection;
-- QR Ph creation and provider-verified status refresh through Laravel, including leave-payment (never a cancel) and `paid_unfulfilled` reconciliation without a new payment;
+- QR Ph creation and provider-verified status refresh through Laravel, including leave-payment (never a cancel) and the locked-tender reconciliation for `pending`, `unknown`, and `paid_unfulfilled`, which never offers a new payment;
 - history showing a successful sale; and
-- exactly-once inventory deduction when a payment is retried/duplicated.
+- exactly one history row for a repeated cash confirmation (server-side inventory exactness across a retry/duplicate is covered by the API `Idempotency-Key` contract and the mobile provider test).
 
-Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `paid_unfulfilled` it additionally asserts that no new payment is offered. The test never simulates a provider result in the mobile app.
+Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
 
 Separately record native session restart/restoration, sign-out, expired/revoked-token redirect, and admin-versus-cashier inventory controls in the QA cycle. Fast Jest/RNTL tests cover these boundaries without claiming native secure-storage/device execution.
 
-The last assertion is backed by the API `Idempotency-Key` contract and must compare the inventory delta with the cart quantity. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
+The duplicate-confirmation assertion confirms a single history row; server inventory exactness across a retry/duplicate is backed by the API `Idempotency-Key` contract and the mobile provider test. Capture Appium screenshots/video/logs as cycle evidence; keep large raw files in artifact storage rather than source control.
 
 Backend automation is owned by the API track. Run and link its Postman/Newman collection from `niks0501/PorSca_POS_API`; do not duplicate that collection here. Record its exact collection/API commit in the shared QA cycle record.

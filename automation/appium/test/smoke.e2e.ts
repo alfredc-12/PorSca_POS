@@ -18,14 +18,27 @@ const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000019';
 const cashReceived = process.env.APPIUM_CASH_AMOUNT ?? '400';
 const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);
+const qrStatusMessages = {
+  pending: 'Payment pending…',
+  unknown: 'Payment interrupted',
+  paid: 'Payment confirmed. Stock and history updated.',
+  paid_unfulfilled: 'Administrator required',
+  failed: 'Payment failed. No sale was recorded and stock was not changed.',
+  cancelled: 'Payment was cancelled. No sale was recorded and stock was not changed.',
+  expired: 'Payment expired. Start a new QR Ph payment; stock was not changed.',
+} as const;
 const qrExpectedStatus = process.env.APPIUM_QR_EXPECTED_STATUS ?? 'pending';
+if (!Object.hasOwn(qrStatusMessages, qrExpectedStatus)) {
+  throw new Error(`Unsupported APPIUM_QR_EXPECTED_STATUS: ${qrExpectedStatus}`);
+}
 
 function byId(id: string) {
-  return $(`~${id}`);
+  // React Native testID is an Android resource-id, not a content-description.
+  return $(`android=new UiSelector().resourceId(${JSON.stringify(id)})`);
 }
 
 function byText(value: string) {
-  return $(`android=new UiSelector().textContains("${value}")`);
+  return $(`android=new UiSelector().textContains(${JSON.stringify(value)})`);
 }
 
 async function tap(id: string) {
@@ -41,13 +54,30 @@ async function searchAndSelect(searchTerm: string) {
   await tap('search-result');
 }
 
+async function finishReceipt(method: 'cash' | 'qrph') {
+  await byText('Payment completed').waitForDisplayed();
+  await byText(method === 'cash'
+    ? 'Cash payment and sale are recorded.'
+    : qrStatusMessages.paid).waitForDisplayed();
+  const receipt = byText('Receipt ');
+  await receipt.waitForDisplayed();
+  const receiptId = (await receipt.getText()).match(/Receipt ([^\s]+)/)?.[1];
+  if (!receiptId) throw new Error('The completed payment has no receipt identity.');
+  if (method === 'cash') {
+    await byText('Cash received ₱').waitForDisplayed();
+    await byText('Change to give ₱').waitForDisplayed();
+  }
+  await byText('Done').click();
+  await byId(`transaction-${receiptId}`).waitForDisplayed();
+  return receiptId;
+}
+
 async function cashCheckout(searchTerm: string) {
   await searchAndSelect(searchTerm);
   await tap('proceed-to-payment');
   await byId('cash-received-input').setValue(cashReceived);
   await tap('confirm-cash-payment');
-  await byText('Payment recorded').waitForDisplayed();
-  await byText('Done').click();
+  return finishReceipt('cash');
 }
 
 async function presentBarcodeFixture(barcode: string) {
@@ -60,6 +90,8 @@ async function presentBarcodeFixture(barcode: string) {
   // supplies a barcode fixture/physical label and resumes once it is visible.
   console.info(`Present barcode fixture ${barcode} to the device camera.`);
   await byText('The product is added to the cart as soon as it is recognized.').waitForDisplayed();
+  // Wait for the cart, not just the brief scanner product confirmation.
+  await byId('pos-search-input').waitForDisplayed();
   await byText(productText).waitForDisplayed();
 }
 
@@ -101,15 +133,16 @@ describe('PorSca required cashier smoke flows', () => {
     await tap('proceed-to-payment');
     await byId('cash-received-input').setValue(cashReceived);
     await tap('confirm-cash-payment');
-    await byText('Payment recorded').waitForDisplayed();
+    await finishReceipt('cash');
   });
 
   smoke('rejects insufficient stock', async () => {
     for (let count = 0; count < stockAttempts; count += 1) {
       await searchAndSelect(stockSearch);
-      if (await byText('No more stock is available for this item.').isDisplayed().catch(() => false)) break;
+      if (await byId('cart-limit-notice').isDisplayed().catch(() => false)) break;
     }
-    await byText('No more stock is available for this item.').waitForDisplayed();
+    await byId('cart-limit-notice').waitForDisplayed();
+    await byText('Reduce the quantity before adding more.').waitForDisplayed();
   });
 
   smoke('rejects insufficient cash', async () => {
@@ -117,8 +150,8 @@ describe('PorSca required cashier smoke flows', () => {
     await tap('proceed-to-payment');
     await byId('cash-received-input').setValue('1');
     await tap('confirm-cash-payment');
-    await byText('Insufficient cash').waitForDisplayed();
-    await byText('confirm again').waitForDisplayed();
+    await byText('Check cash tender').waitForDisplayed();
+    await byText('Enter an amount using digits and at most two decimal places, at least ₱').waitForDisplayed();
   });
 
   smoke('starts the QR Ph staging flow through Laravel', async () => {
@@ -126,35 +159,27 @@ describe('PorSca required cashier smoke flows', () => {
     await tap('payment-qrph');
     await tap('proceed-to-payment');
     await tap('start-qrph-payment');
-    await byId('qr-payment-status').waitForDisplayed();
-    await expect(byId('qr-payment-status')).toHaveText(qrExpectedStatus === 'paid'
-      ? 'Payment confirmed by Laravel. Inventory and history refreshed.'
-      : qrExpectedStatus === 'paid_unfulfilled'
-        ? 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.'
-        : qrExpectedStatus === 'failed'
-          ? 'Payment failed. No sale was recorded and stock was not changed.'
-          : qrExpectedStatus === 'cancelled'
-            ? 'Payment was cancelled. No sale was recorded and stock was not changed.'
-            : qrExpectedStatus === 'expired'
-              ? 'Payment expired. Start a new QR Ph payment; stock was not changed.'
-              : 'Payment pending…');
     if (qrExpectedStatus === 'paid') {
-      await byText('Payment recorded').waitForDisplayed();
-      await byText('Done').click();
-      await byText('Completed').waitForDisplayed();
+      // Completed checkout renders a receipt instead of qr-payment-status.
+      await finishReceipt('qrph');
       return;
     }
-    if (qrExpectedStatus === 'paid_unfulfilled') {
-      // Money was received, so no new payment is offered: a retry could
-      // double-charge. Leaving keeps the cart for operator reconciliation.
+    await byId('qr-payment-status').waitForDisplayed();
+    await expect(byId('qr-payment-status')).toHaveText(
+      qrStatusMessages[qrExpectedStatus as keyof typeof qrStatusMessages],
+    );
+    if (['pending', 'unknown', 'paid_unfulfilled'].includes(qrExpectedStatus)) {
+      // Unresolved attempts and paid-but-unfulfilled purchases stay locked:
+      // another tender could double-charge. Leaving does not resolve payment.
       await expect(byId('leave-qr-payment')).toBeDisplayed();
       expect(await byId('retry-qr-payment').isDisplayed().catch(() => false)).toBe(false);
-      return;
+      await expect(byId('checkout-payment-cash')).toBeDisabled();
     }
     // Laravel exposes no cashier cancel action. Leaving never cancels the
     // attempt; the cashier returns to the POS with the cart kept.
     await tap('leave-qr-payment');
     await byId('pos-search-input').waitForDisplayed();
+    await byText(productText).waitForDisplayed();
   });
 
   smoke('shows a successful cash sale in transaction history', async () => {
@@ -174,10 +199,9 @@ describe('PorSca required cashier smoke flows', () => {
     // contract and the mobile provider test.
     await byId('confirm-cash-payment').click();
     await byId('confirm-cash-payment').click().catch(() => undefined);
-    await byText('Payment recorded').waitForDisplayed();
-    await byText('Done').click();
-    const rows = await $$('~transaction-row');
-    expect(rows.length).toBeGreaterThan(0);
+    const receiptId = await finishReceipt('cash');
+    const rows = await $$(`android=new UiSelector().resourceId(${JSON.stringify(`transaction-${receiptId}`)})`);
+    expect(rows.length).toBe(1);
     await byText('Completed').waitForDisplayed();
   });
 });
