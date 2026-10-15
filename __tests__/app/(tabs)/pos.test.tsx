@@ -102,6 +102,23 @@ describe('POS cart consistency', () => {
     expect(view.getByText(/Payment was not confirmed/)).toBeTruthy();
   });
 
+  it('shows accurate subtotal and total without an unsupported discount row', async () => {
+    const view = renderPos();
+
+    expect(view.queryByText(/discount/i)).toBeNull();
+    expect(view.getByText('Subtotal (0 items)')).toBeTruthy();
+    expect(view.getByText('Total')).toBeTruthy();
+    expect(view.getAllByText('₱0.00')).toHaveLength(2);
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    fireEvent.press(view.getByLabelText('Increase Instant Coffee 30g'));
+
+    await waitFor(() => expect(view.getByText('Subtotal (2 items)')).toBeTruthy());
+    // One line amount plus the subtotal and total, all reflecting two units.
+    expect(view.getAllByText('₱18.00')).toHaveLength(3);
+    expect(view.queryByText(/discount/i)).toBeNull();
+  });
+
   it('surfaces the stock limit on the cart "+" instead of a silent no-op', async () => {
     const view = renderPos();
 

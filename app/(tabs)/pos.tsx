@@ -342,7 +342,6 @@ export default function PosScreen() {
 
         <View style={[styles.summaryCard, { padding: responsive.narrow ? 10 : spacing.md, gap: responsive.short ? 8 : 11 }]}>
           <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="calculator-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Subtotal ({totalItems} items)</Text></View><Text style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱{total.toFixed(2)}</Text></View>
-          <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="pricetag-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Discount</Text></View><Text style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱0.00</Text></View>
           <View style={styles.divider} />
           <View style={styles.totalRow}><Text style={[styles.totalLabel, { fontSize: responsive.font(responsive.narrow ? 21 : 23) }]}>Total</Text><Text style={[styles.totalValue, { fontSize: responsive.font(responsive.narrow ? 27 : 30) }]}>₱{total.toFixed(2)}</Text></View>
         </View>
