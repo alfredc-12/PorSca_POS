@@ -142,7 +142,7 @@ describe('CheckoutScreen cash states', () => {
     setContext({ authorityCheckout: { amountCentavos: 5000, items: [], attempts: [] } });
     const view = render(<CheckoutScreen />);
     fireEvent.changeText(view.getByTestId('cash-received-input'), '35');
-    expect(view.getByTestId('cash-tender-feedback')).toHaveTextContent('Short by ₱15.00');
+    expect(view.getByTestId('cash-tender-feedback')).toHaveTextContent('Short by ₱15.00. Add cash before confirming.');
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
     expect(view.queryByLabelText('Cash 50')).toBeNull();
     fireEvent.press(view.getByLabelText('Cash Exact'));
@@ -343,8 +343,9 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('checkout-payment-cash')).toHaveProp('accessibilityState', expect.objectContaining({ disabled: false }));
     expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
-    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
     fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
     await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
     expect(completeCashSale).toHaveBeenCalledWith('100');
   });
@@ -358,6 +359,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
     expect(view.queryByTestId('checkout-tender-lock-reason')).toBeNull();
     fireEvent.press(view.getByTestId('checkout-payment-cash'));
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
     expect(view.getByTestId('confirm-cash-payment')).toBeEnabled();
   });
 
