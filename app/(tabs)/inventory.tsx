@@ -11,6 +11,7 @@ import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 import { BarcodeScanner } from '@/src/components/BarcodeScanner';
 import { ProductEditorModal } from '@/src/components/ProductEditorModal';
+import { stockStatus } from '@/src/utils/stockStatus';
 
 export default function InventoryScreen() {
   const { inventoryProducts, inventoryState, inventoryError, inventoryUsingFallback, refreshInventory } = usePos();
@@ -30,9 +31,9 @@ export default function InventoryScreen() {
     );
   }, [inventoryProducts, query]);
 
-  const lowStock = inventoryProducts.filter((product) => product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10)).length;
-  const outOfStock = inventoryProducts.filter((product) => product.stockStatus === 'out_of_stock' || product.stock === 0).length;
-  const healthy = inventoryProducts.filter((product) => (product.stockStatus ?? (product.stock > 10 ? 'in_stock' : 'low_stock')) === 'in_stock').length;
+  const lowStock = inventoryProducts.filter((product) => stockStatus(product) === 'low_stock').length;
+  const outOfStock = inventoryProducts.filter((product) => stockStatus(product) === 'out_of_stock').length;
+  const healthy = inventoryProducts.filter((product) => stockStatus(product) === 'in_stock').length;
 
   useEffect(() => {
     void refreshInventory();
@@ -183,8 +184,8 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
 
 function ProductRow({ product, first, editable, onEdit }: { product: Product; first: boolean; editable: boolean; onEdit: () => void }) {
   const responsive = useResponsive();
-  const low = product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10);
-  const out = product.stockStatus === 'out_of_stock' || product.stock === 0;
+  const low = stockStatus(product) === 'low_stock';
+  const out = stockStatus(product) === 'out_of_stock';
   const badgeBackground = out ? colors.dangerSoft : low ? colors.warningSoft : colors.primarySoft;
   const badgeColor = out ? colors.danger : low ? colors.warning : colors.primary;
   const badgeText = out ? 'Out of Stock' : low ? 'Low Stock' : 'In Stock';

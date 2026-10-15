@@ -83,7 +83,7 @@ describe('ProductFormScreen', () => {
   it('creates a product through Laravel and leaves only after the authoritative refresh succeeds', async () => {
     const fetchImpl = jest.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith('/products') && options?.method === 'POST') return response({ data: authoritativeProduct }, true, 201);
-      if (url.endsWith('/inventory')) return response(refreshResponses());
+      if (url.includes('/inventory?')) return response(refreshResponses());
       if (url.includes('/products?per_page=100')) return response({ data: { items: [authoritativeProduct] } });
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -116,7 +116,7 @@ describe('ProductFormScreen', () => {
     };
     const fetchImpl = jest.fn(async (url: string, options?: RequestInit) => {
       if (url.endsWith('/products/prd-001') && options?.method === 'PATCH') return response({ data: updated });
-      if (url.endsWith('/inventory')) return response({ data: { items: [{ product_id: updated.id, barcode: updated.barcode, product_name: updated.name, quantity: 60, reorder_level: 10, status: 'in_stock' }] } });
+      if (url.includes('/inventory?')) return response({ data: { items: [{ product_id: updated.id, barcode: updated.barcode, product_name: updated.name, quantity: 60, reorder_level: 10, status: 'in_stock' }] } });
       if (url.includes('/products?per_page=100')) return response({ data: { items: [updated] } });
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -174,7 +174,7 @@ describe('ProductFormScreen', () => {
     mockRouteParams = { id: 'prd-001' };
     const fetchImpl = jest.fn(async (url: string, options?: RequestInit) => {
       if (options?.method === 'PATCH') return response({ data: authoritativeProduct });
-      if (url.endsWith('/inventory')) return response(refreshResponses());
+      if (url.includes('/inventory?')) return response(refreshResponses());
       return response({ data: { items: [authoritativeProduct] } });
     });
     const screen = renderForm(new ApiClient({ baseUrl: 'https://staging-api.example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch }));

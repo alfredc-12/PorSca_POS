@@ -56,7 +56,7 @@ function setup(options: { missing?: boolean; unavailable?: boolean; refreshFails
       return response({ data: product });
     }
     if (saved && options.refreshFails) throw new Error('refresh offline');
-    if (url.endsWith('/inventory')) return response({ data: { items: catalog.map((p) => ({
+    if (url.includes('/inventory?')) return response({ data: { items: catalog.map((p) => ({
       product_id: p.id, barcode: p.barcode, product_name: p.name,
       quantity: p.stock.quantity, reorder_level: 2, status: 'in_stock',
     })) } });
