@@ -6,6 +6,10 @@ Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_PO
 
 The mobile bundle never contains PayMongo secrets. QR creation, payment status checks, webhook verification, sale persistence, idempotency, and final inventory deduction belong to Laravel. The former embedded Express scaffold is retired.
 
+## Documentation traceability
+
+The approved deployment is Laravel on AWS Lightsail, with EAS distributing the phone app. PayMongo is integrated in Laravel, not a separate PorSca payment repository. Tailscale Funnel is a break-glass fallback only. See [DEPLOYMENT.md](DEPLOYMENT.md) for the reconciliation of report sections **6.2**, **7**, and **Test Plan 2.1**, deployment ownership, and required evidence. The configured staging hostname is a placeholder until operator setup and live verification are recorded. [Documentation gap issue](https://github.com/alfredc-12/PorSca_POS/issues/62) tracks teammate reconciliation of the external report and test plan.
+
 ## Mobile app
 
 Expo Router separates route screens from shared state, types, data, rules, and visual tokens:
