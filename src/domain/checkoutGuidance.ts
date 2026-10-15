@@ -20,7 +20,7 @@ export function checkoutGuidance(input: {
 }): CheckoutGuidance | undefined {
   const { authority, machine, progress = {}, operation, receipt } = input;
   const active = machine?.attempts[machine.attempts.length - 1];
-  const qr = active ? active.method === 'qr' : (progress.uncertainTender ?? input.method) === 'qrph';
+  const qr = progress.uncertainTender ? progress.uncertainTender === 'qrph' : active ? active.method === 'qr' : input.method === 'qrph';
   const make = (category: CheckoutGuidance['category'], body: string, safety: string, action: GuidanceAction, label: string): CheckoutGuidance => ({
     category, headline: category === 'administrator' ? 'Administrator required' : `Payment ${category}`,
     body, safety, action, label, locked: true, admin: category === 'administrator',
@@ -43,7 +43,10 @@ export function checkoutGuidance(input: {
   if (active?.finalEvidence?.outcome === 'paid') return make('pending', 'Payment is received. Still recording the sale.', safety, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
   if (progress.recoveryFailure === 'interrupted' || input.verificationFailed || active?.payment === 'unknown' || progress.uncertainTender) {
     if (!active && !progress.uncertainTender && !input.verificationFailed) return make('interrupted', 'We could not confirm this purchase. Keep it open and try recovery again.', 'Do not take another payment or hand over the goods.', 'recover', 'Recover device purchase');
-    if (!qr) return make('interrupted', 'The cash sale may already be recorded. We could not confirm the result.', 'Keep the cash received. Do not take another payment or hand over the goods.', progress.cashInput && !active ? 'cash-retry' : 'recover', progress.cashInput && !active ? 'Retry saving cash payment' : 'Recover device purchase');
+    if (!qr) {
+      const retryCash = progress.cashInput && !machine?.attempts.some(attempt => attempt.method === 'cash');
+      return make('interrupted', 'The cash sale may already be recorded. We could not confirm the result.', 'Keep the cash received. Do not take another payment or hand over the goods.', retryCash ? 'cash-retry' : 'recover', retryCash ? 'Retry saving cash payment' : 'Recover device purchase');
+    }
     return make('interrupted', 'We could not confirm the payment status. The customer may still be charged.', 'Do not take another payment or hand over the goods.', active ? 'check' : 'start', active ? 'Check Payment Status' : 'Retry QR Ph Payment');
   }
   if (active?.payment === 'pending') return make('pending', qr ? 'We are still waiting for the payment.' : 'We are still waiting for this cash sale.', qr ? safety : `Keep the cash received. ${safety}`, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');

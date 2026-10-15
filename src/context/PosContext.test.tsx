@@ -140,7 +140,7 @@ describe('POS durable checkout integration', () => {
   });
   it('keeps cash receipt truth and its handle when retirement storage fails, without another cash post', async () => {
     const { wrapper, client, store, handle } = fixture();
-    const original = store.save; store.save = async value => { if (value === null) throw new Error('storage unavailable'); await original(value); };
+    const original = store.save; store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9', change: 75 }); });
     expect(result.current.checkoutCompletion?.sale.id).toBe('9'); expect(result.current.checkoutMachine?.state).toBe('completed'); expect(handle()?.id).toBe('durable-uuid');
@@ -159,7 +159,7 @@ describe('POS durable checkout integration', () => {
     expect(handle()?.id).toBe('durable-uuid');
     client.recoverCheckout.mockResolvedValue({ ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } });
     const save = store.save.bind(store);
-    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await save(value, expectedKey); };
 
     await act(async () => { await result.current.recoverCheckout(); });
     await waitFor(() => expect(result.current.salesState).toBe('ready'));
@@ -373,17 +373,18 @@ describe('POS durable checkout integration', () => {
     await add(first.result);
     await act(async () => { await first.result.current.startQrPhPayment(); });
     first.unmount();
+    const creationKey = handle()!.key;
     const persist = store.save.bind(store);
     let finishRetire!: () => void;
-    store.save = jest.fn(async value => {
+    store.save = jest.fn(async (value: CheckoutHandle | null, expectedKey?: string) => {
       if (value === null) await new Promise<void>(resolve => { finishRetire = resolve; });
-      await persist(value);
+      await persist(value, expectedKey);
     });
     client.recoverCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
     const second = renderHook(() => usePos(), { wrapper });
     let recovery!: Promise<void>;
     act(() => { recovery = second.result.current.openPosCheckouts(); });
-    await waitFor(() => expect(store.save).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(store.save).toHaveBeenCalledWith(null, creationKey));
     await add(second.result);
     await add(second.result);
     await act(async () => {
@@ -462,7 +463,7 @@ describe('POS durable checkout integration', () => {
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     await act(async () => { await result.current.startQrPhPayment(); });
     const save = store.save.bind(store);
-    store.save = async value => { if (value === null) throw new Error('storage unavailable'); await save(value); };
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await save(value, expectedKey); };
     client.recoverCheckout.mockResolvedValue(paid);
 
     await act(async () => { await expect(result.current.confirmQrPhPayment({ id: '7', status: 'paid', amount: 25 })).rejects.toThrow('storage unavailable'); });

@@ -65,10 +65,11 @@ export class DurableCheckout {
     if (this.corruptStorage && this.corruptWithoutChoice) return { recoveryFailure: 'identity' };
     const result: CheckoutProgress = { recoveryFailure: this.recoveryFailure };
     if (this.unresolvedCashRefusal && !this.current?.sale && !this.current?.attempts.some(a => a.method === 'cash')) return { ...result, uncertainTender: 'cash' };
-    if (!this.handle?.tender || this.current?.sale || this.current?.attempts.length) return result;
+    if (!this.handle?.tender || this.current?.sale) return result;
     try {
       const [method, tender] = JSON.parse(this.handle.tender.signature);
       if ((method !== 'cash' && method !== 'qrph') || !Number.isSafeInteger(tender.revision) || !Number.isSafeInteger(tender.acceptedAmountCentavos) || (method === 'cash' && !Number.isSafeInteger(tender.cashReceivedCentavos))) throw new Error();
+      if (this.current?.attempts.some(attempt => attempt.method === method)) return result;
       return { ...result, uncertainTender: method, ...(method === 'cash' ? { cashInput: (tender.cashReceivedCentavos / 100).toFixed(2) } : {}) };
     } catch { return { recoveryFailure: 'identity' }; }
   }
@@ -111,6 +112,14 @@ export class DurableCheckout {
     }
   }
   private async persist() { this.assertActive(); await this.storage.save(this.handle ?? null); }
+  private releaseResolvedQrTender() {
+    const latestAttempt = this.machine?.attempts[this.machine.attempts.length - 1];
+    if (!this.handle?.tender || !canAcceptCheckoutTender(this.machine) || latestAttempt?.method !== 'qr' || latestAttempt.payment !== 'non-payable'
+      || JSON.parse(this.handle.tender.signature)[0] !== 'qrph') return false;
+    this.handle.tender = undefined;
+    return true;
+  }
+
   private async createCheckout(items: { productId: number; quantity: number }[], creationKey: string) {
     try { return await this.client.createCheckout(items, creationKey); }
     catch (error) {
@@ -220,10 +229,7 @@ export class DurableCheckout {
     const localAmount = lines.reduce((sum, l) => sum + Math.round(l.product.price * 100) * l.quantity, 0);
     const changedSnapshot = checkout.items.some(item => !lines.some(line => Number(line.product.id) === item.productId && line.quantity === item.quantity && Math.round(line.product.price * 100) === item.unitPriceCentavos));
     if (checkout.amountCentavos !== localAmount || changedSnapshot) throw new ApiClientError('Review the authoritative quote before confirming payment.', 409, 'revalidation_required');
-    const latestAttempt = this.machine?.attempts[this.machine.attempts.length - 1];
-    if (method === 'qrph' && forceNew && this.machine?.state === 'ready-for-new-attempt' && latestAttempt?.method === 'qr' && latestAttempt.payment === 'non-payable') {
-      this.handle!.tender = undefined;
-    }
+    if (method === 'cash' || forceNew) this.releaseResolvedQrTender();
     const tender: CheckoutTender = { revision: checkout.revision, acceptedAmountCentavos: checkout.amountCentavos };
     if (method === 'cash') {
       const cash = checkoutCashTender(cashInput ?? '', checkout.amountCentavos);
@@ -269,9 +275,7 @@ export class DurableCheckout {
       }
       throw error;
     }
-    if (this.machine?.state === 'ready-for-new-attempt' && canAcceptCheckoutTender(this.machine) && this.current.attempts.length > 0 && this.current.attempts.every(a => a.status === 'non_payable')) {
-      this.handle.tender = undefined; await this.persist();
-    }
+    if (this.releaseResolvedQrTender()) await this.persist();
     return this.current;
   }
   async revalidate() {
@@ -279,9 +283,7 @@ export class DurableCheckout {
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before reviewing the quote.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to revalidate.');
     this.current = await this.client.revalidateCheckout(this.current.id);
-    if (canAcceptCheckoutTender(this.machine)) {
-      this.handle!.tender = undefined; await this.persist();
-    }
+    if (this.releaseResolvedQrTender()) await this.persist();
     return this.current;
   }
   async abandon(reason: string) {
