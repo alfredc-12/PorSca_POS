@@ -35,6 +35,7 @@ describe('describeFailure', () => {
   });
 
   it('maps each cash-sale recovery class to one action', () => {
+    expect(described('cash-sale', { status: 409, code: 'revalidation_required' })).toMatchObject({ title: 'Review the price before payment', action: 'fix-fields', actionLabel: 'Check the current price' });
     expect(described('cash-sale', { code: 'insufficient_stock' })).toMatchObject({ title: 'Stock changed', actionLabel: 'Refresh and remove', action: 'retry' });
     expect(described('cash-sale', { code: 'insufficient_cash' })).toMatchObject({ title: 'Not enough cash', actionLabel: 'Confirm again' });
     expect(described('cash-sale', { code: 'cash_attempt_unresolved' })).toMatchObject({ title: 'Check the earlier attempt first', action: 'check-transactions' });

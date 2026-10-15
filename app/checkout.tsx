@@ -98,7 +98,8 @@ export default function CheckoutScreen() {
       await action();
       const retained = unresolvedQrPayment();
       if (retained) await showQrPayment(retained);
-      else { setQrPayment(undefined); setQrStatus('idle'); }
+      else { setQrPayment(undefined); setQrStatus('idle'); setQrError(undefined); }
+      setCashError(undefined);
     } catch (error) {
       setQrError(describeQrVerification(error));
       setRecoveryError('We could not recover this purchase. Keep it open and try again before taking payment.');
@@ -128,8 +129,13 @@ export default function CheckoutScreen() {
     ? 'This purchase is locked. Do not take another payment.'
     : 'Do not take another payment while this payment is waiting.';
 
-  const itemCount = useMemo(() => cart.reduce((sum, line) => sum + line.quantity, 0), [cart]);
-  const dueItemCount = authorityCheckout?.items.reduce((sum, item) => sum + item.quantity, 0) ?? itemCount;
+  const checkoutItems = authorityCheckout?.items;
+  const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
+    product: { id: String(item.productId), name: item.name, price: item.unitPriceCentavos / 100, barcode: '', stock: 0 },
+    quantity: item.quantity,
+  })), [checkoutItems]);
+  const displayedCart = authoritativeCart ?? cart;
+  const dueItemCount = displayedCart.reduce((sum, line) => sum + line.quantity, 0);
   const presets = useMemo(() => cashTenderPresets(dueAmountCentavos), [dueAmountCentavos]);
 
   // A refusal because the provider still holds an earlier attempt is not a dead
@@ -184,6 +190,7 @@ export default function CheckoutScreen() {
     } catch (error) {
       surfaceRetainedQrAttempt(error);
       const apiError = error instanceof ApiClientError ? error : undefined;
+      if (apiError?.code === 'revalidation_required') setShowSaleHelp(true);
       const failure = saleFailureCopy({
         status: apiError?.status,
         code: apiError?.code,
@@ -199,7 +206,7 @@ export default function CheckoutScreen() {
     }
   };
 
-  const showQrPayment = useCallback(async (payment: Payment, isCurrent: () => boolean = () => true) => {
+  const showQrPayment = useCallback(async (payment: Payment) => {
     setMode('qrph');
     setQrPayment(payment);
     setQrStatus(payment.status === 'paid' ? 'verification' : payment.status);
@@ -216,7 +223,7 @@ export default function CheckoutScreen() {
       try {
         await confirmQrPhPayment(payment);
         setQrStatus('paid_unfulfilled');
-        if (handledPaidPayment.current !== payment.id) {
+        if (visibleRef.current && handledPaidPayment.current !== payment.id) {
           handledPaidPayment.current = payment.id;
           Alert.alert(failure.title, alertBody(failure));
         }
@@ -233,12 +240,10 @@ export default function CheckoutScreen() {
     try {
       const sale = await confirmQrPhPayment(payment);
       if (!sale) throw new Error('No completed receipt was returned.');
-      if (!isCurrent()) return;
       setReceiptRefresh('ready');
       setQrStatus('paid');
       alertCompletion(sale);
     } catch (error) {
-      if (!isCurrent()) return;
       setReceiptRefresh('failed');
       setQrStatus('verification');
       setQrError(describeQrVerification(error));
@@ -265,6 +270,7 @@ export default function CheckoutScreen() {
       await showQrPayment(payment);
     } catch (error) {
       if (surfaceRetainedQrAttempt(error)) return;
+      if (error instanceof ApiClientError && error.code === 'revalidation_required') setShowSaleHelp(true);
       const startFailure = qrStartFailure(error);
       setQrStatus(startFailure.status);
       setQrError(startFailure.failure);
@@ -275,16 +281,16 @@ export default function CheckoutScreen() {
     }
   }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired]);
 
-  const performQrCheck = useCallback(async (isCurrent: () => boolean) => {
+  const performQrCheck = useCallback(async () => {
     if (!qrPayment || operationRef.current || administratorRequired) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     try {
       const payment = await refreshQrPhPayment(qrPayment.id);
-      if (isCurrent()) await showQrPayment(payment, isCurrent);
+      await showQrPayment(payment);
     } catch (error) {
-      if (isCurrent()) { setQrStatus('verification'); setQrError(describeQrVerification(error)); }
+      setQrStatus('verification'); setQrError(describeQrVerification(error));
     } finally {
       operationRef.current = false;
       qrBusyRef.current = false;
@@ -321,6 +327,7 @@ export default function CheckoutScreen() {
       <View testID="checkout-completed-receipt" style={styles.paymentCard}>
         <View style={styles.headingRow}><Ionicons name="checkmark-circle" size={26} color={colors.primary} /><Text style={styles.sectionTitle}>Payment completed</Text></View>
         {receiptText(sale).split('\n').map(line => <Text key={line}>{line}</Text>)}
+        <AppButton label="Done" onPress={done} />
       </View>
     </Screen>;
   }
@@ -368,12 +375,13 @@ export default function CheckoutScreen() {
           <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
           <Text>{guidance.body}</Text>
           <Text>{guidance.safety}</Text>
-          {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : guidance.action !== 'done' ? <AppButton
+          {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : <AppButton
             testID={guidance.action === 'check' ? qrStatus === 'pending' ? 'refresh-qr-payment' : 'retry-qr-verification' : guidance.action === 'start' ? 'start-qrph-payment' : guidance.action === 'refresh' ? 'retry-qr-verification' : undefined}
-            label={guidance.label} disabled={guidance.action === 'wait' || operationBusy}
-            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover') void recoveryAction(() => recoverCheckout()); }} /> : null}
+            label={guidance.action === 'done' ? 'Finish this sale' : guidance.label} disabled={guidance.action === 'wait' || operationBusy}
+            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover' || guidance.action === 'done') void recoveryAction(() => recoverCheckout()); }} />}
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
+        {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>
@@ -384,7 +392,7 @@ export default function CheckoutScreen() {
         </View>
 
         <View style={styles.orderCard}>
-          <CheckoutOrderSummary cart={cart} />
+          <CheckoutOrderSummary cart={displayedCart} />
         </View>
 
         {guidance?.category === 'interrupted' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
@@ -400,7 +408,6 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
             <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
             <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
-            {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           </> : null}
         </View> : null}
 
@@ -558,21 +565,21 @@ function describeQrVerification(error: unknown): DescribedFailure {
  */
 function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
+  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required') {
+    return {
+      status: 'idle',
+      failure: describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'cash-sale' },
+      ),
+    };
+  }
   if (apiError && isDefinitiveQrRejection(apiError)) {
     return {
       status: 'idle',
       failure: describeAndRecordFailure(
         { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
         { screen: 'qr-payment' },
-      ),
-    };
-  }
-  if (apiError?.code === 'cash_attempt_unresolved') {
-    return {
-      status: 'idle',
-      failure: describeAndRecordFailure(
-        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
-        { screen: 'cash-sale' },
       ),
     };
   }

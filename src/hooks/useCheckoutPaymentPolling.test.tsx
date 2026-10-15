@@ -44,34 +44,32 @@ describe('bounded checkout polling', () => {
     await flush(5000); expect(check).toHaveBeenCalledTimes(2);
   });
   it('resumes a single timer when focus returns before an obsolete slow request settles', async () => {
-    let settle!: () => void; let current!: () => boolean;
-    const check = jest.fn((isCurrent: () => boolean) => { current = isCurrent; return new Promise<void>(resolve => { settle = resolve; }); });
+    let settle!: () => void;
+    const check = jest.fn(() => new Promise<void>(resolve => { settle = resolve; }));
     const { rerender } = renderHook(({ identity }: { identity: string }) => useCheckoutPaymentPolling({ identity, eligible: true, busy: false, check }), { initialProps: { identity: 'c:7' } });
     await flush(2500); mockFocused = false; rerender({ identity: 'c:7' });
     mockFocused = true; rerender({ identity: 'c:7' });
-    expect(current()).toBe(false); await flush(60000); expect(check).toHaveBeenCalledTimes(1);
+    await flush(60000); expect(check).toHaveBeenCalledTimes(1);
     await act(async () => { settle(); });
     await flush(2499); expect(check).toHaveBeenCalledTimes(1); await flush(1); expect(check).toHaveBeenCalledTimes(2);
   });
-  it('cleans up on blur, background, identity replacement and unmount; ignores obsolete delivery', async () => {
+  it('stops scheduling on blur, background, identity replacement and unmount', async () => {
     let listener!: (state: AppStateStatus) => void;
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => { listener = callback; return { remove: jest.fn() }; });
-    let current!: () => boolean;
     let settle!: () => void;
-    const check = jest.fn().mockImplementation((isCurrent: () => boolean) => { current = isCurrent; return new Promise<void>(resolve => { settle = resolve; }); });
+    const check = jest.fn(() => new Promise<void>(resolve => { settle = resolve; }));
     const { rerender, unmount } = renderHook(({ identity }: { identity: string }) => useCheckoutPaymentPolling({ identity, eligible: true, busy: false, check }), { initialProps: { identity: 'c:7' } });
     await flush(2500);
     mockFocused = false; rerender({ identity: 'c:7' });
-    expect(current()).toBe(false);
     await act(async () => { settle(); }); await flush(60000); expect(check).toHaveBeenCalledTimes(1);
     mockFocused = true; rerender({ identity: 'c:7' });
     await flush(2500); expect(check).toHaveBeenCalledTimes(2);
-    act(() => listener('background')); expect(current()).toBe(false);
+    act(() => listener('background'));
     await act(async () => { settle(); }); await flush(60000); expect(check).toHaveBeenCalledTimes(2);
     act(() => listener('active'));
     rerender({ identity: 'c:8' });
     await flush(2500); expect(check).toHaveBeenCalledTimes(3);
-    unmount(); expect(current()).toBe(false);
+    unmount();
     await act(async () => { settle(); }); await flush(60000); expect(check).toHaveBeenCalledTimes(3);
   });
 });

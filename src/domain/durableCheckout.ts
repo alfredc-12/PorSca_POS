@@ -88,7 +88,7 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && isDefinitiveQrRejection(error) ? undefined : 'interrupted';
+        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
       }
       throw error;
     } finally { this.busy = false; }
