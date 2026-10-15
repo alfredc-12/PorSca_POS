@@ -21,6 +21,8 @@ import { Product } from '@/src/types';
  * two separate defences (see `handleBarcode`).
  */
 export const SAME_BARCODE_COOLDOWN_MS = 1200;
+/** More than two web decoder polls (300 ms); native cadence needs device validation. */
+export const SAME_SYMBOL_RELEASE_MS = 700;
 
 export type BarcodeScanKind =
   | 'found'
@@ -60,6 +62,8 @@ export type UseBarcodeScanOptions = {
   cooldownMs?: number;
   /** Injectable clock so the cooldown is testable. */
   now?: () => number;
+  /** Keep the session armed after successful results. */
+  stayArmedAfterSuccess?: boolean;
 };
 
 export type UseBarcodeScan = {
@@ -80,6 +84,7 @@ export function useBarcodeScan({
   cameraReady = true,
   cooldownMs = SAME_BARCODE_COOLDOWN_MS,
   now = Date.now,
+  stayArmedAfterSuccess = false,
 }: UseBarcodeScanOptions): UseBarcodeScan {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<BarcodeScanOutcome>();
@@ -103,6 +108,7 @@ export function useBarcodeScan({
    */
   const lockedRef = useRef(false);
   const lastScanRef = useRef<{ barcode: string; at: number } | undefined>(undefined);
+  const heldRef = useRef<{ barcode: string; lastSeenAt: number } | undefined>(undefined);
   // Keep the latest resolver without restarting the session on every re-render;
   // the POS resolver changes identity whenever the cart changes.
   const resolveRef = useRef(resolve);
@@ -117,6 +123,7 @@ export function useBarcodeScan({
   const rearm = useCallback(() => {
     generation.current += 1;
     lockedRef.current = false;
+    heldRef.current = undefined;
     setOutcome(undefined);
     setBusy(false);
   }, []);
@@ -124,9 +131,17 @@ export function useBarcodeScan({
   const handleBarcode = useCallback((data: string) => {
     if (!active.current) return;
     if (!cameraReadyRef.current) return;
-    if (lockedRef.current) return;
 
     const barcode = data.trim();
+    const held = heldRef.current;
+    if (held) {
+      if (barcode === held.barcode && now() - held.lastSeenAt < SAME_SYMBOL_RELEASE_MS) {
+        held.lastSeenAt = now();
+        return;
+      }
+      heldRef.current = undefined;
+    }
+    if (lockedRef.current) return;
     const last = lastScanRef.current;
     if (last && last.barcode === barcode && now() - last.at < cooldownMs) return;
 
@@ -145,12 +160,21 @@ export function useBarcodeScan({
     const requestGeneration = generation.current;
     const isCurrent = () => active.current && requestGeneration === generation.current;
     void resolveRef.current(shape.digits)
-      .then((result) => { if (isCurrent()) setOutcome(toOutcome(shape, result)); })
+      .then((result) => {
+        if (!isCurrent()) return;
+        const resolved = toOutcome(shape, result);
+        setOutcome(resolved);
+        if (stayArmedAfterSuccess && result.status === 'found' && result.product) {
+          heldRef.current = { barcode, lastSeenAt: now() };
+          lockedRef.current = false;
+        }
+      })
       .catch(() => { if (isCurrent()) setOutcome(errorOutcome(shape.digits)); })
       .finally(() => { if (isCurrent()) setBusy(false); });
   }, [cooldownMs, now]);
 
-  return { busy, outcome, scanning: cameraReady && !busy && !outcome, handleBarcode, rearm };
+  const successfulAdd = stayArmedAfterSuccess && outcome?.kind === 'found';
+  return { busy, outcome, scanning: cameraReady && !busy && (!outcome || successfulAdd), handleBarcode, rearm };
 }
 
 const INVALID_MESSAGES: Record<Extract<BarcodeShape, { ok: false }>['reason'], string> = {

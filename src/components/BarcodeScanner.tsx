@@ -36,7 +36,7 @@ export function BarcodeScanner({ inventoryMode = false, onClose = closeScannerRo
   const delivered = useRef(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
   const resolve = inventoryMode ? lookupProductByBarcode : addByBarcode;
-  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve, cameraReady: cameraReady && !cameraSettingsOpen });
+  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve, cameraReady: cameraReady && !cameraSettingsOpen, stayArmedAfterSuccess: !inventoryMode });
   const changeCameraSettings = (settings: TemporaryCameraSettings) => {
     if (busy) return;
     if (settings.deviceId !== cameraSettings.deviceId) {
@@ -232,7 +232,7 @@ function ScanOutcomeCard({
         )}
       </View>
 
-      {added ? <Text style={styles.resultHint}>Returning to the cart…</Text> : null}
+      {added ? <Text style={styles.resultHint}>Keep scanning, or tap Done</Text> : null}
     </View>
   );
 }

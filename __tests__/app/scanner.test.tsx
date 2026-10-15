@@ -183,8 +183,8 @@ describe('ScannerScreen', () => {
     expect(scanner.cart()).toBe('lines:1 qty:1 total:25');
     expect(scanner.getByTestId('scanner-outcome-message')).toHaveTextContent('Coca-Cola 500mL added to cart.');
     expect(scanner.getByText(/1 in this sale/)).toBeTruthy();
-    // The resolved state disarms the camera callback: a failing scan cannot refire itself.
-    expect(scanner.isArmed()).toBe(false);
+    // POS success keeps the callback armed for a distinct next item.
+    expect(scanner.isArmed()).toBe(true);
   });
 
   it('produces exactly one cart line from a five-second exposure to one symbol', async () => {
