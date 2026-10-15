@@ -38,6 +38,13 @@ describe('cashier guidance from trusted truth', () => {
     const oldQr = { ...pending, state: 'ready-for-new-attempt' as const, attempts: [{ ...pending.attempts[0], payment: 'non-payable' as const, finalEvidence: { outcome: 'non-payable' as const, reference: 'verified' } }] };
     expect(checkoutGuidance({ machine: oldQr, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ category: 'interrupted', action: 'cash-retry', label: 'Retry saving cash payment', locked: true });
   });
+  it('offers exact QR replay while historical QR evidence cannot identify the outstanding submission', () => {
+    const firstFailed = { ...pending, state: 'ready-for-new-attempt' as const, attempts: [{ ...pending.attempts[0], payment: 'non-payable' as const, finalEvidence: { outcome: 'non-payable' as const, reference: 'verified' } }] };
+    for (const machine of [firstFailed, pending, completed]) {
+      expect(checkoutGuidance({ machine, authority: machine === completed ? authority : undefined, progress: { uncertainTender: 'qrph' } })).toMatchObject({ category: 'interrupted', action: 'start', label: 'Retry QR Ph Payment', locked: true });
+    }
+    expect(checkoutGuidance({ machine: firstFailed, progress: { uncertainTender: 'qrph' }, operation: 'qr-create' })).toMatchObject({ category: 'pending', action: 'wait' });
+  });
   it('uses recovery for stored cash pending and exact QR retry for no-id uncertainty', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] } })).toMatchObject({ body: 'We are still waiting for this cash sale.', action: 'recover' });
     expect(checkoutGuidance({ machine: base, progress: { uncertainTender: 'qrph' }, verificationFailed: true })).toMatchObject({ action: 'start' });

@@ -32,6 +32,9 @@ export function checkoutGuidance(input: {
   if (progress.recoveryFailure === 'identity') return admin('This phone cannot recover the payment record safely. The result is not confirmed.');
   if (input.configured === false || progress.recoveryFailure === 'permission') return admin('This phone needs shop setup or permission before it can record a payment.', true);
   if ((machine?.state === 'completed' || authority?.state === 'completed') && (!authority?.sale || String(authority.sale.id) !== machine?.saleId)) return admin('Conflicting payment records found. This purchase is locked.');
+  if (progress.uncertainTender === 'qrph') return operation === 'qr-create'
+    ? make('pending', 'Recording this payment. Please wait.', 'Do not submit another payment.', 'wait', 'Creating QR Ph Payment…')
+    : make('interrupted', 'We could not confirm the payment status. The customer may still be charged.', 'Do not take another payment or hand over the goods.', 'start', 'Retry QR Ph Payment');
   const sale = machine?.state === 'completed' && authority?.sale && String(authority.sale.id) === machine.saleId;
   if (sale) {
     if (authority.sale!.method === 'cash' || receipt === 'ready') return make('completed', authority.sale!.method === 'cash' ? 'Cash payment and sale are recorded.' : 'Payment confirmed. Stock and history updated.', '', 'done', 'Done');

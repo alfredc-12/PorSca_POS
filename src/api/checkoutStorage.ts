@@ -9,6 +9,9 @@ function isCheckoutHandle(value: unknown): value is CheckoutHandle {
   if (typeof handle.key !== 'string' || !handle.key || typeof handle.signature !== 'string') return false;
   if (handle.id !== undefined && (typeof handle.id !== 'string' || !handle.id)) return false;
   if (handle.tender !== undefined && (!handle.tender || typeof handle.tender.key !== 'string' || !handle.tender.key || typeof handle.tender.signature !== 'string')) return false;
+  if (handle.tender?.attemptId !== undefined && (!Number.isSafeInteger(handle.tender.attemptId) || handle.tender.attemptId <= 0)) return false;
+  if (handle.tender?.previousAttemptIds !== undefined && (!Array.isArray(handle.tender.previousAttemptIds) || handle.tender.previousAttemptIds.some(id => !Number.isSafeInteger(id) || id <= 0)
+    || new Set(handle.tender.previousAttemptIds).size !== handle.tender.previousAttemptIds.length || (handle.tender.attemptId !== undefined && handle.tender.previousAttemptIds.includes(handle.tender.attemptId)))) return false;
   try {
     const items: unknown = JSON.parse(handle.signature);
     return Array.isArray(items) && items.every(item => Array.isArray(item) && item.length === 2 && Number.isSafeInteger(item[0]) && item[0] > 0 && Number.isSafeInteger(item[1]) && item[1] > 0);

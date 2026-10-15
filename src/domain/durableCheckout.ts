@@ -9,7 +9,7 @@ import { CheckoutProgress } from './checkoutGuidance';
 export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
 
-export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string } };
+export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number } };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
 export class CheckoutStorageCorruptionError extends Error {}
 const key = () => `mobile-v3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -65,11 +65,11 @@ export class DurableCheckout {
     if (this.corruptStorage && this.corruptWithoutChoice) return { recoveryFailure: 'identity' };
     const result: CheckoutProgress = { recoveryFailure: this.recoveryFailure };
     if (this.unresolvedCashRefusal && !this.current?.sale && !this.current?.attempts.some(a => a.method === 'cash')) return { ...result, uncertainTender: 'cash' };
-    if (!this.handle?.tender || this.current?.sale) return result;
+    if (!this.handle?.tender) return result;
     try {
       const [method, tender] = JSON.parse(this.handle.tender.signature);
       if ((method !== 'cash' && method !== 'qrph') || !Number.isSafeInteger(tender.revision) || !Number.isSafeInteger(tender.acceptedAmountCentavos) || (method === 'cash' && !Number.isSafeInteger(tender.cashReceivedCentavos))) throw new Error();
-      if (this.current?.attempts.some(attempt => attempt.method === method)) return result;
+      if (method === 'qrph' ? this.submittedQrAttempt() : this.current?.sale || this.current?.attempts.some(attempt => attempt.method === 'cash')) return result;
       return { ...result, uncertainTender: method, ...(method === 'cash' ? { cashInput: (tender.cashReceivedCentavos / 100).toFixed(2) } : {}) };
     } catch { return { recoveryFailure: 'identity' }; }
   }
@@ -80,9 +80,25 @@ export class DurableCheckout {
     if (!this.active) throw new CheckoutIdentityError('This checkout session is no longer active.', 409, 'checkout_recovery_required');
   }
 
+  private submittedQrAttempt() {
+    return this.current?.attempts.find(attempt => attempt.method === 'qrph' && attempt.id === this.handle?.tender?.attemptId);
+  }
+  private async correlateQrResponse(checkout: AuthorityCheckout) {
+    const tender = this.handle!.tender!;
+    if (tender.attemptId === undefined) {
+      const qrAttempts = checkout.attempts.filter(attempt => attempt.method === 'qrph');
+      const candidates = tender.previousAttemptIds === undefined ? qrAttempts.slice(-1) : qrAttempts.filter(attempt => !tender.previousAttemptIds!.includes(attempt.id));
+      if (candidates.length !== 1) throw new ApiClientError('The submitted QR payment has not been identified. Retry the saved submission.', 409, 'checkout_recovery_required');
+      tender.attemptId = candidates[0].id;
+      await this.persist();
+    }
+    if (!checkout.attempts.some(attempt => attempt.method === 'qrph' && attempt.id === tender.attemptId)) {
+      throw new ApiClientError('The submitted QR payment is missing from its response.', 409, 'checkout_recovery_required');
+    }
+  }
   retainedPayment() {
-    if (!this.observed?.attempts.some(a => a.method === 'qrph')) return undefined;
-    return checkoutPayment(this.observed);
+    if (this.progress.uncertainTender || !this.observed?.attempts.some(a => a.method === 'qrph')) return undefined;
+    return checkoutPayment(this.observed, this.submittedQrAttempt()?.id);
   }
 
   async exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -113,8 +129,8 @@ export class DurableCheckout {
   }
   private async persist() { this.assertActive(); await this.storage.save(this.handle ?? null); }
   private releaseResolvedQrTender() {
-    const latestAttempt = this.machine?.attempts[this.machine.attempts.length - 1];
-    if (!this.handle?.tender || !canAcceptCheckoutTender(this.machine) || latestAttempt?.method !== 'qr' || latestAttempt.payment !== 'non-payable'
+    const submittedAttempt = this.machine?.attempts.find(attempt => attempt.id === String(this.handle?.tender?.attemptId));
+    if (!this.handle?.tender || !canAcceptCheckoutTender(this.machine) || submittedAttempt?.method !== 'qr' || submittedAttempt.payment !== 'non-payable'
       || JSON.parse(this.handle.tender.signature)[0] !== 'qrph') return false;
     this.handle.tender = undefined;
     return true;
@@ -221,41 +237,47 @@ export class DurableCheckout {
   async tender(lines: CartLine[], method: 'cash' | 'qrph', cashInput?: string, forceNew = false) {
     const checkout = await this.prepare(lines);
     if (this.unresolvedCashRefusal && !checkout.sale && !checkout.attempts.some(a => a.method === 'cash')) throw new ApiClientError('Recover the earlier cash sale before taking payment.', 409, 'cash_attempt_unresolved');
-    if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale?.method === method) return checkout;
-    if (!canAcceptCheckoutTender(this.machine)) {
-      if (method === 'qrph' && this.machine?.attempts.some(a => a.method === 'qr')) return checkout;
+    const uncertainTender = this.progress.uncertainTender;
+    if (uncertainTender && uncertainTender !== method) throw new ApiClientError('Recover the previous tender before changing payment.', 409, 'checkout_recovery_required');
+    if (this.machine?.state === 'completed' && !this.machine.reconciliationRequired && checkout.sale?.method === method && !uncertainTender) return checkout;
+    const replaying = uncertainTender === method;
+    if (!canAcceptCheckoutTender(this.machine) && (!replaying || this.machine?.reconciliationRequired || this.machine?.state === 'abandoned')) {
+      if (method === 'qrph' && this.retainedPayment()) return checkout;
       throw new ApiClientError('QR Ph payment is unresolved or checkout is locked. Recover it before recording cash.', 409, 'qr_payment_unresolved');
     }
     const localAmount = lines.reduce((sum, l) => sum + Math.round(l.product.price * 100) * l.quantity, 0);
     const changedSnapshot = checkout.items.some(item => !lines.some(line => Number(line.product.id) === item.productId && line.quantity === item.quantity && Math.round(line.product.price * 100) === item.unitPriceCentavos));
-    if (checkout.amountCentavos !== localAmount || changedSnapshot) throw new ApiClientError('Review the authoritative quote before confirming payment.', 409, 'revalidation_required');
+    if (!replaying && (checkout.amountCentavos !== localAmount || changedSnapshot)) throw new ApiClientError('Review the authoritative quote before confirming payment.', 409, 'revalidation_required');
     if (method === 'cash' || forceNew) this.releaseResolvedQrTender();
-    const tender: CheckoutTender = { revision: checkout.revision, acceptedAmountCentavos: checkout.amountCentavos };
+    const tender: CheckoutTender = replaying ? { ...JSON.parse(this.handle!.tender!.signature)[1] } : { revision: checkout.revision, acceptedAmountCentavos: checkout.amountCentavos };
     if (method === 'cash') {
-      const cash = checkoutCashTender(cashInput ?? '', checkout.amountCentavos);
+      const cash = checkoutCashTender(cashInput ?? '', tender.acceptedAmountCentavos);
       if (cash.kind !== 'sufficient' || cash.amountCentavos > 4294967295) throw new ApiClientError('Enter valid, sufficient cash.');
       tender.cashReceivedCentavos = cash.amountCentavos;
     }
     const sig = JSON.stringify([method, tender]);
     if (this.handle!.tender && this.handle!.tender.signature !== sig) throw new ApiClientError('Recover the previous tender before changing payment.', 409, 'checkout_recovery_required');
-    if (!this.handle!.tender) this.handle!.tender = { key: key(), signature: sig };
+    if (!this.handle!.tender) this.handle!.tender = { key: key(), signature: sig, previousAttemptIds: checkout.attempts.map(attempt => attempt.id) };
     await this.persist();
     try {
-      this.current = method === 'cash'
-        ? await this.client.checkoutCash(checkout.id, tender, this.handle!.tender!.key)
-        : await this.client.createCheckoutAttempt(checkout.id, tender, this.handle!.tender!.key);
-      return this.current;
+      if (method === 'cash') this.current = await this.client.checkoutCash(checkout.id, tender, this.handle!.tender!.key);
+      else {
+        const response = await this.client.createCheckoutAttempt(checkout.id, tender, this.handle!.tender!.key);
+        await this.correlateQrResponse(response);
+        if (!this.submittedQrAttempt()) this.current = response;
+      }
+      return this.current!;
     } catch (error) {
       const definitiveQrRefusal = error instanceof ApiClientError && isDefinitiveQrRejection({ status: error.status });
       if (method === 'qrph' && !definitiveQrRefusal) {
         try {
           const recovered = await this.client.recoverCheckout(checkout.id);
           this.current = recovered;
-          if (recovered.attempts.some(a => a.method === 'qrph')) return recovered;
+          if (this.submittedQrAttempt()) return recovered;
         } catch { /* Keep the durable id and exact key for explicit retry/recovery. */ }
       }
       // A definitive refusal has no effect; uncertain responses retain the exact key.
-      if ((method === 'qrph' && definitiveQrRefusal) || (method === 'cash' && error instanceof ApiClientError && error.status === 422)) {
+      if (!replaying && ((method === 'qrph' && definitiveQrRefusal) || (method === 'cash' && error instanceof ApiClientError && error.status === 422))) {
         this.handle!.tender = undefined; await this.persist();
       }
       throw error;
@@ -264,6 +286,7 @@ export class DurableCheckout {
   async refresh(attemptId: string) {
     await this.load();
     if (!this.handle?.id) throw new ApiClientError('Recover the checkout before checking payment.');
+    if (this.progress.uncertainTender === 'qrph') throw new ApiClientError('Retry the saved submission before checking an earlier payment.', 409, 'checkout_recovery_required');
     try { this.current = await this.client.refreshCheckoutAttempt(this.handle.id, Number(attemptId)); }
     catch (error) {
       // A failed verification is reversible uncertainty, never non-payability.
@@ -297,6 +320,7 @@ export class DurableCheckout {
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
     this.assertActive();
+    if (this.progress.uncertainTender) throw new ApiClientError('Recover the submitted payment before retiring this purchase.', 409, 'checkout_recovery_required');
     if (!this.handle) return;
     await this.storage.save(null, this.handle.key);
     this.handle = undefined; this.current = undefined; this.unresolvedCashRefusal = false;
@@ -304,14 +328,14 @@ export class DurableCheckout {
 }
 
 /** Compatibility seam only: never infer sale success from an attempt's paid status. */
-export function checkoutPayment(checkout: AuthorityCheckout): Payment {
-  const attempt = [...checkout.attempts].reverse().find(a => a.method === 'qrph');
+export function checkoutPayment(checkout: AuthorityCheckout, attemptId?: number): Payment {
+  const attempt = [...checkout.attempts].reverse().find(a => a.method === 'qrph' && (attemptId === undefined || a.id === attemptId));
   if (!attempt) throw new ApiClientError('No QR attempt found.');
   const machine = authorityObservation(checkout);
   const payment = machine.attempts.find(a => a.id === String(attempt.id))!.payment;
   const status = machine.state === 'paid-but-unfulfilled' ? 'paid_unfulfilled' : machine.reconciliationRequired ? 'unknown'
-    : machine.state === 'completed' && machine.saleId ? 'paid'
-      : payment === 'non-payable' ? 'failed' : payment === 'unknown' ? 'unknown' : 'pending';
+    : payment === 'non-payable' ? 'failed'
+      : machine.state === 'completed' && machine.saleId && checkout.sale?.method === 'qrph' && checkout.attempts[checkout.attempts.length - 1]?.id === attempt.id ? 'paid' : payment === 'unknown' ? 'unknown' : 'pending';
   return { id: String(attempt.id), status, amount: attempt.amountCentavos / 100, qrPayload: attempt.qrPayload ?? undefined, saleId: checkout.sale ? String(checkout.sale.id) : undefined, reservationExpiresAt: attempt.reservation?.expiresAt ?? undefined };
 }
 export function checkoutSale(checkout: AuthorityCheckout, lines: CartLine[]): Sale {

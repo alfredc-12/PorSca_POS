@@ -252,11 +252,14 @@ export default function CheckoutScreen() {
   useEffect(() => {
     if (operationBusy) return;
     const retained = unresolvedQrPayment();
-    if (!retained) return;
+    if (!retained) {
+      if (checkoutProgress?.uncertainTender === 'qrph') { setMode('qrph'); setQrPayment(undefined); setQrStatus('verification'); }
+      return;
+    }
     setMode('qrph');
     setQrPayment(retained);
     setQrStatus(retained.status === 'paid' ? receiptRefresh === 'ready' ? 'paid' : 'verification' : retained.status);
-  }, [authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment]);
+  }, [authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment, checkoutProgress?.uncertainTender]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (operationRef.current || administratorRequired) return;

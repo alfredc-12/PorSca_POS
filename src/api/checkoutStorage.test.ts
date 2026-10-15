@@ -47,6 +47,22 @@ describe.each(['ios', 'web'])('checkout identity storage on %s', os => {
     await expect(checkoutStorage(url).load()).resolves.toEqual(JSON.parse(value));
   });
 
+  it('round-trips the outstanding submission correlation through persistent storage', async () => {
+    const handle = { ...first, tender: { key: 'q2-key', signature: JSON.stringify(['qrph', { revision: 1, acceptedAmountCentavos: 2500 }]), previousAttemptIds: [7], attemptId: 8 } };
+    await checkoutStorage(url).save(handle);
+    await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
+  });
+
+  it.each([
+    { previousAttemptIds: null }, { previousAttemptIds: [-1] }, { previousAttemptIds: [7, 7] },
+    { attemptId: 0 }, { attemptId: '8' }, { previousAttemptIds: [7], attemptId: 7 },
+  ])('refuses malformed submission correlation %j without changing the stored identity', async correlation => {
+    value = JSON.stringify({ ...first, tender: { key: 'q2-key', signature: '[]', ...correlation } });
+    const stored = value;
+    await expect(checkoutStorage(url).load()).rejects.toBeInstanceOf(CheckoutStorageCorruptionError);
+    expect(value).toBe(stored);
+  });
+
   it('refuses stale retirement while preserving the replacement identity and exact tender key', async () => {
     const oldOwner = checkoutStorage(url);
     const newOwner = checkoutStorage(url);

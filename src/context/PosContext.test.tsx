@@ -380,7 +380,7 @@ describe('POS durable checkout integration', () => {
       if (value === null) await new Promise<void>(resolve => { finishRetire = resolve; });
       await persist(value, expectedKey);
     });
-    client.recoverCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    client.recoverCheckout.mockResolvedValue({ ...readyForQrRetry, state: 'abandoned' });
     const second = renderHook(() => usePos(), { wrapper });
     let recovery!: Promise<void>;
     act(() => { recovery = second.result.current.openPosCheckouts(); });
