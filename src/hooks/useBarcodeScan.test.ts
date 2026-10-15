@@ -111,6 +111,56 @@ describe('useBarcodeScan camera cases', () => {
     expect(result.current.scanning).toBe(true);
   });
 
+  it('F11: measures release from the scan observation after a delayed lookup', async () => {
+    const clock = fakeClock();
+    let finishLookup!: (value: BarcodeLookupResult) => void;
+    const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
+      finishLookup = complete;
+    }));
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+
+    clock.advance(500);
+    await act(async () => {
+      finishLookup(found());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    resolve.mockResolvedValue(found());
+
+    clock.advance(300);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.busy).toBe(false);
+    });
+  });
+
+  it('F11: re-observation keeps a symbol held after a delayed lookup', async () => {
+    const clock = fakeClock();
+    let finishLookup!: (value: BarcodeLookupResult) => void;
+    const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
+      finishLookup = complete;
+    }));
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(500);
+    await act(async () => {
+      finishLookup(found());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+    clock.advance(400);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it('F11: a distinct symbol replaces success immediately while failures remain disarmed', async () => {
     const resolve = jest.fn().mockResolvedValueOnce(found()).mockResolvedValueOnce(found());
     const { result } = renderHook(() => useBarcodeScan({ resolve, stayArmedAfterSuccess: true }));

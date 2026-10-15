@@ -147,7 +147,8 @@ export function useBarcodeScan({
     if (!releasedHeldSymbol && last && last.barcode === barcode && now() - last.at < cooldownMs) return;
 
     lockedRef.current = true;
-    lastScanRef.current = { barcode, at: now() };
+    const scannedAt = now();
+    lastScanRef.current = { barcode, at: scannedAt };
 
     const shape = validateBarcodeShape(barcode);
     if (!shape.ok) {
@@ -166,7 +167,7 @@ export function useBarcodeScan({
         const resolved = toOutcome(shape, result);
         setOutcome(resolved);
         if (stayArmedAfterSuccess && result.status === 'found' && result.product) {
-          heldRef.current = { barcode, lastSeenAt: now() };
+          heldRef.current = { barcode, lastSeenAt: scannedAt };
           lockedRef.current = false;
         }
       })
