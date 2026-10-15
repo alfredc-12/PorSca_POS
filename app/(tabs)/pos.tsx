@@ -45,6 +45,11 @@ export default function PosScreen() {
     discardCorruptCheckout,
   } = usePos();
   const [query, setQuery] = useState('');
+  const [visibleResultCount, setVisibleResultCount] = useState(5);
+  const changeQuery = (value: string) => {
+    setVisibleResultCount(5);
+    setQuery(value);
+  };
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
   const [discardReason, setDiscardReason] = useState('');
@@ -56,7 +61,7 @@ export default function PosScreen() {
   const searchPending = query.trim() !== debouncedQuery.trim();
 
   const totalItems = cart.reduce((sum, line) => sum + line.quantity, 0);
-  const matches = searchResults.slice(0, 5);
+  const matches = searchResults.slice(0, visibleResultCount);
 
   useEffect(() => {
     void searchProducts(debouncedQuery);
@@ -158,7 +163,7 @@ export default function PosScreen() {
             testID="pos-search-input"
             accessibilityLabel="Search products"
             value={query}
-            onChangeText={setQuery}
+            onChangeText={changeQuery}
             placeholder="Search product or scan barcode..."
             placeholderTextColor={colors.textMuted}
             style={[styles.searchInput, { fontSize: responsive.font(responsive.narrow ? 14 : 15.5) }]}
@@ -210,7 +215,7 @@ export default function PosScreen() {
       ) : null}
 
       {query.trim() && !searchPending && catalogState === 'ready' && matches.length === 0 ? (
-        <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => setQuery('')} />
+        <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => changeQuery('')} />
       ) : null}
 
       {query.trim() && !searchPending && matches.length > 0 && catalogState !== 'loading' ? (
@@ -230,7 +235,7 @@ export default function PosScreen() {
                 onPress={() => {
                   const result = addProductChecked(product);
                   if (result.ok) {
-                    setQuery('');
+                    changeQuery('');
                     setCartNotice(undefined);
                   } else {
                     setCartNotice(result.message);
@@ -249,6 +254,19 @@ export default function PosScreen() {
               </Pressable>
             );
           })}
+          <Text accessibilityLiveRegion="polite" style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>
+            Showing {matches.length} of {searchResults.length} matches
+          </Text>
+          {matches.length < searchResults.length ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Show more products"
+              onPress={() => setVisibleResultCount(count => count + 5)}
+              style={styles.moreResults}
+            >
+              <Text style={styles.moreResultsText}>Show more</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -444,6 +462,8 @@ const styles = StyleSheet.create({
   greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success },
   greenDotSmall: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   resultsCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, gap: 4 },
+  moreResults: { minHeight: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.md },
+  moreResultsText: { color: colors.primary, fontWeight: '800' },
   resultsTitle: { color: colors.text, fontWeight: '800', marginBottom: 2 },
   resultRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.outline },
   resultCopy: { flex: 1 },
