@@ -96,7 +96,7 @@ describe('checkout remount with durable machine state', () => {
     expect(qrRender).toHaveBeenCalledTimes(qrBefore + 1);
     fireEvent.press(view.getByTestId('seed'));
     expect(orderRender).toHaveBeenCalledTimes(retainedOrderRenders);
-    expect(view.getByTestId('checkout-order-summary')).toHaveTextContent('Qty 1 • ₱25.00 each');
+    expect(view.getByTestId('checkout-order-summary')).toHaveTextContent(/Qty 1 • ₱25\.00 each/);
     expect(view.getByTestId('editable-cart-count')).toHaveTextContent('2');
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
@@ -135,6 +135,7 @@ describe('checkout remount with durable machine state', () => {
     let finishCheck!: (value: AuthorityCheckout) => void;
     client.refreshCheckoutAttempt.mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
     fireEvent.press(view.getByTestId('refresh-qr-payment'));
+    await waitFor(() => expect(finishCheck).toBeDefined());
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
     expect(view.getByText('Payment pending…')).toBeTruthy();
     setCheckout(completed);
@@ -146,7 +147,7 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Refresh receipt');
     expect(view.queryByText('Refreshing receipt…')).toBeNull();
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
-    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent('Receipt 9');
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Receipt 9/);
     expect(handle()).toBeNull();
     expect(Alert.alert).toHaveBeenCalledTimes(1);
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
@@ -159,6 +160,7 @@ describe('checkout remount with durable machine state', () => {
     let finishCheck!: (value: AuthorityCheckout) => void;
     client.refreshCheckoutAttempt.mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
     fireEvent.press(view.getByTestId('refresh-qr-payment'));
+    await waitFor(() => expect(finishCheck).toBeDefined());
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
     await act(async () => { finishCheck({ ...pending, state: status === 'non_payable' ? 'ready_for_attempt' : 'payment_unresolved', attempts: [{ ...pending.attempts[0], status, financialStatus: status === 'non_payable' ? 'expired' : 'pending', firstVerifiedOutcome: status === 'non_payable' ? 'non_payable' : null }] }); });
     if (status === 'unknown') {
@@ -253,6 +255,7 @@ describe('checkout remount with durable machine state', () => {
     client.refreshCheckoutAttempt.mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
     if (failReads) client.listSales.mockRejectedValueOnce(new Error('offline'));
     fireEvent.press(view.getByTestId('refresh-qr-payment'));
+    await waitFor(() => expect(finishCheck).toBeDefined());
     act(() => changeState('background'));
     setCheckout(completed);
     await act(async () => { finishCheck(completed); });
@@ -264,7 +267,7 @@ describe('checkout remount with durable machine state', () => {
       expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Retry receipt refresh');
       await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     }
-    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent('Receipt 9');
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Receipt 9/);
     expect(Alert.alert).toHaveBeenCalledTimes(1);
     expect(handle()).toBeNull();
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
@@ -320,7 +323,7 @@ describe('checkout remount with durable machine state', () => {
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Finish this sale' })); });
     expect(handle()).toBeNull();
     expect(view.getByTestId('editable-cart-count')).toHaveTextContent('0');
-    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent('Receipt 20');
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Receipt 20/);
     expect(Alert.alert).toHaveBeenCalledTimes(1);
     fireEvent.press(view.getByRole('button', { name: 'Done' }));
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
@@ -354,7 +357,7 @@ describe('checkout remount with durable machine state', () => {
       client.checkoutCash.mockResolvedValueOnce({ ...revised, state: 'completed', sale: { id: 21, method: 'cash', amountCentavos: 3000, cashReceivedCentavos: 10000, changeAmountCentavos: 7000, completedAt: 'today' } });
       await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
       expect(client.checkoutCash).toHaveBeenCalledWith(open.id, expect.objectContaining({ acceptedAmountCentavos: 3000 }), expect.any(String));
-      expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent('Paid ₱30.00');
+      expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Paid ₱30\.00/);
     } else {
       client.createCheckoutAttempt.mockImplementationOnce(async () => {
         const revisedPending: AuthorityCheckout = { ...pending, amountCentavos: 3000, items: revised.items, attempts: [{ ...pending.attempts[0], amountCentavos: 3000 }] };
@@ -375,7 +378,7 @@ describe('checkout remount with durable machine state', () => {
     const q2 = JSON.parse(JSON.stringify(handle()!.tender!));
     expect(q2.previousAttemptIds).toEqual([7]);
     expect(q2.attemptId).toBeUndefined();
-    expect(view.getByTestId('checkout-guidance')).toHaveTextContent('The customer may still be charged.');
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The customer may still be charged\./);
     expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
     expect(view.queryByTestId('qr-payment-code')).toBeNull();
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();

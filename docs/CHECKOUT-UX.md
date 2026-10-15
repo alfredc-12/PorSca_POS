@@ -15,7 +15,9 @@ The approved everyday wording replaces older shop-server/operator/verification e
 - Conflict: “Conflicting payment records found. This purchase is locked.”
 - Administrator instruction: “Call the shop administrator now.”
 
-Unknown/failed checks now say “Payment interrupted”, not payment failure. Uncertain cash no longer claims that nothing was charged or saved. Guidance replaces duplicate failure cards; support codes remain readable. Existing tender accessibility labels and QR start/check/new-attempt/leave identifiers keep their meanings.
+Unknown/failed checks now say “Payment interrupted”, not payment failure. Uncertain cash no longer claims that nothing was charged or saved. Guidance replaces duplicate failure cards; support codes remain readable. Technical checkout, attempt, and case IDs are not shown to cashiers. Existing tender accessibility labels and QR start/check/new-attempt/leave identifiers keep their meanings.
+
+Secondary price review, general recovery, and cancellation options are behind the collapsed **Need help with this sale?** section; state-specific next steps remain in checkout guidance. Cancellation asks for an 8–500-character reason, and the normal payment actions remain primary. When recovering a retained purchase, the amount and order summary use its authoritative item snapshot rather than any separately edited POS cart.
 
 ## Bounded checks, reads and receipt completion
 
@@ -25,7 +27,7 @@ Overlapping unfiltered catalog, inventory and sales refreshes share provider-loc
 
 A committed QR whose required reads failed retains its purchase. `retry-qr-verification` intentionally becomes **Retry receipt refresh**. It runs stored recovery plus inventory/history reads, never a provider verification POST. While refreshing, **Refreshing receipt…** is disabled. Required reads must succeed before QR retirement and completion. A contradiction seen during recovery overrides the receipt and locks the purchase.
 
-Cash returns the authoritative receipt without waiting for nonblocking inventory/history reads. Its success does not claim stock/history refresh. Failed handle retirement preserves the committed receipt and recovery identity, never requests another payment. Completed cash and QR render receipt facts behind the existing native alert, rather than an empty cart or payable QR. The existing sole Done alert button navigates once to Transactions. Completion snapshots and alert deduplication are provider-local display state, cleared on acknowledgement/new cart/sign-out; they are not persisted financial truth.
+Cash returns the authoritative receipt without waiting for nonblocking inventory/history reads. Its success does not claim stock/history refresh. Failed handle retirement preserves the committed receipt and recovery identity, never requests another payment. Completed cash and QR render receipt facts in the native completion alert and retained completion card, rather than an empty cart or payable QR. Either Done action navigates once to Transactions. Completion snapshots and alert deduplication are provider-local display state, cleared on acknowledgement/new cart/sign-out; they are not persisted financial truth.
 
 Checkout has its own memoized context; catalog/search/history updates do not change that value. Order summary and QR rendering are memoized on their own inputs. Component render counts prove structural isolation, not device FPS or optical scanability. QR size, correction, quiet zone, byte limit and image replacement/error behavior are unchanged.
 
