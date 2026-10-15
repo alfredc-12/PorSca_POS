@@ -23,6 +23,7 @@ app/
   checkout.tsx
   product-form.tsx
   users.tsx           # admin-only cashier account management
+  transaction-detail.tsx  # read-only receipt from loaded sale history
   (tabs)/
     _layout.tsx
     pos.tsx
