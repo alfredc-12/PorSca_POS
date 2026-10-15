@@ -94,6 +94,23 @@ describe('useBarcodeScan camera cases', () => {
     await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
   });
 
+  it('F11: accepts the same symbol again after an 800 ms absence in the armed success flow', async () => {
+    const clock = fakeClock();
+    const resolve = jest.fn().mockResolvedValue(found());
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+
+    clock.advance(800);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.busy).toBe(false);
+    });
+    expect(result.current.scanning).toBe(true);
+  });
+
   it('F11: a distinct symbol replaces success immediately while failures remain disarmed', async () => {
     const resolve = jest.fn().mockResolvedValueOnce(found()).mockResolvedValueOnce(found());
     const { result } = renderHook(() => useBarcodeScan({ resolve, stayArmedAfterSuccess: true }));

@@ -15,13 +15,11 @@ import { Product } from '@/src/types';
  */
 
 /**
- * A code left in frame keeps firing native callbacks. Retail scanner guidance
- * for "same symbol" suppression lands between 500 ms and 1500 ms; 1200 ms is
- * deliberately at the top of that range because the lock and the cooldown are
- * two separate defences (see `handleBarcode`).
+ * A same symbol releases after 700 ms of absence. In the armed successful POS
+ * flow, that release bypasses the 1200 ms cooldown so an intentional repeat is
+ * accepted; other scan flows retain the cooldown.
  */
 export const SAME_BARCODE_COOLDOWN_MS = 1200;
-/** More than two web decoder polls (300 ms); native cadence needs device validation. */
 export const SAME_SYMBOL_RELEASE_MS = 700;
 
 export type BarcodeScanKind =
@@ -133,17 +131,20 @@ export function useBarcodeScan({
     if (!cameraReadyRef.current) return;
 
     const barcode = data.trim();
+    let releasedHeldSymbol = false;
     const held = heldRef.current;
     if (held) {
-      if (barcode === held.barcode && now() - held.lastSeenAt < SAME_SYMBOL_RELEASE_MS) {
-        held.lastSeenAt = now();
+      const seenAt = now();
+      if (barcode === held.barcode && seenAt - held.lastSeenAt < SAME_SYMBOL_RELEASE_MS) {
+        held.lastSeenAt = seenAt;
         return;
       }
+      releasedHeldSymbol = barcode === held.barcode;
       heldRef.current = undefined;
     }
     if (lockedRef.current) return;
     const last = lastScanRef.current;
-    if (last && last.barcode === barcode && now() - last.at < cooldownMs) return;
+    if (!releasedHeldSymbol && last && last.barcode === barcode && now() - last.at < cooldownMs) return;
 
     lockedRef.current = true;
     lastScanRef.current = { barcode, at: now() };

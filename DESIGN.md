@@ -113,7 +113,7 @@ Browser development includes a temporary floating camera panel, revealed by five
 
 Scanner states added in week 6. Each is a light card on the dark surface with an icon, a headline, and text, so no state depends on color alone:
 
-- **Added confirmation** — the product name, unit price, cart quantity, and stock, with a **Done** action. POS scanning stays armed for another item; the scanner returns to the cart after ~1.2 s without another scan.
+- **Added confirmation** — the product name, unit price, cart quantity, and stock, with a **Done** action. POS scanning stays armed for another item; the scanner returns to the cart ~1.2 s after the last successful scan. A same barcode can be intentionally scanned again after 700 ms of absence.
 - **Out of stock** — its own headline with **Scan again** and **Back to cart**.
 - **Stock limit reached** — the cart already holds all available stock, with the same recovery actions.
 - **Product not found** — names the code, notes that both the UPC-A and EAN-13 forms were tried, and flags a failing check digit as a possible misread.
