@@ -89,7 +89,7 @@ Search and inventory scanning sit above a four-part health summary: total produc
 
 ### Transactions
 
-Search/filter sits above a summary for sales amount, completed sales, cash count, and QR Ph count. Filter chips support All, Today, Cash, and QR Ph. Transaction rows show receipt ID, time, item count, payment method, completed state, and total.
+Search/filter sits above a summary for sales amount, completed sales, cash count, and QR Ph count. Filter chips support All, Today, Cash, and QR Ph, and a YYYY-MM-DD date field narrows the list to a single local day. The full sales history is available rather than only the most recent page, and the list reveals older receipts 50 at a time through a **Show more transactions** action. Transaction rows show receipt ID, time, item count, payment method, completed state, and total.
 
 ### Checkout
 
