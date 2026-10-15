@@ -93,7 +93,7 @@ Search/filter sits above a summary for sales amount, completed sales, cash count
 
 ### Checkout
 
-Checkout inherits the same cream/green visual system. It presents amount due, order summary, Cash / QR Ph selection, cash received/change handling, or the QR Ph sandbox state. While payment is processing or unresolved, keep its tender selected, disable the opposite tender and cash confirmation, and explain the lock; only a verified non-payable QR result permits a new tender. If a provider-rendered QR image fails to load, show an in-panel recovery message rather than a blank box; this is not a payment outcome. Stock changes only after successful completion.
+Checkout inherits the same cream/green visual system. It presents amount due, order summary, Cash / QR Ph selection, cash received/change handling, or the QR Ph sandbox state. Cash entry stays inline: strict two-decimal input with in-place shortfall or format feedback, and Cash confirmation disabled until the received amount covers the amount due; presets offer the exact amount plus only denominations that cover it. Invalid or insufficient cash never opens a dialog or records a sale. While payment is processing or unresolved, keep its tender selected, disable the opposite tender and cash confirmation, and explain the lock; only a verified non-payable QR result permits a new tender. If a provider-rendered QR image fails to load, show an in-panel recovery message rather than a blank box; this is not a payment outcome. Stock changes only after successful completion.
 
 ### Product editor
 
