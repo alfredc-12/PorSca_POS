@@ -61,10 +61,10 @@ export function BarcodeScanner({ inventoryMode = false, onClose = closeScannerRo
 
   // A POS scan adds the product immediately and confirms it in place.
   useEffect(() => {
-    if (inventoryMode || outcome?.kind !== 'found') return;
+    if (inventoryMode || busy || outcome?.kind !== 'found') return;
     const timer = setTimeout(() => onClose(), ADDED_CONFIRMATION_MS);
     return () => clearTimeout(timer);
-  }, [inventoryMode, outcome, onClose]);
+  }, [busy, inventoryMode, outcome, onClose]);
 
   if (!permission) return <Screen title="Starting camera"><ActivityIndicator accessibilityLabel="Checking camera permission" /><AppButton label="Close scanner" onPress={onClose} variant="secondary" /></Screen>;
 

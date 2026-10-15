@@ -107,6 +107,7 @@ export function useBarcodeScan({
   const lockedRef = useRef(false);
   const lastScanRef = useRef<{ barcode: string; at: number } | undefined>(undefined);
   const heldRef = useRef<{ barcode: string; lastSeenAt: number } | undefined>(undefined);
+  const inFlightRef = useRef<{ barcode: string; lastSeenAt: number } | undefined>(undefined);
   // Keep the latest resolver without restarting the session on every re-render;
   // the POS resolver changes identity whenever the cart changes.
   const resolveRef = useRef(resolve);
@@ -122,6 +123,7 @@ export function useBarcodeScan({
     generation.current += 1;
     lockedRef.current = false;
     heldRef.current = undefined;
+    inFlightRef.current = undefined;
     setOutcome(undefined);
     setBusy(false);
   }, []);
@@ -131,6 +133,15 @@ export function useBarcodeScan({
     if (!cameraReadyRef.current) return;
 
     const barcode = data.trim();
+    if (lockedRef.current) {
+      const inFlight = inFlightRef.current;
+      if (stayArmedAfterSuccess && inFlight?.barcode === barcode) {
+        const seenAt = now();
+        if (seenAt - inFlight.lastSeenAt < SAME_SYMBOL_RELEASE_MS) inFlight.lastSeenAt = seenAt;
+      }
+      return;
+    }
+
     let releasedHeldSymbol = false;
     const held = heldRef.current;
     if (held) {
@@ -142,7 +153,6 @@ export function useBarcodeScan({
       releasedHeldSymbol = barcode === held.barcode;
       heldRef.current = undefined;
     }
-    if (lockedRef.current) return;
     const last = lastScanRef.current;
     if (!releasedHeldSymbol && last && last.barcode === barcode && now() - last.at < cooldownMs) return;
 
@@ -158,25 +168,33 @@ export function useBarcodeScan({
       return;
     }
 
+    if (stayArmedAfterSuccess) inFlightRef.current = { barcode, lastSeenAt: scannedAt };
     setBusy(true);
     const requestGeneration = generation.current;
     const isCurrent = () => active.current && requestGeneration === generation.current;
     void resolveRef.current(shape.digits)
       .then((result) => {
         if (!isCurrent()) return;
+        const inFlight = inFlightRef.current;
+        inFlightRef.current = undefined;
         const resolved = toOutcome(shape, result);
         setOutcome(resolved);
         if (stayArmedAfterSuccess && result.status === 'found' && result.product) {
-          heldRef.current = { barcode, lastSeenAt: scannedAt };
+          heldRef.current = { barcode, lastSeenAt: inFlight?.barcode === barcode ? inFlight.lastSeenAt : scannedAt };
           lockedRef.current = false;
         }
       })
-      .catch(() => { if (isCurrent()) setOutcome(errorOutcome(shape.digits)); })
+      .catch(() => {
+        if (!isCurrent()) return;
+        inFlightRef.current = undefined;
+        setOutcome(errorOutcome(shape.digits));
+      })
       .finally(() => { if (isCurrent()) setBusy(false); });
   }, [cooldownMs, now]);
 
   const successfulAdd = stayArmedAfterSuccess && outcome?.kind === 'found';
-  return { busy, outcome, scanning: cameraReady && !busy && (!outcome || successfulAdd), handleBarcode, rearm };
+  const scanning = cameraReady && (busy ? stayArmedAfterSuccess : !outcome || successfulAdd);
+  return { busy, outcome, scanning, handleBarcode, rearm };
 }
 
 const INVALID_MESSAGES: Record<Extract<BarcodeShape, { ok: false }>['reason'], string> = {

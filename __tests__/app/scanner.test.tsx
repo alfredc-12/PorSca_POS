@@ -227,6 +227,56 @@ describe('ScannerScreen', () => {
     }
   });
 
+  it('pauses the success auto-close while a replacement scan is resolving', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchImpl = apiFetch();
+      const normalFetch = fetchImpl.getMockImplementation()!;
+      let finishSecond!: (response: Response) => void;
+      fetchImpl.mockImplementationOnce((url: string) => normalFetch(url));
+      fetchImpl.mockImplementationOnce(() => new Promise<Response>((resolve) => { finishSecond = resolve; }));
+      const scanner = renderScanner({ fetchImpl });
+      scanner.startCamera();
+
+      scanner.scan(EAN13_IN_STOCK);
+      await waitFor(() => expect(scanner.getByTestId('scanner-outcome-title')).toHaveTextContent('Product found'));
+      act(() => jest.advanceTimersByTime(1000));
+      scanner.scan(UPC_A_VALID);
+      expect(scanner.isArmed()).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+      act(() => jest.advanceTimersByTime(200));
+      expect(mockRouter.back).not.toHaveBeenCalled();
+      act(() => jest.advanceTimersByTime(200));
+      await act(async () => {
+        finishSecond({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              id: 'prd-upc',
+              barcode: UPC_A_VALID,
+              name: 'UPC-A Crackers',
+              price: 1200,
+              stock: { quantity: 30, reorder_level: 5, status: 'in_stock' },
+            },
+          }),
+        } as Response);
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(scanner.cart()).toBe('lines:2 qty:2 total:37');
+        expect(scanner.getByText('UPC-A Crackers')).toBeTruthy();
+      });
+      expect(mockRouter.back).not.toHaveBeenCalled();
+
+      act(() => jest.advanceTimersByTime(ADDED_CONFIRMATION_MS));
+      expect(mockRouter.back).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('resolves a UPC-A symbol that iOS reports in its EAN-13 form', async () => {
     const fetchImpl = apiFetch();
     const scanner = renderScanner({ fetchImpl });

@@ -111,7 +111,7 @@ describe('useBarcodeScan camera cases', () => {
     expect(result.current.scanning).toBe(true);
   });
 
-  it('F11: measures release from the scan observation after a delayed lookup', async () => {
+  it('F11: accepts a released repeat observed during a 1000 ms lookup', async () => {
     const clock = fakeClock();
     let finishLookup!: (value: BarcodeLookupResult) => void;
     const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
@@ -121,8 +121,11 @@ describe('useBarcodeScan camera cases', () => {
 
     act(() => result.current.handleBarcode(EAN13_IN_STOCK));
     expect(resolve).toHaveBeenCalledTimes(1);
+    expect(result.current.scanning).toBe(true);
 
-    clock.advance(500);
+    clock.advance(800);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(200);
     await act(async () => {
       finishLookup(found());
       await Promise.resolve();
@@ -130,7 +133,6 @@ describe('useBarcodeScan camera cases', () => {
     await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
     resolve.mockResolvedValue(found());
 
-    clock.advance(300);
     act(() => result.current.handleBarcode(EAN13_IN_STOCK));
     await waitFor(() => {
       expect(resolve).toHaveBeenCalledTimes(2);
@@ -138,7 +140,7 @@ describe('useBarcodeScan camera cases', () => {
     });
   });
 
-  it('F11: re-observation keeps a symbol held after a delayed lookup', async () => {
+  it('F11: in-flight re-observation keeps a symbol held through a 1000 ms lookup', async () => {
     const clock = fakeClock();
     let finishLookup!: (value: BarcodeLookupResult) => void;
     const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
@@ -148,6 +150,10 @@ describe('useBarcodeScan camera cases', () => {
 
     act(() => result.current.handleBarcode(EAN13_IN_STOCK));
     clock.advance(500);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(400);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(100);
     await act(async () => {
       finishLookup(found());
       await Promise.resolve();
