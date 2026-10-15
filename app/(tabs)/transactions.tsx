@@ -86,9 +86,11 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
-      {showFilters ? <View style={styles.searchBox}>
-        <TextInput accessibilityLabel="Transaction date YYYY-MM-DD" placeholder="Date: YYYY-MM-DD (local time)" placeholderTextColor={colors.textMuted} value={date} onChangeText={setDate} style={[styles.searchInput, { minHeight: responsive.controlHeight }]} />
-        {date ? <Pressable accessibilityLabel="Clear date filter" onPress={() => setDate('')}><Text>Clear</Text></Pressable> : null}
+      {showFilters ? <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <TextInput accessibilityLabel="Transaction date YYYY-MM-DD" placeholder="Date: YYYY-MM-DD (local time)" placeholderTextColor={colors.textMuted} value={date} onChangeText={setDate} style={[styles.searchInput, { minHeight: responsive.controlHeight }]} />
+          {date ? <Pressable accessibilityLabel="Clear date filter" onPress={() => setDate('')}><Text>Clear</Text></Pressable> : null}
+        </View>
       </View> : null}
       {!validDate ? <Text accessibilityRole="alert">Enter a date as YYYY-MM-DD.</Text> : null}
 
