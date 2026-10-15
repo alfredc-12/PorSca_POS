@@ -161,11 +161,12 @@ these defects. Each is fixed on this branch with the tests listed.
 ## Residual limitations and risks
 
 - The camera binding is not device-verified (above).
-- Same-symbol suppression is 1200 ms (`SAME_BARCODE_COOLDOWN_MS`), at the top of
-  the 500-1500 ms retail range. The primary duplicate defence is that the camera
-  callback is disarmed as soon as a scan resolves; the cooldown covers the window
-  where callbacks are already queued natively and the moment right after an
-  explicit retry. Both are named constants and can be tuned after the manual pass.
+- POS same-symbol suppression combines a 700 ms release guard
+  (`SAME_SYMBOL_RELEASE_MS`) with the 1200 ms cooldown
+  (`SAME_BARCODE_COOLDOWN_MS`). While a POS lookup is pending, its callback
+  observes the in-flight symbol; after a successful add it stays armed. Failures
+  and inventory remain disarmed. Native decoder cadence is not device-verified,
+  so these timings await the manual pass.
 - Search debounce is 280 ms (`SEARCH_DEBOUNCE_MS`). 200 ms may feel better on a
   fast LAN.
 - Revalidation reads the product record per cart line. Whether Laravel's

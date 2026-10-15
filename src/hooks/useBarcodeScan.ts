@@ -118,6 +118,25 @@ export function useBarcodeScan({
   useEffect(() => {
     cameraReadyRef.current = cameraReady;
   }, [cameraReady]);
+  const stayArmedAfterSuccessRef = useRef(stayArmedAfterSuccess);
+  useEffect(() => {
+    stayArmedAfterSuccessRef.current = stayArmedAfterSuccess;
+  }, [stayArmedAfterSuccess]);
+  const nowRef = useRef(now);
+  useEffect(() => {
+    nowRef.current = now;
+  }, [now]);
+
+  useEffect(() => {
+    if (outcome?.kind !== 'found' || !outcome.product) return;
+    if (stayArmedAfterSuccess) {
+      if (!heldRef.current) heldRef.current = { barcode: outcome.barcode, lastSeenAt: nowRef.current() };
+      lockedRef.current = false;
+    } else {
+      heldRef.current = undefined;
+      lockedRef.current = true;
+    }
+  }, [outcome, stayArmedAfterSuccess]);
 
   const rearm = useCallback(() => {
     generation.current += 1;
@@ -135,7 +154,7 @@ export function useBarcodeScan({
     const barcode = data.trim();
     if (lockedRef.current) {
       const inFlight = inFlightRef.current;
-      if (stayArmedAfterSuccess && inFlight?.barcode === barcode) {
+      if (stayArmedAfterSuccessRef.current && inFlight?.barcode === barcode) {
         const seenAt = now();
         if (seenAt - inFlight.lastSeenAt < SAME_SYMBOL_RELEASE_MS) inFlight.lastSeenAt = seenAt;
       }
@@ -168,7 +187,7 @@ export function useBarcodeScan({
       return;
     }
 
-    if (stayArmedAfterSuccess) inFlightRef.current = { barcode, lastSeenAt: scannedAt };
+    inFlightRef.current = { barcode, lastSeenAt: scannedAt };
     setBusy(true);
     const requestGeneration = generation.current;
     const isCurrent = () => active.current && requestGeneration === generation.current;
@@ -179,7 +198,7 @@ export function useBarcodeScan({
         inFlightRef.current = undefined;
         const resolved = toOutcome(shape, result);
         setOutcome(resolved);
-        if (stayArmedAfterSuccess && result.status === 'found' && result.product) {
+        if (stayArmedAfterSuccessRef.current && result.status === 'found' && result.product) {
           heldRef.current = { barcode, lastSeenAt: inFlight?.barcode === barcode ? inFlight.lastSeenAt : scannedAt };
           lockedRef.current = false;
         }

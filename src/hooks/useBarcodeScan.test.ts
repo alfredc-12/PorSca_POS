@@ -177,6 +177,31 @@ describe('useBarcodeScan camera cases', () => {
     expect(result.current.scanning).toBe(true);
   });
 
+  it('keeps the lock consistent when success arming mode changes', async () => {
+    const resolve = jest.fn().mockResolvedValue(found());
+    const { result, rerender } = renderHook(
+      ({ stayArmedAfterSuccess }: { stayArmedAfterSuccess: boolean }) => useBarcodeScan({ resolve, stayArmedAfterSuccess }),
+      { initialProps: { stayArmedAfterSuccess: false } },
+    );
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    expect(result.current.scanning).toBe(false);
+
+    rerender({ stayArmedAfterSuccess: true });
+    expect(result.current.scanning).toBe(true);
+    act(() => result.current.handleBarcode(GS1_EXAMPLE_VALID));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.outcome?.barcode).toBe(GS1_EXAMPLE_VALID);
+    });
+
+    rerender({ stayArmedAfterSuccess: false });
+    expect(result.current.scanning).toBe(false);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+
   it('S5: an explicit retry still suppresses the same symbol inside the cooldown, then accepts it', async () => {
     const clock = fakeClock();
     const resolve = jest.fn().mockResolvedValue(notFound());
