@@ -18,6 +18,7 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], finalEvidence: { outcome: 'paid', reference: 'e' }, payment: 'paid' }] } })).toMatchObject({ category: 'pending', body: 'Payment is received. Still recording the sale.' });
   });
   it('gates QR completion on reads and offers receipt-only retry', () => {
+    expect(checkoutGuidance({ machine: completed, authority })).toMatchObject({ category: 'interrupted', action: 'refresh', label: 'Refresh receipt' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'running' })).toMatchObject({ category: 'pending', body: 'The sale is recorded. Updating stock and history.', action: 'wait' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'failed' })).toMatchObject({ category: 'interrupted', action: 'refresh' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'ready' })).toMatchObject({ category: 'completed', body: 'Payment confirmed. Stock and history updated.' });

@@ -150,6 +150,10 @@ export function PosProvider({
     if (completionAlerts.current.has(saleId)) return false;
     completionAlerts.current.add(saleId); return true;
   }, []);
+  useEffect(() => {
+    authority.setActive(true);
+    return () => authority.setActive(false);
+  }, [authority]);
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }

@@ -104,17 +104,17 @@ describe('checkout remount with durable machine state', () => {
     const { tree, client, handle, setCheckout } = fixture(); const view = render(tree); await start(view);
     const completed: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' } };
     setCheckout(completed);
-    client.listSales.mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline'));
+    client.listSales.mockRejectedValueOnce(new Error('offline'));
     await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
     expect(view.getByTestId('retry-qr-verification')).toHaveTextContent(/Retry receipt refresh/);
     expect(handle()?.id).toBe('server-uuid'); expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
     fireEvent.press(view.getByTestId('leave'));
     await act(async () => { fireEvent.press(view.getByTestId('open')); });
-    expect(view.getByTestId('retry-qr-verification')).toHaveTextContent(/Retry receipt refresh/);
+    expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Refresh receipt');
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
     await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1); expect(client.checkoutCash).not.toHaveBeenCalled();
-    expect(client.recoverCheckout).toHaveBeenCalledTimes(3); expect(handle()).toBeNull();
+    expect(client.recoverCheckout).toHaveBeenCalledTimes(2); expect(handle()).toBeNull();
     expect(Alert.alert).toHaveBeenCalledTimes(1);
     expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Payment confirmed\. Stock and history updated\./);
     expect(view.getByText('Receipt 9')).toBeTruthy(); expect(view.getByText('Paid ₱25.00')).toBeTruthy();
@@ -127,6 +127,51 @@ describe('checkout remount with durable machine state', () => {
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
     expect(view.queryByTestId('checkout-completed-receipt')).toBeNull(); expect(view.queryByText('Receipt 9')).toBeNull();
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+  });
+  it('reconciles a late paid check after remount and offers receipt refresh after the old screen fails', async () => {
+    const { tree, client, setCheckout, handle } = fixture();
+    const view = render(tree); await start(view);
+    const completed: AuthorityCheckout = { ...pending, state: 'completed', attempts: [{ ...pending.attempts[0], status: 'paid', firstVerifiedOutcome: 'paid', financialStatus: 'paid' }], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' } };
+    let finishCheck!: (value: AuthorityCheckout) => void;
+    client.refreshCheckoutAttempt.mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
+    fireEvent.press(view.getByTestId('refresh-qr-payment'));
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
+    expect(view.getByText('Payment pending…')).toBeTruthy();
+    setCheckout(completed);
+    client.listSales.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => { finishCheck(completed); });
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(handle()?.id).toBe(open.id);
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Refresh receipt');
+    expect(view.queryByText('Refreshing receipt…')).toBeNull();
+    await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
+    expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent('Receipt 9');
+    expect(handle()).toBeNull();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it.each(['unknown', 'non_payable'] as const)('reconciles late %s payment evidence in the reopened screen', async status => {
+    const { tree, client } = fixture();
+    const view = render(tree); await start(view);
+    let finishCheck!: (value: AuthorityCheckout) => void;
+    client.refreshCheckoutAttempt.mockImplementationOnce(() => new Promise(resolve => { finishCheck = resolve; }));
+    fireEvent.press(view.getByTestId('refresh-qr-payment'));
+    fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('open'));
+    await act(async () => { finishCheck({ ...pending, state: status === 'non_payable' ? 'ready_for_attempt' : 'payment_unresolved', attempts: [{ ...pending.attempts[0], status, financialStatus: status === 'non_payable' ? 'expired' : 'pending', firstVerifiedOutcome: status === 'non_payable' ? 'non_payable' : null }] }); });
+    if (status === 'unknown') {
+      expect(view.getByTestId('retry-qr-verification')).toBeEnabled();
+      expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    } else {
+      expect(view.getByTestId('retry-qr-payment')).toBeEnabled();
+      expect(view.getByTestId('checkout-payment-cash')).toBeEnabled();
+    }
+    expect(view.queryByText('Payment pending…')).toBeNull();
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('restores uncertain cash read-only on remount and exactly replays its saved key and amount', async () => {
     const { tree, client, setCheckout } = fixture();

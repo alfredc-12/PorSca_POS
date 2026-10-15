@@ -74,7 +74,6 @@ export default function CheckoutScreen() {
   }, [done, claimCheckoutCompletionAlert]);
 
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
-  const initialRetainedPayment = useRef(retainedPayment);
 
   const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
   const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
@@ -251,10 +250,13 @@ export default function CheckoutScreen() {
   }, [confirmQrPhPayment, alertCompletion]);
 
   useEffect(() => {
-    const retained = initialRetainedPayment.current;
-    initialRetainedPayment.current = undefined;
-    if (retained?.status === 'paid' || retained?.status === 'paid_unfulfilled') void showQrPayment(retained);
-  }, [showQrPayment]);
+    if (operationBusy) return;
+    const retained = unresolvedQrPayment();
+    if (!retained) return;
+    setMode('qrph');
+    setQrPayment(retained);
+    setQrStatus(retained.status === 'paid' ? receiptRefresh === 'ready' ? 'paid' : 'verification' : retained.status);
+  }, [authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment]);
 
   const startQrPayment = useCallback(async (forceNew = false) => {
     if (operationRef.current || administratorRequired) return;
@@ -299,14 +301,15 @@ export default function CheckoutScreen() {
   }, [qrPayment, refreshQrPhPayment, showQrPayment, administratorRequired]);
 
   const retryReceiptRefresh = useCallback(async () => {
-    if (operationRef.current || !qrPayment || administratorRequired || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
-      || String(authorityCheckout.attempts[authorityCheckout.attempts.length - 1]?.id) !== qrPayment.id) return;
+    const retained = unresolvedQrPayment();
+    if (operationRef.current || retained?.status !== 'paid' || administratorRequired || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
+      || String(authorityCheckout.attempts[authorityCheckout.attempts.length - 1]?.id) !== retained.id) return;
     operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
-    try { await showQrPayment(qrPayment); }
+    try { await showQrPayment(retained); }
     finally { operationRef.current = false; qrBusyRef.current = false; setQrBusy(false); }
-  }, [authorityCheckout, administratorRequired, qrPayment, showQrPayment]);
+  }, [authorityCheckout, administratorRequired, unresolvedQrPayment, showQrPayment]);
 
   // Leaving never cancels an attempt. Hold expiry does not establish financial finality.
   const leaveQrPayment = useCallback(() => {

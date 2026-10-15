@@ -35,8 +35,8 @@ export function checkoutGuidance(input: {
   const sale = machine?.state === 'completed' && authority?.sale && String(authority.sale.id) === machine.saleId;
   if (sale) {
     if (authority.sale!.method === 'cash' || receipt === 'ready') return make('completed', authority.sale!.method === 'cash' ? 'Cash payment and sale are recorded.' : 'Payment confirmed. Stock and history updated.', '', 'done', 'Done');
-    if (receipt === 'failed') return make('interrupted', 'The sale is recorded. Stock or history could not be refreshed.', 'Do not take another payment. Keep this purchase open until the refresh succeeds.', 'refresh', 'Retry receipt refresh');
-    return make('pending', 'The sale is recorded. Updating stock and history.', 'Do not submit another payment.', 'wait', 'Refreshing receipt…');
+    if (receipt === 'running') return make('pending', 'The sale is recorded. Updating stock and history.', 'Do not submit another payment.', 'wait', 'Refreshing receipt…');
+    return make('interrupted', receipt === 'failed' ? 'The sale is recorded. Stock or history could not be refreshed.' : 'The sale is recorded. Refresh stock and history before continuing.', 'Do not take another payment. Keep this purchase open until the refresh succeeds.', 'refresh', receipt === 'failed' ? 'Retry receipt refresh' : 'Refresh receipt');
   }
   const safety = 'Do not take another payment or hand over the goods yet.';
   if (operation === 'cash' || operation === 'qr-create') return make('pending', 'Recording this payment. Please wait.', 'Do not submit another payment.', 'wait', operation === 'cash' ? 'Recording Cash Payment…' : 'Creating QR Ph Payment…');

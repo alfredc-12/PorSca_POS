@@ -28,6 +28,22 @@ function fixture() {
 }
 
 describe('durable authority workflow and machine integration', () => {
+  it('stops a disposed checkout from persisting a late creation response over a replacement identity', async () => {
+    const { authority, client, storage, saved } = fixture();
+    let finishCreation!: (value: AuthorityCheckout) => void;
+    const started = new Promise<void>(resolve => {
+      client.createCheckout.mockImplementationOnce(() => new Promise<AuthorityCheckout>(finish => { finishCreation = finish; resolve(); }));
+    });
+    const creation = authority.prepare(lines);
+    await started;
+    authority.setActive(false);
+    const replacement: CheckoutHandle = { key: 'replacement-key', signature: '[[1,1]]', id: 'replacement-uuid', tender: { key: 'replacement-tender', signature: '[]' } };
+    await storage.save(replacement);
+    finishCreation(open);
+    await expect(creation).rejects.toThrow(/session is no longer active/);
+    await expect(authority.retire()).rejects.toThrow(/session is no longer active/);
+    expect(saved()).toEqual(replacement);
+  });
   it('does not guess missing cash receipt fields as zero', () => {
     const completed: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 9, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'now' } };
     expect(() => checkoutSale(completed, lines)).toThrow(/receipt is incomplete/);

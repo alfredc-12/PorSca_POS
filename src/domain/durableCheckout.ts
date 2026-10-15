@@ -10,7 +10,7 @@ export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
 
 export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string } };
-export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null): Promise<void> };
+export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
 export class CheckoutStorageCorruptionError extends Error {}
 const key = () => `mobile-v3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 function validateItems(items: { productId: number; quantity: number }[]) {
@@ -58,6 +58,7 @@ export class DurableCheckout {
   private corruptStorage = false;
   private corruptWithoutChoice = false;
   private busy = false;
+  private active = true;
   private recoveryFailure?: CheckoutProgress['recoveryFailure'];
   private unresolvedCashRefusal = false;
   get progress(): CheckoutProgress {
@@ -73,12 +74,18 @@ export class DurableCheckout {
   }
   constructor(private client: ApiClient, private storage: CheckoutStorage) {}
 
+  setActive(active: boolean) { this.active = active; }
+  private assertActive() {
+    if (!this.active) throw new CheckoutIdentityError('This checkout session is no longer active.', 409, 'checkout_recovery_required');
+  }
+
   retainedPayment() {
     if (!this.observed?.attempts.some(a => a.method === 'qrph')) return undefined;
     return checkoutPayment(this.observed);
   }
 
   async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertActive();
     if (this.busy) throw new ApiClientError('Checkout operation is already in progress.');
     this.busy = true;
     try {
@@ -103,14 +110,12 @@ export class DurableCheckout {
       this.loaded = true;
     }
   }
-  private async persist() { await this.storage.save(this.handle ?? null); }
+  private async persist() { this.assertActive(); await this.storage.save(this.handle ?? null); }
   private async createCheckout(items: { productId: number; quantity: number }[], creationKey: string) {
     try { return await this.client.createCheckout(items, creationKey); }
     catch (error) {
       if (error instanceof ApiClientError && isDefinitiveQrRejection({ status: error.status }) && !this.handle?.id && this.handle?.key === creationKey) {
-        await this.storage.save(null);
-        this.handle = undefined;
-        this.current = undefined;
+        await this.retire();
       }
       throw error;
     }
@@ -136,6 +141,7 @@ export class DurableCheckout {
     const attributedReason = reason.trim();
     if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
     if ((await this.discoverCheckouts()).length > 0) throw new ApiClientError('Server checkout records were found. Recover one before discarding the unreadable identity.', 409, 'checkout_recovery_required');
+    this.assertActive();
     await this.storage.save(null);
     this.handle = undefined;
     this.corruptStorage = false;
@@ -152,6 +158,7 @@ export class DurableCheckout {
       await this.verifyDiscoveredCheckout(id);
       const checkout = await this.client.recoverCheckout(id);
       const handle: CheckoutHandle = { id, key: key(), signature: signatureForItems(checkout.items) };
+      this.assertActive();
       await this.storage.save(handle);
       this.handle = handle;
       this.corruptStorage = false;
@@ -287,7 +294,10 @@ export class DurableCheckout {
   async retire() {
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
-    await this.storage.save(null); this.handle = undefined; this.current = undefined; this.unresolvedCashRefusal = false;
+    this.assertActive();
+    if (!this.handle) return;
+    await this.storage.save(null, this.handle.key);
+    this.handle = undefined; this.current = undefined; this.unresolvedCashRefusal = false;
   }
 }
 

@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
+import { CheckoutHandle, CheckoutIdentityError, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 /** Retain identity/keys, not financial truth or provider capabilities. Shared across operators on this device. */
 function isCheckoutHandle(value: unknown): value is CheckoutHandle {
@@ -15,10 +15,12 @@ function isCheckoutHandle(value: unknown): value is CheckoutHandle {
   } catch { return false; }
 }
 
+const pendingWrites = new Map<string, Promise<void>>();
+
 export function checkoutStorage(baseUrl: string): CheckoutStorage {
   const hash = Array.from(baseUrl).reduce((n, char) => (Math.imul(n, 31) + char.charCodeAt(0)) | 0, 0);
   const name = `porsca.checkout.v3.${hash >>> 0}`;
-  return {
+  const storage: CheckoutStorage = {
     async load() {
       const value = Platform.OS === 'web' ? globalThis.localStorage.getItem(name) : await SecureStore.getItemAsync(name);
       if (value === null) return null;
@@ -27,12 +29,22 @@ export function checkoutStorage(baseUrl: string): CheckoutStorage {
       if (!isCheckoutHandle(handle)) throw new CheckoutStorageCorruptionError('Stored checkout identity is invalid.');
       return handle;
     },
-    async save(handle) {
-      if (Platform.OS === 'web') {
-        if (handle) globalThis.localStorage.setItem(name, JSON.stringify(handle));
-        else globalThis.localStorage.removeItem(name);
-      } else if (handle) await SecureStore.setItemAsync(name, JSON.stringify(handle));
-      else await SecureStore.deleteItemAsync(name);
+    async save(handle, expectedKey) {
+      const value = handle ? JSON.stringify(handle) : null;
+      const write = (pendingWrites.get(name) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+        if (expectedKey !== undefined && (await storage.load())?.key !== expectedKey) {
+          throw new CheckoutIdentityError('The retained checkout identity changed. Recover the current purchase.', 409, 'checkout_recovery_required');
+        }
+        if (Platform.OS === 'web') {
+          if (value !== null) globalThis.localStorage.setItem(name, value);
+          else globalThis.localStorage.removeItem(name);
+        } else if (value !== null) await SecureStore.setItemAsync(name, value);
+        else await SecureStore.deleteItemAsync(name);
+      });
+      pendingWrites.set(name, write);
+      try { await write; }
+      finally { if (pendingWrites.get(name) === write) pendingWrites.delete(name); }
     },
   };
+  return storage;
 }
