@@ -266,6 +266,26 @@ describe('ApiClient', () => {
     );
   });
 
+  it('retrieves older receipts across pages and deduplicates overlapping sales', async () => {
+    const sale = (id: number) => ({ id, status: 'completed', payment_method: 'cash', total_amount: 100, items: [] });
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response({ data: { items: Array.from({ length: 100 }, (_, i) => sale(i + 1)), pagination: { current_page: 1, last_page: 2, total: 101 } } }))
+      .mockResolvedValueOnce(response({ data: { items: [sale(100), sale(101)], pagination: { current_page: 2, last_page: 2, total: 101 } } }));
+    const client = new ApiClient({ baseUrl: 'https://example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    const sales = await client.listSales();
+    expect(sales).toHaveLength(101);
+    expect(sales[100].id).toBe('101');
+    expect(fetchImpl).toHaveBeenLastCalledWith('https://example.test/api/v1/sales?per_page=100&page=2', expect.anything());
+  });
+
+  it('rejects an incomplete history when a later page fails', async () => {
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response({ data: { items: [], pagination: { current_page: 1, last_page: 2 } } }))
+      .mockRejectedValueOnce(new Error('offline'));
+    const client = new ApiClient({ baseUrl: 'https://example.test/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch });
+    await expect(client.listSales()).rejects.toThrow();
+  });
+
   it.each([
     ['an absent key on a complete empty first page', { items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }, 'not-found'],
     ['an absent key on an incomplete first page', { items: [], pagination: { current_page: 1, last_page: 2, total: 101 } }, 'unknown'],
