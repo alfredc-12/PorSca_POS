@@ -2,9 +2,9 @@ name: Mobile CI
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [main, staging, development]
   push:
-    branches: [main, staging, 'fm/**']
+    branches: [main, staging, development, 'fm/**']
 
 permissions:
   contents: read

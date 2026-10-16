@@ -24,7 +24,7 @@ Run this before requesting review and in CI:
 npm run verify
 ```
 
-It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
+It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. Mobile CI also runs this gate for pull requests targeting `development` and pushes to `development`; see the [workflow](../.github/workflows/mobile-ci.yml) for its triggers. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
 
 ## Merging while the check runners are down (billing lock)
 
