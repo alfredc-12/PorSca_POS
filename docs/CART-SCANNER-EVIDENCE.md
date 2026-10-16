@@ -38,37 +38,37 @@ Suites that carry the new behaviour: `src/domain/barcode.test.ts`,
 `src/domain/cart.test.ts`, `src/domain/checkout.test.ts`,
 `src/domain/revalidation.test.ts`, `src/config/offline.test.ts`,
 `src/hooks/useBarcodeScan.test.ts`, `src/hooks/useDebouncedValue.test.ts`,
-`app/scanner.test.tsx`, `app/(tabs)/pos.test.tsx`,
+`__tests__/app/scanner.test.tsx`, `__tests__/app/(tabs)/pos.test.tsx`,
 `src/context/PosContext.offline.test.tsx`, plus the existing
-`app/checkout.test.tsx`, `src/context/PosContext.test.tsx` and
+`__tests__/app/checkout.test.tsx`, `src/context/PosContext.test.tsx` and
 `src/domain/pos.test.ts`, which were extended in place.
 
 ## Camera test plan (fixtures, no device)
 
-`src/data/barcodeFixtures.ts` holds the plan's fixture set. The camera binding
-itself stays in `app/scanner.tsx`; `useBarcodeScan` owns the decisions, so Jest
-drives the session directly and the screen is driven through the existing
+`src/data/barcodeFixtures.ts` holds the plan's fixture set. The scanner's
+component boundaries are described in [ARCHITECTURE](ARCHITECTURE.md#mobile-app);
+Jest drives the session directly and the screen through the existing
 `expo-camera` component mock (now also exposing `onCameraReady`).
 
 | Case | Scenario | Where |
 | --- | --- | --- |
 | S1 | idle session is armed | `useBarcodeScan.test.ts` |
-| S2 | disarmed until `onCameraReady`; callbacks before then are ignored | `useBarcodeScan.test.ts`, `app/scanner.test.tsx` |
+| S2 | disarmed until `onCameraReady`; callbacks before then are ignored | `useBarcodeScan.test.ts`, `__tests__/app/scanner.test.tsx` |
 | S3 | three native callbacks in one tick produce one lookup | `useBarcodeScan.test.ts` |
-| S4 | a five-second exposure to one symbol produces exactly one answer | `useBarcodeScan.test.ts`, `app/scanner.test.tsx` |
+| S4 | a five-second exposure to one symbol produces exactly one answer | `useBarcodeScan.test.ts`, `__tests__/app/scanner.test.tsx` |
 | S5 | an explicit retry suppresses the same symbol inside the cooldown, then accepts it | `useBarcodeScan.test.ts` |
 | S6 | the cooldown is per symbol, so the next product scans immediately | `useBarcodeScan.test.ts` |
-| S7 | non-numeric, too short and over-long codes are rejected locally with no request | `useBarcodeScan.test.ts`, `app/scanner.test.tsx` |
+| S7 | non-numeric, too short and over-long codes are rejected locally with no request | `useBarcodeScan.test.ts`, `__tests__/app/scanner.test.tsx` |
 | S8 | unknown code with a failing check digit names the misread risk | `useBarcodeScan.test.ts` |
 | S9 | unknown code with a valid check digit keeps the plain recovery copy | `useBarcodeScan.test.ts` |
 | S10 | resolved product and cart quantity pass through the session | `useBarcodeScan.test.ts` |
-| S11 | out-of-stock and stock-limit each get their own headline | `useBarcodeScan.test.ts`, `app/scanner.test.tsx` |
+| S11 | out-of-stock and stock-limit each get their own headline | `useBarcodeScan.test.ts`, `__tests__/app/scanner.test.tsx` |
 | S12 | unreachable API keeps the resolver copy and the fallback flag | `useBarcodeScan.test.ts` |
 | S13 | a rejected resolver never leaves the session busy or locked | `useBarcodeScan.test.ts` |
-| C1 | UPC-A reported by iOS as `0036000291452` retries the 12-digit form and adds one line | `app/scanner.test.tsx` |
-| C2 | POS add confirms in place, then returns to the cart by itself | `app/scanner.test.tsx` |
-| C3 | inventory mode opens the product, and offers product creation when unknown | `app/scanner.test.tsx` |
-| C4 | a resolved failure re-arms only when the cashier taps "Scan again" | `app/scanner.test.tsx` |
+| C1 | UPC-A reported by iOS as `0036000291452` retries the 12-digit form and adds one line | `__tests__/app/scanner.test.tsx` |
+| C2 | POS add confirms in place, then returns to the cart by itself | `__tests__/app/scanner.test.tsx` |
+| C3 | inventory mode opens the product, and offers product creation when unknown | `__tests__/app/scanner.test.tsx` |
+| C4 | a resolved failure re-arms only when the cashier taps "Scan again" | `__tests__/app/scanner.test.tsx` |
 
 Fixtures used: `4800000000019` (in stock), `4800000000026` (low stock),
 `4800000000033` (out of stock), `4800000000040` (high stock),
@@ -101,7 +101,7 @@ This environment has no printer and no physical device, so that step was **not
 run** and no device-decode evidence is claimed. What exists instead:
 
 - the same assertion at the logic and component level (S4 and the five-second
-  exposure case in `app/scanner.test.tsx`), driven through the camera mock;
+  exposure case in `__tests__/app/scanner.test.tsx`), driven through the camera mock;
 - `scanFromURLAsync` was deliberately **not** used to fake coverage: Expo
   documents image-based scanning as QR-only on iOS, so it cannot stand in for a
   live EAN/UPC decode.
@@ -161,11 +161,12 @@ these defects. Each is fixed on this branch with the tests listed.
 ## Residual limitations and risks
 
 - The camera binding is not device-verified (above).
-- Same-symbol suppression is 1200 ms (`SAME_BARCODE_COOLDOWN_MS`), at the top of
-  the 500-1500 ms retail range. The primary duplicate defence is that the camera
-  callback is disarmed as soon as a scan resolves; the cooldown covers the window
-  where callbacks are already queued natively and the moment right after an
-  explicit retry. Both are named constants and can be tuned after the manual pass.
+- POS same-symbol suppression combines a 700 ms release guard
+  (`SAME_SYMBOL_RELEASE_MS`) with the 1200 ms cooldown
+  (`SAME_BARCODE_COOLDOWN_MS`). While a POS lookup is pending, its callback
+  observes the in-flight symbol; after a successful add it stays armed. Failures
+  and inventory remain disarmed. Native decoder cadence is not device-verified,
+  so these timings await the manual pass.
 - Search debounce is 280 ms (`SEARCH_DEBOUNCE_MS`). 200 ms may feel better on a
   fast LAN.
 - Revalidation reads the product record per cart line. Whether Laravel's

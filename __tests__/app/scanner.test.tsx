@@ -183,8 +183,8 @@ describe('ScannerScreen', () => {
     expect(scanner.cart()).toBe('lines:1 qty:1 total:25');
     expect(scanner.getByTestId('scanner-outcome-message')).toHaveTextContent('Coca-Cola 500mL added to cart.');
     expect(scanner.getByText(/1 in this sale/)).toBeTruthy();
-    // The resolved state disarms the camera callback: a failing scan cannot refire itself.
-    expect(scanner.isArmed()).toBe(false);
+    // POS success keeps the callback armed for a distinct next item.
+    expect(scanner.isArmed()).toBe(true);
   });
 
   it('produces exactly one cart line from a five-second exposure to one symbol', async () => {
@@ -218,6 +218,76 @@ describe('ScannerScreen', () => {
 
       scanner.scan(EAN13_IN_STOCK);
       await act(async () => { await Promise.resolve(); });
+      expect(mockRouter.back).not.toHaveBeenCalled();
+
+      act(() => jest.advanceTimersByTime(ADDED_CONFIRMATION_MS));
+      expect(mockRouter.back).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps inventory inspection disarmed and open after a successful scan', async () => {
+    jest.useFakeTimers();
+    try {
+      mockIsAdmin = false;
+      const scanner = renderScanner({ mode: 'inventory', fetchImpl: apiFetch() });
+      scanner.startCamera();
+      scanner.scan(EAN13_IN_STOCK);
+
+      await waitFor(() => expect(scanner.getByTestId('scanner-outcome-title')).toHaveTextContent('Product found'));
+      expect(scanner.isArmed()).toBe(false);
+      expect(scanner.cart()).toBe('lines:0 qty:0 total:0');
+
+      act(() => jest.advanceTimersByTime(ADDED_CONFIRMATION_MS));
+      expect(mockRouter.back).not.toHaveBeenCalled();
+      expect(scanner.getByTestId('scanner-outcome-title')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('pauses the success auto-close while a replacement scan is resolving', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchImpl = apiFetch();
+      const normalFetch = fetchImpl.getMockImplementation()!;
+      let finishSecond!: (response: Response) => void;
+      fetchImpl.mockImplementationOnce((url: string) => normalFetch(url));
+      fetchImpl.mockImplementationOnce(() => new Promise<Response>((resolve) => { finishSecond = resolve; }));
+      const scanner = renderScanner({ fetchImpl });
+      scanner.startCamera();
+
+      scanner.scan(EAN13_IN_STOCK);
+      await waitFor(() => expect(scanner.getByTestId('scanner-outcome-title')).toHaveTextContent('Product found'));
+      act(() => jest.advanceTimersByTime(1000));
+      scanner.scan(UPC_A_VALID);
+      expect(scanner.isArmed()).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+      act(() => jest.advanceTimersByTime(200));
+      expect(mockRouter.back).not.toHaveBeenCalled();
+      act(() => jest.advanceTimersByTime(200));
+      await act(async () => {
+        finishSecond({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              id: 'prd-upc',
+              barcode: UPC_A_VALID,
+              name: 'UPC-A Crackers',
+              price: 1200,
+              stock: { quantity: 30, reorder_level: 5, status: 'in_stock' },
+            },
+          }),
+        } as Response);
+        await Promise.resolve();
+      });
+      await waitFor(() => {
+        expect(scanner.cart()).toBe('lines:2 qty:2 total:37');
+        expect(scanner.getByText('UPC-A Crackers')).toBeTruthy();
+      });
       expect(mockRouter.back).not.toHaveBeenCalled();
 
       act(() => jest.advanceTimersByTime(ADDED_CONFIRMATION_MS));

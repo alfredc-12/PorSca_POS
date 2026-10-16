@@ -36,7 +36,7 @@ export function BarcodeScanner({ inventoryMode = false, onClose = closeScannerRo
   const delivered = useRef(false);
   const { addByBarcode, lookupProductByBarcode } = usePos();
   const resolve = inventoryMode ? lookupProductByBarcode : addByBarcode;
-  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve, cameraReady: cameraReady && !cameraSettingsOpen });
+  const { busy, outcome, scanning, handleBarcode, rearm } = useBarcodeScan({ resolve, cameraReady: cameraReady && !cameraSettingsOpen, stayArmedAfterSuccess: !inventoryMode });
   const changeCameraSettings = (settings: TemporaryCameraSettings) => {
     if (busy) return;
     if (settings.deviceId !== cameraSettings.deviceId) {
@@ -61,10 +61,10 @@ export function BarcodeScanner({ inventoryMode = false, onClose = closeScannerRo
 
   // A POS scan adds the product immediately and confirms it in place.
   useEffect(() => {
-    if (inventoryMode || outcome?.kind !== 'found') return;
+    if (inventoryMode || busy || outcome?.kind !== 'found') return;
     const timer = setTimeout(() => onClose(), ADDED_CONFIRMATION_MS);
     return () => clearTimeout(timer);
-  }, [inventoryMode, outcome, onClose]);
+  }, [busy, inventoryMode, outcome, onClose]);
 
   if (!permission) return <Screen title="Starting camera"><ActivityIndicator accessibilityLabel="Checking camera permission" /><AppButton label="Close scanner" onPress={onClose} variant="secondary" /></Screen>;
 
@@ -232,7 +232,7 @@ function ScanOutcomeCard({
         )}
       </View>
 
-      {added ? <Text style={styles.resultHint}>Returning to the cart…</Text> : null}
+      {added ? <Text style={styles.resultHint}>Keep scanning, or tap Done</Text> : null}
     </View>
   );
 }
