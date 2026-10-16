@@ -244,7 +244,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
   });
 
-  it('keeps the retained checkout amount when the cart changes while payment is away', () => {
+  it('shows only the authoritative basket when the editable cart changes while payment is away', () => {
     const retainedCheckout: AuthorityCheckout = {
       id: 'test-checkout', storeId: '1', state: 'payment_unresolved', revision: 1, amountCentavos: 3500, currency: 'PHP',
       items: [{ productId: 1, name: product.name, quantity: 1, unitPriceCentavos: 3500 }],
@@ -263,7 +263,11 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const view = render(<CheckoutScreen />);
 
     expect(view.getByText('Payment pending…')).toBeTruthy();
-    expect(view.getByText('Barako Coffee')).toBeTruthy();
+    expect(view.queryByText('Barako Coffee')).toBeNull();
+    expect(view.getByText(product.name)).toBeTruthy();
+    expect(view.getByText('Qty 1 • ₱35.00 each')).toBeTruthy();
+    expect(view.getByText('1 item in this sale')).toBeTruthy();
+    expect(mockUsePos().cart).toEqual([...cart, { product: barako, quantity: 1 }]);
     expect(view.queryByText('₱220.00')).toBeNull();
     expect(view.getAllByText('₱35.00').length).toBeGreaterThan(0);
   });

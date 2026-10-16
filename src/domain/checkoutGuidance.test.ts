@@ -18,6 +18,7 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], finalEvidence: { outcome: 'paid', reference: 'e' }, payment: 'paid' }] } })).toMatchObject({ category: 'pending', body: 'Payment is received. Still recording the sale.' });
   });
   it('gates QR completion on reads and offers receipt-only retry', () => {
+    expect(checkoutGuidance({ machine: completed, authority })).toMatchObject({ category: 'interrupted', action: 'refresh', label: 'Refresh receipt' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'running' })).toMatchObject({ category: 'pending', body: 'The sale is recorded. Updating stock and history.', action: 'wait' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'failed' })).toMatchObject({ category: 'interrupted', action: 'refresh' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'ready' })).toMatchObject({ category: 'completed', body: 'Payment confirmed. Stock and history updated.' });
@@ -32,6 +33,17 @@ describe('cashier guidance from trusted truth', () => {
   it('offers exact cash replay only without a known attempt', () => {
     expect(checkoutGuidance({ machine: base, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ action: 'cash-retry', locked: true });
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] }, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ action: 'recover' });
+  });
+  it('offers the exact cash retry when only an older non-payable QR attempt is recorded', () => {
+    const oldQr = { ...pending, state: 'ready-for-new-attempt' as const, attempts: [{ ...pending.attempts[0], payment: 'non-payable' as const, finalEvidence: { outcome: 'non-payable' as const, reference: 'verified' } }] };
+    expect(checkoutGuidance({ machine: oldQr, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ category: 'interrupted', action: 'cash-retry', label: 'Retry saving cash payment', locked: true });
+  });
+  it('offers exact QR replay while historical QR evidence cannot identify the outstanding submission', () => {
+    const firstFailed = { ...pending, state: 'ready-for-new-attempt' as const, attempts: [{ ...pending.attempts[0], payment: 'non-payable' as const, finalEvidence: { outcome: 'non-payable' as const, reference: 'verified' } }] };
+    for (const machine of [firstFailed, pending, completed]) {
+      expect(checkoutGuidance({ machine, authority: machine === completed ? authority : undefined, progress: { uncertainTender: 'qrph' } })).toMatchObject({ category: 'interrupted', action: 'start', label: 'Retry QR Ph Payment', locked: true });
+    }
+    expect(checkoutGuidance({ machine: firstFailed, progress: { uncertainTender: 'qrph' }, operation: 'qr-create' })).toMatchObject({ category: 'pending', action: 'wait' });
   });
   it('uses recovery for stored cash pending and exact QR retry for no-id uncertainty', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] } })).toMatchObject({ body: 'We are still waiting for this cash sale.', action: 'recover' });

@@ -148,6 +148,9 @@ function describeFailureBody(failure: Failure, screen: FailureScreen): Omit<Desc
 }
 
 function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 'reference'> {
+  if (failure.code === 'revalidation_required') {
+    return { title: 'Review the price before payment', body: 'The shop price changed. No payment was submitted. Check the current price in sale help before confirming again.', actionLabel: 'Check the current price', action: 'fix-fields' };
+  }
   if (failure.code === 'insufficient_stock') {
     return { title: 'Stock changed', body: 'Some items are no longer available. Refresh stock and remove the item, then try again. Your cart is still here.', actionLabel: 'Refresh and remove', action: 'retry' };
   }

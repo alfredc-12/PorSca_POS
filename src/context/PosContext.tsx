@@ -6,7 +6,7 @@ import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } fr
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
-import { CheckoutStorage, DurableCheckout, checkoutPayment, checkoutSale } from '@/src/domain/durableCheckout';
+import { CheckoutStorage, DurableCheckout, checkoutSale } from '@/src/domain/durableCheckout';
 import { checkoutStorage } from '@/src/api/checkoutStorage';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from '@/src/domain/checkoutMachine';
@@ -150,6 +150,10 @@ export function PosProvider({
     if (completionAlerts.current.has(saleId)) return false;
     completionAlerts.current.add(saleId); return true;
   }, []);
+  useEffect(() => {
+    authority.setActive(true);
+    return () => authority.setActive(false);
+  }, [authority]);
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }
@@ -695,7 +699,12 @@ export function PosProvider({
     commitCart({ type: 'discard-undo' });
     if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     if (!cartRef.current.lines.length) throw new ApiClientError('The cart is empty.');
-    try { return checkoutPayment(await authority.tender(cartRef.current.lines, 'qrph', undefined, forceNew)); }
+    try {
+      await authority.tender(cartRef.current.lines, 'qrph', undefined, forceNew);
+      const payment = authority.retainedPayment();
+      if (!payment) throw new ApiClientError('Retry the saved QR submission.', 409, 'checkout_recovery_required');
+      return payment;
+    }
     finally { setAuthorityCheckout(authority.current); }
   }), [exclusive, authority, client, commitCart]);
 
@@ -705,7 +714,9 @@ export function PosProvider({
     try {
       const checkout = await authority.refresh(id);
       setAuthorityCheckout(checkout);
-      return checkoutPayment(checkout);
+      const payment = authority.retainedPayment();
+      if (!payment) throw new ApiClientError('Retry the saved QR submission.', 409, 'checkout_recovery_required');
+      return payment;
     } catch (error) { setAuthorityCheckout(authority.current); throw error; }
   }), [exclusive, authority]);
 
@@ -723,7 +734,7 @@ export function PosProvider({
       if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
       return;
     }
-    if (checkout.state !== 'completed' || !checkout.sale || checkoutPayment(checkout).id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
+    if (checkout.state !== 'completed' || checkout.sale?.method !== 'qrph' || authority.retainedPayment()?.status !== 'paid' || authority.retainedPayment()?.id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
     const saleLines = checkout.items.map(item => {
       const id = String(item.productId);
       const price = item.unitPriceCentavos / 100;

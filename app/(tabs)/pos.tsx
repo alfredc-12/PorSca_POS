@@ -155,7 +155,7 @@ export default function PosScreen() {
       </View> : null}
       {recoverableCheckouts.map(checkout => <Pressable key={checkout.id} accessibilityRole="button" onPress={() => {
         void recoverCheckout(checkout.id).then(() => router.push('/checkout')).catch(() => setCartNotice('Resolve the device purchase before recovering another checkout.'));
-      }}><Text>Recover {checkout.id} • {checkout.state} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}
+      }}><Text>Resume sale • {checkout.items.map(item => `${item.name} × ${item.quantity}`).join(', ')} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}
       <View style={styles.searchRow}>
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />

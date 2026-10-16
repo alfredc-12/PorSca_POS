@@ -3,6 +3,7 @@ import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
 import { ApiClient, ApiClientError } from '@/src/api/client';
+import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Product } from '@/src/types';
@@ -78,6 +79,30 @@ describe('POS cart consistency', () => {
   beforeEach(() => {
     jest.useRealTimers();
     router.push.mockReset();
+  });
+
+  it('describes each recoverable sale by its basket and amount while recovering its internal identity', async () => {
+    const first: AuthorityCheckout = { id: 'internal-uuid-one', storeId: 'shop', state: 'payment_unresolved', revision: 1, amountCentavos: 4400, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 2, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
+    const second: AuthorityCheckout = { ...first, id: 'internal-uuid-two', state: 'ready_for_attempt', amountCentavos: 900, items: [{ productId: 2, name: plenty.name, quantity: 1, unitPriceCentavos: 900 }] };
+    const checkouts = [first, second];
+    const recoverCheckout = jest.fn(async (id: string) => checkouts.find(checkout => checkout.id === id)!);
+    const recoveryClient = {
+      isConfigured: true,
+      listCheckouts: jest.fn().mockResolvedValue({ items: checkouts, pagination: { current_page: 1, last_page: 1, total: 2 } }),
+      getCheckout: jest.fn(async (id: string) => checkouts.find(checkout => checkout.id === id)!),
+      recoverCheckout,
+      getProduct: jest.fn().mockResolvedValue({ ...plenty, id: '2' }),
+      listProducts: jest.fn().mockResolvedValue([]),
+    } as unknown as ApiClient;
+    const checkoutStore: CheckoutStorage = { load: async () => null, save: async () => undefined };
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={checkoutStore}><PosScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByRole('button', { name: `Resume sale • ${single.name} × 2 • ₱44.00` })).toBeTruthy());
+    const entry = view.getByRole('button', { name: `Resume sale • ${plenty.name} × 1 • ₱9.00` });
+    expect(view.queryByText(/internal-uuid|payment_unresolved|ready_for_attempt/)).toBeNull();
+    await act(async () => { fireEvent.press(entry); });
+    expect(recoverCheckout).toHaveBeenCalledTimes(1);
+    expect(recoverCheckout).toHaveBeenCalledWith(second.id);
+    expect(router.push).toHaveBeenCalledWith('/checkout');
   });
 
   it('requires an attributed reason and confirmation to discard a corrupt identity after empty discovery', async () => {
