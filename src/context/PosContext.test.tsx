@@ -394,6 +394,29 @@ describe('POS durable checkout integration', () => {
     expect(second.result.current.cart[0].quantity).toBe(3);
     expect(handle()).toBeNull();
   });
+  it('recovers the committed receipt when cash is retried after a cart price change', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.checkoutCash.mockRejectedValueOnce(new ApiClientError('lost response'));
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toThrow('lost response'); });
+    const updatedProduct = { ...product, name: 'Renamed Coffee', price: 30 };
+    client.listProducts.mockResolvedValue([updatedProduct]);
+    await act(async () => { await result.current.refreshProducts(); });
+    await act(async () => { result.current.clearCart(); result.current.addProductChecked(updatedProduct); });
+    expect(result.current.cart[0].product.price).toBe(30);
+    client.getCheckout.mockResolvedValue({ ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } });
+    const receipt = {
+      id: '9', total: 25, cashReceived: 100, change: 75,
+      items: [{ product: { id: '1', name: 'Coffee', price: 25 }, quantity: 1 }],
+    };
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject(receipt); });
+    await waitFor(() => expect(result.current.salesState).toBe('ready'));
+    expect(result.current.checkoutCompletion?.sale).toMatchObject(receipt);
+    expect(result.current.sales[0]).toMatchObject(receipt);
+    expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+    expect(handle()).toBeNull();
+    expect(result.current.cart).toHaveLength(0);
+  });
   it('resolves a lost cash response on restart without charging the purchase twice', async () => {
     const { wrapper, client, handle } = fixture();
     const first = renderHook(() => usePos(), { wrapper }); await add(first.result);
@@ -406,7 +429,7 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await second.result.current.openPosCheckouts(); });
     expect(client.checkoutCash).toHaveBeenCalledTimes(1);
     expect(handle()).toBeNull();
-    expect(second.result.current.sales[0]).toMatchObject({ id: '9', paymentMethod: 'cash' });
+    expect(second.result.current.sales[0]).toMatchObject({ id: '9', paymentMethod: 'cash', items: [{ product: { id: '1', name: 'Coffee', price: 25 }, quantity: 1 }] });
     expect(second.result.current.cart).toHaveLength(0);
   });
 

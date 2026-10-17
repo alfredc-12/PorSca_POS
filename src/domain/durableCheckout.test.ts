@@ -47,7 +47,25 @@ describe('durable authority workflow and machine integration', () => {
   });
   it('does not guess missing cash receipt fields as zero', () => {
     const completed: AuthorityCheckout = { ...open, state: 'completed', sale: { id: 9, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'now' } };
-    expect(() => checkoutSale(completed, lines)).toThrow(/receipt is incomplete/);
+    expect(() => checkoutSale(completed)).toThrow(/receipt is incomplete/);
+  });
+  it.each(['cash', 'qrph'] as const)('builds %s receipt items from the committed snapshot', method => {
+    const completed: AuthorityCheckout = {
+      ...open, state: 'completed', amountCentavos: 3031,
+      items: [
+        { productId: 12, name: 'Committed Coffee', quantity: 2, unitPriceCentavos: 1010 },
+        { productId: 34, name: 'Committed Tea', quantity: 1, unitPriceCentavos: 1011 },
+      ],
+      sale: { id: 9, method, amountCentavos: 3031, cashReceivedCentavos: method === 'cash' ? 5000 : null, changeAmountCentavos: method === 'cash' ? 1969 : null, completedAt: 'now' },
+    };
+    expect(checkoutSale(completed)).toEqual({
+      id: '9', total: 30.31, paymentMethod: method, status: 'paid', createdAt: 'now',
+      cashReceived: method === 'cash' ? 50 : undefined, change: method === 'cash' ? 19.69 : undefined,
+      items: [
+        { product: { id: '12', name: 'Committed Coffee', barcode: '', price: 10.1, stock: 0 }, quantity: 2 },
+        { product: { id: '34', name: 'Committed Tea', barcode: '', price: 10.11, stock: 0 }, quantity: 1 },
+      ],
+    });
   });
   it('rehydrates exact cash uncertainty from stored tender without exposing its key', async () => {
     const { client, storage } = fixture();
