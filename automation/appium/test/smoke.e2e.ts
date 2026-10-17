@@ -7,10 +7,18 @@
 import { $$, $, browser, expect } from '@wdio/globals';
 import { beforeEach } from 'mocha';
 
-type SmokeTest = (name: string, fn: () => Promise<void>) => void;
-const smoke: SmokeTest = process.env.APPIUM_RUN === 'true' ? it : (name) => {
-  console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal staging seam.`);
-};
+type SmokeTest = (name: string, fn: () => Promise<void>, timeoutMs?: number) => void;
+// The runnable budget has to be set when the case is defined, not from inside
+// its body: the runner arms its own race against the runnable timeout before
+// the body executes, so a later `this.timeout()` call arrives too late.
+const smoke: SmokeTest = process.env.APPIUM_RUN === 'true'
+  ? (name, fn, timeoutMs) => {
+    const test = it(name, fn);
+    if (timeoutMs !== undefined) test.timeout(timeoutMs);
+  }
+  : (name) => {
+    console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal staging seam.`);
+  };
 
 const productSearch = process.env.APPIUM_PRODUCT_SEARCH ?? 'Sinandomeng Rice';
 const productText = process.env.APPIUM_PRODUCT_TEXT ?? 'Sinandomeng Rice 5kg';
@@ -18,6 +26,11 @@ const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000019';
 const cashReceived = process.env.APPIUM_CASH_AMOUNT ?? '400';
 const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);
+// The stock case adds the product one search at a time until the cart refuses
+// the quantity, so its wall time grows with the recorded stock (20 units in the
+// qa-baseline-2026-10 seed) and outgrows the shared 120 s case timeout. Give
+// this case its own bounded budget instead of shortening the attempt count.
+const stockCaseTimeoutMs = Number(process.env.APPIUM_STOCK_TIMEOUT_MS ?? 240000);
 const qrStatusMessages = {
   pending: 'Payment pending…',
   unknown: 'Payment interrupted',
@@ -32,6 +45,34 @@ if (!Object.hasOwn(qrStatusMessages, qrExpectedStatus)) {
   throw new Error(`Unsupported APPIUM_QR_EXPECTED_STATUS: ${qrExpectedStatus}`);
 }
 
+// Metro LAN origin for a development (dev-client) build. Setting it lets the
+// hook open the dev server itself after a reset; leave it unset for a
+// standalone/preview artifact, where no development launcher ever appears.
+const devServerUrl = process.env.APPIUM_DEV_SERVER_URL;
+const devServerLaunchTimeoutMs = Number(process.env.APPIUM_DEV_SERVER_LAUNCH_TIMEOUT_MS ?? 90000);
+const appUnavailableMsg = 'Neither login nor the signed-in POS became available.';
+
+// expo-dev-client renders its own layer over the app: the one-time
+// developer-menu panel it shows on the first launch after a data reset, and the
+// developer menu itself. Both hide the app until the back button closes them.
+const devClientLayerTexts = ['This is the developer menu', 'Open DevTools'];
+
+type MobileDriver = {
+  execute: (script: string, args: unknown) => Promise<unknown>;
+  activateApp: (packageName: string) => Promise<unknown>;
+  getWindowSize: () => Promise<{ width: number; height: number }>;
+  hideKeyboard: () => Promise<boolean>;
+  pause: (ms: number) => Promise<unknown>;
+  waitUntil: (
+    condition: () => Promise<boolean>,
+    options: { timeoutMsg: string; timeout?: number },
+  ) => Promise<unknown>;
+};
+
+function androidDriver(): MobileDriver {
+  return browser as unknown as MobileDriver;
+}
+
 function byId(id: string) {
   // React Native testID is an Android resource-id, not a content-description.
   return $(`android=new UiSelector().resourceId(${JSON.stringify(id)})`);
@@ -41,9 +82,76 @@ function byText(value: string) {
   return $(`android=new UiSelector().textContains(${JSON.stringify(value)})`);
 }
 
-async function tap(id: string) {
-  await byId(id).waitForDisplayed();
-  await byId(id).click();
+function tap(id: string) {
+  return tapElement(byId(id));
+}
+
+async function tapElement(element: ReturnType<typeof byId>) {
+  await (await reveal(element)).click();
+}
+
+// UiAutomator exposes only the on-screen part of a scrollable screen, and a
+// focused field can hide the target behind the soft keyboard, so a control
+// further down a form may need the keyboard gone and a swipe before it can be
+// tapped. Screens without a scroll container, like the POS, ignore the swipe.
+async function reveal(element: ReturnType<typeof byId>) {
+  if (await element.isDisplayed().catch(() => false)) return element;
+  const { width, height } = await androidDriver().getWindowSize();
+  const x = Math.round(width / 2);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await closeKeyboard();
+    if (await element.isDisplayed().catch(() => false)) return element;
+    await androidDriver().execute('mobile: shell', {
+      command: 'input',
+      args: ['swipe', `${x}`, `${Math.round(height * 0.7)}`, `${x}`, `${Math.round(height * 0.3)}`, '300'],
+    });
+    await androidDriver().pause(250);
+    if (await element.isDisplayed().catch(() => false)) return element;
+  }
+  // Nothing was revealed: let the caller's own timeout report the failure.
+  await element.waitForDisplayed();
+  return element;
+}
+
+// A focused field keeps the soft keyboard up, and the keyboard clips the cart
+// summary, the payment card and the tender action on a phone-sized viewport.
+// The driver only presses a key while a keyboard is actually shown, so this
+// never navigates back.
+async function closeKeyboard() {
+  await androidDriver().hideKeyboard().catch(() => false);
+}
+
+async function typeCashReceived(amount: string) {
+  await byId('cash-received-input').setValue(amount);
+  await closeKeyboard();
+}
+
+async function devClientLayerVisible() {
+  for (const text of devClientLayerTexts) {
+    if (await byText(text).isDisplayed().catch(() => false)) return true;
+  }
+  return false;
+}
+
+// A reset launch of an Expo dev-client build lands on the development launcher,
+// which never reopens the remembered dev server on its own, and the deep link
+// below is the only path from that screen back to the JS app. It returns false
+// when the affordance is unconfigured, so a standalone/preview run is unchanged.
+async function reopenDevelopmentApp(mobileDriver: MobileDriver, appIsUp: () => Promise<boolean>) {
+  if (!devServerUrl) return false;
+  await mobileDriver.execute('mobile: shell', {
+    command: 'am',
+    args: ['start', '-a', 'android.intent.action.VIEW', '-d',
+      `porsca://expo-development-client/?url=${devServerUrl}`],
+  });
+  await mobileDriver.waitUntil(
+    async () => await appIsUp() || await devClientLayerVisible(),
+    { timeout: devServerLaunchTimeoutMs, timeoutMsg: appUnavailableMsg },
+  );
+  if (await devClientLayerVisible()) {
+    await mobileDriver.execute('mobile: pressKey', { keycode: 4 });
+  }
+  return true;
 }
 
 async function searchAndSelect(searchTerm: string) {
@@ -52,6 +160,9 @@ async function searchAndSelect(searchTerm: string) {
   await searchInput.clearValue();
   await searchInput.setValue(searchTerm);
   await tap('search-result');
+  // The search field keeps focus, so the soft keyboard stays up and hides the
+  // cart and payment controls below it.
+  await closeKeyboard();
 }
 
 async function finishReceipt(method: 'cash' | 'qrph') {
@@ -67,15 +178,15 @@ async function finishReceipt(method: 'cash' | 'qrph') {
     await byText('Cash received ₱').waitForDisplayed();
     await byText('Change to give ₱').waitForDisplayed();
   }
-  await byText('Done').click();
-  await byId(`transaction-${receiptId}`).waitForDisplayed();
+  await tapElement(byText('Done'));
+  await (await reveal(byId(`transaction-${receiptId}`))).waitForDisplayed();
   return receiptId;
 }
 
 async function cashCheckout(searchTerm: string) {
   await searchAndSelect(searchTerm);
   await tap('proceed-to-payment');
-  await byId('cash-received-input').setValue(cashReceived);
+  await typeCashReceived(cashReceived);
   await tap('confirm-cash-payment');
   return finishReceipt('cash');
 }
@@ -97,22 +208,34 @@ async function presentBarcodeFixture(barcode: string) {
 
 describe('PorSca required cashier smoke flows', () => {
   beforeEach(async () => {
-    const mobileDriver = browser as unknown as {
-      execute: (script: string, args: unknown) => Promise<unknown>;
-      activateApp: (packageName: string) => Promise<unknown>;
-      waitUntil: (condition: () => Promise<boolean>, options: { timeoutMsg: string }) => Promise<unknown>;
-    };
+    const mobileDriver = androidDriver();
+    const appPackage = process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos';
     if (process.env.APPIUM_RESET_APP !== 'false') {
       await mobileDriver.execute('mobile: shell', {
         command: 'pm',
-        args: ['clear', process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos'],
+        args: ['clear', appPackage],
       });
     }
-    await mobileDriver.activateApp(process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos');
-    await mobileDriver.waitUntil(async () =>
+    // A data reset also revokes the camera runtime permission, and only a human
+    // can answer the Android system dialog that would then cover the barcode
+    // case. Grant it as seam setup so the human's only job is holding the label.
+    await mobileDriver.execute('mobile: shell', {
+      command: 'pm',
+      args: ['grant', appPackage, 'android.permission.CAMERA'],
+    });
+    await mobileDriver.activateApp(appPackage);
+    const loginOrPosVisible = async () =>
       await byId('login-email-input').isDisplayed().catch(() => false) ||
-      await byId('pos-search-input').isDisplayed().catch(() => false),
-    { timeoutMsg: 'Neither login nor the signed-in POS became available.' });
+      await byId('pos-search-input').isDisplayed().catch(() => false);
+    const appIsUp = await mobileDriver
+      .waitUntil(loginOrPosVisible, { timeoutMsg: appUnavailableMsg })
+      .then(() => true, () => false);
+    if (!appIsUp && await reopenDevelopmentApp(mobileDriver, loginOrPosVisible)) {
+      await mobileDriver.waitUntil(loginOrPosVisible, {
+        timeout: devServerLaunchTimeoutMs,
+        timeoutMsg: appUnavailableMsg,
+      });
+    }
     if (await byId('login-email-input').isDisplayed().catch(() => false)) {
       const email = process.env.APPIUM_LOGIN_EMAIL;
       const password = process.env.APPIUM_LOGIN_PASSWORD;
@@ -131,7 +254,7 @@ describe('PorSca required cashier smoke flows', () => {
   smoke('barcode scan to cash checkout', async () => {
     await presentBarcodeFixture(barcodeFixture);
     await tap('proceed-to-payment');
-    await byId('cash-received-input').setValue(cashReceived);
+    await typeCashReceived(cashReceived);
     await tap('confirm-cash-payment');
     await finishReceipt('cash');
   });
@@ -143,15 +266,15 @@ describe('PorSca required cashier smoke flows', () => {
     }
     await byId('cart-limit-notice').waitForDisplayed();
     await byText('Reduce the quantity before adding more.').waitForDisplayed();
-  });
+  }, stockCaseTimeoutMs);
 
   smoke('rejects insufficient cash', async () => {
     await searchAndSelect(productSearch);
     await tap('proceed-to-payment');
-    await byId('cash-received-input').setValue('1');
+    await typeCashReceived('1');
     await byId('cash-tender-feedback').waitForDisplayed();
     await byText('Add cash before confirming.').waitForDisplayed();
-    await expect(byId('confirm-cash-payment')).toBeDisabled();
+    await expect(await reveal(byId('confirm-cash-payment'))).toBeDisabled();
   });
 
   smoke('starts the QR Ph staging flow through Laravel', async () => {
@@ -164,7 +287,7 @@ describe('PorSca required cashier smoke flows', () => {
       await finishReceipt('qrph');
       return;
     }
-    await byId('qr-payment-status').waitForDisplayed();
+    await (await reveal(byId('qr-payment-status'))).waitForDisplayed();
     await expect(byId('qr-payment-status')).toHaveText(
       qrStatusMessages[qrExpectedStatus as keyof typeof qrStatusMessages],
     );
@@ -192,13 +315,13 @@ describe('PorSca required cashier smoke flows', () => {
   smoke('does not show duplicate history rows after a repeated confirmation', async () => {
     await searchAndSelect(productSearch);
     await tap('proceed-to-payment');
-    await byId('cash-received-input').setValue(cashReceived);
+    await typeCashReceived(cashReceived);
     // The first tap disables the action while the idempotent request is in
     // flight. A second tap is therefore harmless and cannot make a duplicate
     // visible transaction. Server exactness is separately covered by the API
     // contract and the mobile provider test.
-    await byId('confirm-cash-payment').click();
-    await byId('confirm-cash-payment').click().catch(() => undefined);
+    await tapElement(byId('confirm-cash-payment'));
+    await tapElement(byId('confirm-cash-payment')).catch(() => undefined);
     const receiptId = await finishReceipt('cash');
     const rows = await $$(`android=new UiSelector().resourceId(${JSON.stringify(`transaction-${receiptId}`)})`);
     expect(rows.length).toBe(1);

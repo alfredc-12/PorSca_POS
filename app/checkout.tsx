@@ -60,11 +60,19 @@ export default function CheckoutScreen() {
   const handledPaidPayment = useRef<string | undefined>(undefined);
   const navigatedDone = useRef(false);
   const visibleRef = useRef(false);
+  // Done used to acknowledge the completion and leave in one commit. The native
+  // stack is removing this screen then, and swapping the completed receipt for
+  // the empty-cart tree in that same commit makes Fabric re-parent the
+  // receipt's views inside the outgoing screen (Android: addViewAt ... View
+  // already has a parent), which kills the React host. Leave first, and
+  // acknowledge once this screen is actually gone.
   const done = useCallback(() => {
     if (navigatedDone.current) return;
     navigatedDone.current = true;
-    acknowledgeCheckout?.();
     router.replace('/(tabs)/transactions');
+  }, []);
+  useEffect(() => () => {
+    if (navigatedDone.current) acknowledgeCheckout?.();
   }, [acknowledgeCheckout]);
   const alertCompletion = useCallback((sale: Sale) => {
     if (!visibleRef.current || handledPaidPayment.current === sale.id) return;

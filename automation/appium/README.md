@@ -31,9 +31,11 @@ npm run smoke
 | Laundry Soap 500g | `4800000000033` |
 | Mineral Water 1L | `4800000000040` |
 
-`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
+`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. `APPIUM_STOCK_TIMEOUT_MS` bounds the insufficient-stock case, whose wall time grows with the recorded stock (default `240000`, above the shared 120 s case timeout). Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
 
-For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. Appium cannot synthesize a camera image. The test then asserts the product name, successful cash receipt, and history text through native UI only.
+Set `APPIUM_DEV_SERVER_URL` to the Metro LAN origin (for example `http://192.168.100.84:8081`) when the installed artifact is a development (dev-client) build instead of a standalone preview install. A reset launch of a dev-client build lands on the Expo development launcher, which never reopens the remembered server on its own, so after the configured wait the seam opens that server through the dev-client deep link and closes the developer-menu panel that covers the app; `APPIUM_DEV_SERVER_LAUNCH_TIMEOUT_MS` bounds that launch (default `90000`). Leave the variable unset for a standalone/preview artifact: no dev server is opened then, and the seam behaves exactly as before.
+
+For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. The reset grants the Android camera permission itself, so the system dialog never covers the case; Appium cannot synthesize a camera image, so a human still holds the label. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
 The staging specs in `test/smoke.e2e.ts` cover:
 

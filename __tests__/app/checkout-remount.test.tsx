@@ -124,6 +124,10 @@ describe('checkout remount with durable machine state', () => {
     expect(view.getByTestId('checkout-completed-receipt')).toBeTruthy(); expect(Alert.alert).toHaveBeenCalledTimes(1);
     const done = (Alert.alert as jest.Mock).mock.calls[0][2][0].onPress;
     act(() => { done(); done(); }); expect(router.replace).toHaveBeenCalledTimes(1);
+    // The acknowledged receipt stays rendered while this screen leaves: swapping
+    // it for the empty-cart tree in the same commit as the route change is what
+    // made Android Fabric re-parent receipt views inside the outgoing screen.
+    expect(view.getByTestId('checkout-completed-receipt')).toBeTruthy(); expect(view.queryByText('The cart is empty')).toBeNull();
     fireEvent.press(view.getByTestId('leave')); fireEvent.press(view.getByTestId('seed')); fireEvent.press(view.getByTestId('open'));
     expect(view.queryByTestId('checkout-completed-receipt')).toBeNull(); expect(view.queryByText('Receipt 9')).toBeNull();
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
