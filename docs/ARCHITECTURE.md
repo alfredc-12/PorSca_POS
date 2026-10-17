@@ -103,7 +103,7 @@ The mobile client covers products, inventory, sales, transactions, payments, and
 ## SQA seams
 
 - Fast local/PR seam: `npm run verify` (lint, typecheck, Jest, and React Native Testing Library).
-- Formal frontend seam: Appium + native Android, under `automation/appium/`, after the staging gate.
+- Formal frontend seam: Appium + native Android, under `automation/appium/`, against the backend under test (see [its README](../automation/appium/README.md)).
 - Formal backend seam: the API track's Postman/Newman contract.
 - Defect truth: GitHub Issues and the shared cycle record in [WORKFLOW.md](WORKFLOW.md).
 - Evidence: Appium, Postman/Newman, Jest/RNTL, and Laravel artifacts. Large raw logs stay in artifact storage.
