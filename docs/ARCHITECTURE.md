@@ -23,6 +23,7 @@ app/
   checkout.tsx
   product-form.tsx
   users.tsx           # admin-only cashier account management
+  diagnostics.tsx     # admin support-code lookup from failure records
   transaction-detail.tsx  # read-only receipt from loaded sale history
   (tabs)/
     _layout.tsx
@@ -79,7 +80,8 @@ pricing and sale authority.
 ## Intended flow
 
 ```text
-Login or SecureStore token -> /auth/me validation -> signed-in route guard
+Login credential check -> signed-in route guard
+Saved SecureStore token -> /auth/me restore -> signed-in route guard
   -> Phone camera/search
   -> product lookup through the session/API boundary
   -> cart and total rules

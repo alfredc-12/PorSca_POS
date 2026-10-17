@@ -338,9 +338,13 @@ export function checkoutPayment(checkout: AuthorityCheckout, attemptId?: number)
       : machine.state === 'completed' && machine.saleId && checkout.sale?.method === 'qrph' && checkout.attempts[checkout.attempts.length - 1]?.id === attempt.id ? 'paid' : payment === 'unknown' ? 'unknown' : 'pending';
   return { id: String(attempt.id), status, amount: attempt.amountCentavos / 100, qrPayload: attempt.qrPayload ?? undefined, saleId: checkout.sale ? String(checkout.sale.id) : undefined, reservationExpiresAt: attempt.reservation?.expiresAt ?? undefined };
 }
-export function checkoutSale(checkout: AuthorityCheckout, lines: CartLine[]): Sale {
+export function checkoutSale(checkout: AuthorityCheckout): Sale {
   const sale = checkout.sale;
   if (!sale || checkout.state !== 'completed' || !Number.isSafeInteger(sale.id) || !Number.isSafeInteger(sale.amountCentavos)
     || !sale.completedAt || (sale.method === 'cash' && (!Number.isSafeInteger(sale.cashReceivedCentavos) || !Number.isSafeInteger(sale.changeAmountCentavos)))) throw new ApiClientError('The completed receipt is incomplete. Recover the purchase.');
-  return { id: String(sale.id), items: lines, total: sale.amountCentavos / 100, paymentMethod: sale.method, status: 'paid', createdAt: sale.completedAt, cashReceived: sale.cashReceivedCentavos === null ? undefined : sale.cashReceivedCentavos / 100, change: sale.changeAmountCentavos === null ? undefined : sale.changeAmountCentavos / 100 };
+  const items = checkout.items.map(item => ({
+    product: { id: String(item.productId), name: item.name, barcode: '', price: item.unitPriceCentavos / 100, stock: 0 },
+    quantity: item.quantity,
+  }));
+  return { id: String(sale.id), items, total: sale.amountCentavos / 100, paymentMethod: sale.method, status: 'paid', createdAt: sale.completedAt, cashReceived: sale.cashReceivedCentavos === null ? undefined : sale.cashReceivedCentavos / 100, change: sale.changeAmountCentavos === null ? undefined : sale.changeAmountCentavos / 100 };
 }

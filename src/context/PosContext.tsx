@@ -589,8 +589,7 @@ export function PosProvider({
     // identity instead of stranding the device on a completed, untenderable cart.
     if (checkout.state === 'completed' && checkout.sale?.method === 'cash' && !authority.machine?.reconciliationRequired) {
       const restoredRevision = cartRevision.current;
-      const saleLines = cartRef.current.lines;
-      const sale = checkoutSale(checkout, saleLines);
+      const sale = checkoutSale(checkout);
       setCheckoutCompletion({ checkoutId: checkout.id, sale });
       setSales(current => mergeSales(current, [sale]));
       let retired = false;
@@ -679,7 +678,7 @@ export function PosProvider({
     try { checkout = await authority.tender(lines, 'cash', typeof cashReceived === 'string' ? cashReceived : cashReceived.toFixed(2)); }
     finally { setAuthorityCheckout(authority.current); }
     if (checkout.state !== 'completed' || authority.machine?.reconciliationRequired || checkout.sale?.method !== 'cash') throw new ApiClientError('The cash sale is not confirmed. Recover this purchase.');
-    const sale = checkoutSale(checkout, lines);
+    const sale = checkoutSale(checkout);
     reads.observeSale(sale.id);
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setSales(current => mergeSales(current, [sale]));
@@ -735,22 +734,13 @@ export function PosProvider({
       return;
     }
     if (checkout.state !== 'completed' || checkout.sale?.method !== 'qrph' || authority.retainedPayment()?.status !== 'paid' || authority.retainedPayment()?.id !== payment.id) throw new ApiClientError('The checkout is unresolved or locked; no completed sale can be confirmed.');
-    const saleLines = checkout.items.map(item => {
-      const id = String(item.productId);
-      const price = item.unitPriceCentavos / 100;
-      const knownProduct = productsRef.current.find(product => product.id === id && product.name === item.name && Math.round(product.price * 100) === item.unitPriceCentavos);
-      return {
-        product: knownProduct ? { ...knownProduct, id, name: item.name, price } : { id, barcode: '', name: item.name, price, stock: 0 },
-        quantity: item.quantity,
-      };
-    });
     const checkoutBasket = checkout.items.map(item => [String(item.productId), item.quantity, item.unitPriceCentavos]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     const cartBasket = cartAtConfirmation.map(line => [line.product.id, line.quantity, Math.round(line.product.price * 100)]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     const matches = JSON.stringify(checkoutBasket) === JSON.stringify(cartBasket);
     const cartUnchanged = () => cartRevision.current === cartRevisionAtConfirmation && cartSignature(cartRef.current.lines) === cartSignatureAtConfirmation;
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
-    const sale = checkoutSale(checkout, saleLines);
+    const sale = checkoutSale(checkout);
     await authority.retire();
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
