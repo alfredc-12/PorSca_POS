@@ -1,10 +1,24 @@
 # Android/Appium smoke seam
 
-This is the formal native Android frontend automation seam. It is deliberately not part of the per-PR `npm run verify` gate while the device lab and Expo build quota are limited. Run it only after the documented [preview gate](../../docs/WORKFLOW.md#previewstaging-build-gate) is green. The installed preview build must already point at the stable Laravel staging URL.
+This is the formal native Android frontend automation seam. It is deliberately not part of the per-PR `npm run verify` gate while the device lab and Expo build quota are limited. Run it only after the documented [preview gate](../../docs/WORKFLOW.md#previewstaging-build-gate) is green. The installed app build must point at the backend under test.
 
 ## Run exactly
 
-From a freshly rebuilt contract-v3-compatible preview APK/install (with `expo-secure-store`) and the recorded staging seed, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active staging cashier/admin account; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
+### Environment matrix
+
+Use the same smoke command, fixture variables, and assertions in both environments. Only the backend-specific values below change:
+
+| Value | Development | Staging |
+| --- | --- | --- |
+| App build | Development (dev-client) build | Preview build |
+| Build API URL | LAN URL of the development API | Stable staging API URL |
+| `APPIUM_LOGIN_EMAIL` / `APPIUM_LOGIN_PASSWORD` | Active development ADMIN account | Active staging cashier/admin account |
+| `APPIUM_QR_EXPECTED_STATUS` | `pending` (local API without provider credentials) | Set to the result from the approved sandbox flow |
+| `APPIUM_DEV_SERVER_URL` | Set to Metro LAN URL (for example `http://192.168.100.84:8081`) | Unset |
+
+Everything else remains identical: Appium smoke suite and command, device setup, fixture variables and values, and assertions. The fixture data must be prepared on the backend under test; defaults below reflect the shared `qa-baseline-2026-10` catalog seed.
+
+From a freshly rebuilt contract-v3-compatible Android APK/install (with `expo-secure-store`) and the recorded backend fixture, connect an Android emulator/device and install the UiAutomator2 driver. Set `APPIUM_LOGIN_EMAIL` and `APPIUM_LOGIN_PASSWORD` in your private shell environment for an active cashier/admin account on the backend under test; do not commit or copy them into logs or QA records. The seam signs in after each app reset before checking the POS. Then run:
 
 ```bash
 cd automation/appium
@@ -22,7 +36,7 @@ APPIUM_QR_EXPECTED_STATUS=pending \
 npm run smoke
 ```
 
-`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different staging fixture. The defaults match the Laravel `qa-baseline-2026-10` seed. Its printable product labels are aligned as follows:
+`APPIUM_PRODUCT_SEARCH`, `APPIUM_PRODUCT_TEXT`, `APPIUM_BARCODE_FIXTURE`, and `APPIUM_CASH_AMOUNT` may be changed together for a different backend fixture. The defaults match the Laravel `qa-baseline-2026-10` seed. Its printable product labels are aligned as follows:
 
 | Product | Barcode (EAN-13) |
 | --- | --- |
@@ -31,13 +45,13 @@ npm run smoke
 | Laundry Soap 500g | `4800000000033` |
 | Mineral Water 1L | `4800000000040` |
 
-`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. `APPIUM_STOCK_TIMEOUT_MS` bounds the insufficient-stock case, whose wall time grows with the recorded stock (default `240000`, above the shared 120 s case timeout). Appium clears the app between cases, but it does not reset the staging database; the human owner must prepare and preserve the recorded API baseline.
+`9999999999994` remains an unknown barcode and must not be added to the catalog. `APPIUM_RESET_APP` defaults to `true`; set it to `false` only when deliberately continuing a device run. `APPIUM_STOCK_TIMEOUT_MS` bounds the insufficient-stock case, whose wall time grows with the recorded stock (default `240000`, above the shared 120 s case timeout). Appium clears the app between cases, but it does not reset the backend database; the human owner must prepare and preserve its recorded API baseline.
 
 Set `APPIUM_DEV_SERVER_URL` to the Metro LAN origin (for example `http://192.168.100.84:8081`) when the installed artifact is a development (dev-client) build instead of a standalone preview install. A reset launch of a dev-client build lands on the Expo development launcher, which never reopens the remembered server on its own, so after the configured wait the seam opens that server through the dev-client deep link and closes the developer-menu panel that covers the app; `APPIUM_DEV_SERVER_LAUNCH_TIMEOUT_MS` bounds that launch (default `90000`). Leave the variable unset for a standalone/preview artifact: no dev server is opened then, and the seam behaves exactly as before.
 
 For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. The reset grants the Android camera permission itself, so the system dialog never covers the case; Appium cannot synthesize a camera image, so a human still holds the label. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
-The staging specs in `test/smoke.e2e.ts` cover:
+The specs in `test/smoke.e2e.ts` cover:
 
 - individual account login after each app reset;
 - search → cash checkout;
@@ -48,7 +62,7 @@ The staging specs in `test/smoke.e2e.ts` cover:
 - history showing a successful sale; and
 - exactly one history row for a repeated cash confirmation (server-side inventory exactness across a retry/duplicate is covered by the API `Idempotency-Key` contract and the mobile provider test).
 
-Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential local/staging fixture, or to `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
+Set `APPIUM_QR_EXPECTED_STATUS` to `pending` for the stable no-credential fixture on the backend under test, or to `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
 
 Separately record native session restart/restoration, sign-out, expired/revoked-token redirect, and admin-versus-cashier inventory controls in the QA cycle. Fast Jest/RNTL tests cover these boundaries without claiming native secure-storage/device execution.
 
