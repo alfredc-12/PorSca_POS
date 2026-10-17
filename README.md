@@ -300,7 +300,9 @@ npm run verify
 npm run verify
 ```
 
-Then sign in, search for a seeded product, add it, choose Cash, enter an amount, and confirm. A successful Laravel sale appears in Transactions and stock is refreshed from Laravel.
+Launch the app and sign in with your own active API-managed admin or cashier account. Invalid credentials should remain on the login screen with an error; after a successful sign-in, the app validates the session with Laravel and opens the POS. On native builds, the session token is stored in SecureStore; signing out returns to login. Never use shared or documented passwords or tokens.
+
+Search for a product, add it to the cart, and proceed to checkout. For Cash, enter the amount received and explicitly confirm; a successful Laravel receipt appears in Transactions. An amount below the total must be rejected without a sale or stock change. For QR Ph, start the attempt and follow the returned payment status; pending/failed/cancelled/expired attempts are not successful sales, and only Laravel-confirmed payment can complete checkout. A local API without provider credentials may remain pending; do not represent that as a successful payment. See [the API contract](docs/API-CONTRACT.md) and [local setup](docs/SETUP.md) for session and checkout lifecycle details.
 
 ## Learn more
 
