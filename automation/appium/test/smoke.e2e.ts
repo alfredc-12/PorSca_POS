@@ -1,7 +1,7 @@
 /*
  * Formal Android/Appium seam. These specs are intentionally outside `npm run
- * verify`; run them against a freshly seeded staging build after the preview
- * gate. Set APPIUM_RUN=true to opt in.
+ * verify`; run them against a freshly seeded backend using the matching app
+ * build. Set APPIUM_RUN=true to opt in.
  */
 
 import { $$, $, browser, expect } from '@wdio/globals';
@@ -17,7 +17,7 @@ const smoke: SmokeTest = process.env.APPIUM_RUN === 'true'
     if (timeoutMs !== undefined) test.timeout(timeoutMs);
   }
   : (name) => {
-    console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal staging seam.`);
+    console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal backend smoke seam.`);
   };
 
 const productSearch = process.env.APPIUM_PRODUCT_SEARCH ?? 'Sinandomeng Rice';
@@ -28,7 +28,7 @@ const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);
 // The stock case adds the product one search at a time until the cart refuses
 // the quantity, so its wall time grows with the recorded stock (20 units in the
-// qa-baseline-2026-10 seed) and outgrows the shared 120 s case timeout. Give
+// qa-baseline-2026-10 fixture) and outgrows the shared 120 s case timeout. Give
 // this case its own bounded budget instead of shortening the attempt count.
 const stockCaseTimeoutMs = Number(process.env.APPIUM_STOCK_TIMEOUT_MS ?? 240000);
 const qrStatusMessages = {
@@ -197,8 +197,8 @@ async function presentBarcodeFixture(barcode: string) {
   if (await allowCamera.isDisplayed().catch(() => false)) {
     await allowCamera.click();
   }
-  // Appium cannot synthesize a camera image by itself. The staging device lab
-  // supplies a barcode fixture/physical label and resumes once it is visible.
+  // Appium cannot synthesize a camera image by itself. The device lab for the
+  // backend under test supplies a barcode fixture/physical label and resumes once it is visible.
   console.info(`Present barcode fixture ${barcode} to the device camera.`);
   await byText('The product is added to the cart as soon as it is recognized.').waitForDisplayed();
   // Wait for the cart, not just the brief scanner product confirmation.
@@ -239,7 +239,7 @@ describe('PorSca required cashier smoke flows', () => {
     if (await byId('login-email-input').isDisplayed().catch(() => false)) {
       const email = process.env.APPIUM_LOGIN_EMAIL;
       const password = process.env.APPIUM_LOGIN_PASSWORD;
-      if (!email || !password) throw new Error('Set private APPIUM_LOGIN_EMAIL and APPIUM_LOGIN_PASSWORD for an active staging account.');
+      if (!email || !password) throw new Error('Set private APPIUM_LOGIN_EMAIL and APPIUM_LOGIN_PASSWORD for an active account on the backend under test.');
       await byId('login-email-input').setValue(email);
       await byId('login-password-input').setValue(password);
       await tap('login-submit');
@@ -277,7 +277,7 @@ describe('PorSca required cashier smoke flows', () => {
     await expect(await reveal(byId('confirm-cash-payment'))).toBeDisabled();
   });
 
-  smoke('starts the QR Ph staging flow through Laravel', async () => {
+  smoke('starts the QR Ph flow through Laravel', async () => {
     await searchAndSelect(productSearch);
     await tap('payment-qrph');
     await tap('proceed-to-payment');
