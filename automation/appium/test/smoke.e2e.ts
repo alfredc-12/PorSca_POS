@@ -7,10 +7,18 @@
 import { $$, $, browser, expect } from '@wdio/globals';
 import { beforeEach } from 'mocha';
 
-type SmokeTest = (name: string, fn: () => Promise<void>) => void;
-const smoke: SmokeTest = process.env.APPIUM_RUN === 'true' ? it : (name) => {
-  console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal staging seam.`);
-};
+type SmokeTest = (name: string, fn: () => Promise<void>, timeoutMs?: number) => void;
+// The runnable budget has to be set when the case is defined, not from inside
+// its body: the runner arms its own race against the runnable timeout before
+// the body executes, so a later `this.timeout()` call arrives too late.
+const smoke: SmokeTest = process.env.APPIUM_RUN === 'true'
+  ? (name, fn, timeoutMs) => {
+    const test = it(name, fn);
+    if (timeoutMs !== undefined) test.timeout(timeoutMs);
+  }
+  : (name) => {
+    console.info(`Skipped ${name}; set APPIUM_RUN=true to run the formal staging seam.`);
+  };
 
 const productSearch = process.env.APPIUM_PRODUCT_SEARCH ?? 'Sinandomeng Rice';
 const productText = process.env.APPIUM_PRODUCT_TEXT ?? 'Sinandomeng Rice 5kg';
@@ -18,6 +26,11 @@ const barcodeFixture = process.env.APPIUM_BARCODE_FIXTURE ?? '4800000000019';
 const cashReceived = process.env.APPIUM_CASH_AMOUNT ?? '400';
 const stockSearch = process.env.APPIUM_STOCK_SEARCH ?? productSearch;
 const stockAttempts = Number(process.env.APPIUM_STOCK_ATTEMPTS ?? 25);
+// The stock case adds the product one search at a time until the cart refuses
+// the quantity, so its wall time grows with the recorded stock (20 units in the
+// qa-baseline-2026-10 seed) and outgrows the shared 120 s case timeout. Give
+// this case its own bounded budget instead of shortening the attempt count.
+const stockCaseTimeoutMs = Number(process.env.APPIUM_STOCK_TIMEOUT_MS ?? 240000);
 const qrStatusMessages = {
   pending: 'Payment pending…',
   unknown: 'Payment interrupted',
@@ -196,13 +209,21 @@ async function presentBarcodeFixture(barcode: string) {
 describe('PorSca required cashier smoke flows', () => {
   beforeEach(async () => {
     const mobileDriver = androidDriver();
+    const appPackage = process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos';
     if (process.env.APPIUM_RESET_APP !== 'false') {
       await mobileDriver.execute('mobile: shell', {
         command: 'pm',
-        args: ['clear', process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos'],
+        args: ['clear', appPackage],
       });
     }
-    await mobileDriver.activateApp(process.env.APPIUM_APP_PACKAGE ?? 'com.porsca.pos');
+    // A data reset also revokes the camera runtime permission, and only a human
+    // can answer the Android system dialog that would then cover the barcode
+    // case. Grant it as seam setup so the human's only job is holding the label.
+    await mobileDriver.execute('mobile: shell', {
+      command: 'pm',
+      args: ['grant', appPackage, 'android.permission.CAMERA'],
+    });
+    await mobileDriver.activateApp(appPackage);
     const loginOrPosVisible = async () =>
       await byId('login-email-input').isDisplayed().catch(() => false) ||
       await byId('pos-search-input').isDisplayed().catch(() => false);
@@ -245,7 +266,7 @@ describe('PorSca required cashier smoke flows', () => {
     }
     await byId('cart-limit-notice').waitForDisplayed();
     await byText('Reduce the quantity before adding more.').waitForDisplayed();
-  });
+  }, stockCaseTimeoutMs);
 
   smoke('rejects insufficient cash', async () => {
     await searchAndSelect(productSearch);
