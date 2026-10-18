@@ -8,7 +8,7 @@ export const config = {
   reporters: ['spec'],
   // The package reset uses `mobile: shell`, which the server refuses unless the
   // insecure `adb_shell` feature is enabled explicitly.
-  services: [['appium', { args: { logLevel: 'warn', allowInsecure: 'adb_shell' } }]],
+  services: [['appium', { args: { logLevel: 'warn', allowInsecure: 'uiautomator2:adb_shell' } }]],
   port: Number(process.env.APPIUM_PORT ?? 4723),
   capabilities: [{
     platformName: 'Android',
