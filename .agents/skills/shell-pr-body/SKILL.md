@@ -1,6 +1,6 @@
 ---
 name: shell-pr-body
-description: Use when preparing a PR, especially for setup, contract, or workflow changes.
+description: Use when preparing a PR, especially for setup, contract, or workflow changes. Load before gh-axi pr create or pr edit, including Markdown bodies with code spans or paths.
 user-invocable: false
 internal: true
 ---
