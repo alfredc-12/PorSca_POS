@@ -6,6 +6,7 @@
 
 import { $$, $, browser, expect } from '@wdio/globals';
 import { beforeEach } from 'mocha';
+import { appUnavailableMsg, ensureColdStartVisible } from './cold-start-gate';
 
 type SmokeTest = (name: string, fn: () => Promise<void>, timeoutMs?: number) => void;
 // The runnable budget has to be set when the case is defined, not from inside
@@ -50,7 +51,6 @@ if (!Object.hasOwn(qrStatusMessages, qrExpectedStatus)) {
 // standalone/preview artifact, where no development launcher ever appears.
 const devServerUrl = process.env.APPIUM_DEV_SERVER_URL;
 const devServerLaunchTimeoutMs = Number(process.env.APPIUM_DEV_SERVER_LAUNCH_TIMEOUT_MS ?? 90000);
-const appUnavailableMsg = 'Neither login nor the signed-in POS became available.';
 
 // expo-dev-client renders its own layer over the app: the one-time
 // developer-menu panel it shows on the first launch after a data reset, and the
@@ -227,15 +227,23 @@ describe('PorSca required cashier smoke flows', () => {
     const loginOrPosVisible = async () =>
       await byId('login-email-input').isDisplayed().catch(() => false) ||
       await byId('pos-search-input').isDisplayed().catch(() => false);
-    const appIsUp = await mobileDriver
-      .waitUntil(loginOrPosVisible, { timeoutMsg: appUnavailableMsg })
-      .then(() => true, () => false);
-    if (!appIsUp && await reopenDevelopmentApp(mobileDriver, loginOrPosVisible)) {
-      await mobileDriver.waitUntil(loginOrPosVisible, {
+    // Cold-start gate: the initiating trigger is a slow startup (the
+    // first-paint wait below times out); the masking condition is
+    // timing/environment slowness hiding both screens; the symptom this
+    // blocks is the hook continuing with no screen up, which used to surface
+    // as misleading per-case failures on the staging path where no dev-server
+    // reopen is configured. Fail fast with the clear startup error instead.
+    await ensureColdStartVisible({
+      waitForFirstPaint: () => mobileDriver
+        .waitUntil(loginOrPosVisible, { timeoutMsg: appUnavailableMsg })
+        .then(() => true, () => false),
+      reopenDevelopmentApp: () => reopenDevelopmentApp(mobileDriver, loginOrPosVisible),
+      waitForRelaunch: () => mobileDriver.waitUntil(loginOrPosVisible, {
         timeout: devServerLaunchTimeoutMs,
         timeoutMsg: appUnavailableMsg,
-      });
-    }
+      }).then(() => undefined),
+      isVisible: loginOrPosVisible,
+    });
     if (await byId('login-email-input').isDisplayed().catch(() => false)) {
       const email = process.env.APPIUM_LOGIN_EMAIL;
       const password = process.env.APPIUM_LOGIN_PASSWORD;
