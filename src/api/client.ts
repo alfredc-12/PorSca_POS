@@ -1,7 +1,8 @@
 import { PaymentMethod, PaymentStatus, Product, Sale, StockStatus } from '@/src/types';
+import { AuthorityAttempt, AuthorityCheckout, AuthorityPage, CheckoutSession, CheckoutTender, ReconciliationCase } from './checkoutAuthority';
 
 /** The mobile/API contract version promoted with the staging workflow. */
-export const API_CONTRACT_VERSION = 'porsca-mobile-api-v2';
+export const API_CONTRACT_VERSION = 'porsca-mobile-api-v3';
 
 export type AuthUser = {
   id: string | number;
@@ -240,7 +241,7 @@ export class ApiClient {
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? configuredBaseUrl())?.replace(/\/+$/, '');
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   get isConfigured() {
@@ -304,10 +305,7 @@ export class ApiClient {
       : search
         ? `?search=${encodeURIComponent(search)}&per_page=100`
         : '?per_page=100';
-    return this.request<ApiProduct[] | { items?: ApiProduct[] }>(this.versionedPath(`/products${query}`)).then((payload) => {
-      const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeProduct);
-    });
+    return this.readAllPages<ApiProduct>(`/products${query}`).then((items) => items.map(normalizeProduct));
   }
 
   getProduct(productId: string) {
@@ -327,10 +325,26 @@ export class ApiClient {
   }
 
   listInventory() {
-    return this.request<ApiInventoryItem[] | { items?: ApiInventoryItem[] }>(this.versionedPath('/inventory')).then((payload) => {
-      const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeInventoryItem);
-    });
+    return this.readAllPages<ApiInventoryItem>('/inventory?per_page=100').then((items) => items.map(normalizeInventoryItem));
+  }
+
+  /** Publish a complete snapshot only; a later-page failure rejects the read. */
+  private async readAllPages<T>(path: string): Promise<T[]> {
+    const items: T[] = [];
+    for (let page = 1; ; page += 1) {
+      const payload = await this.request<T[] | { items?: T[]; pagination?: { current_page?: number; last_page?: number } }>(
+        this.versionedPath(page === 1 ? path : `${path}&page=${page}`),
+      );
+      if (Array.isArray(payload)) return [...items, ...payload];
+      items.push(...(payload.items ?? []));
+      const pagination = payload.pagination;
+      if (pagination?.last_page === undefined) return items;
+      if (!Number.isInteger(pagination.last_page) || pagination.last_page < 1
+        || pagination.current_page !== page) {
+        throw new ApiClientError('Invalid catalog pagination received from the shop server.');
+      }
+      if (page >= pagination.last_page) return items;
+    }
   }
 
   updateInventory(productId: string, update: InventoryUpdate) {
@@ -345,11 +359,27 @@ export class ApiClient {
     }).then(normalizeSale);
   }
 
-  listSales() {
-    return this.readSalesPage().then((payload) => {
+  async listSales(): Promise<Sale[]> {
+    // Read the entire snapshot before publishing it: a failed later page must
+    // not replace a previously complete history with a truncated one.
+    const sales = new Map<string, Sale>();
+    let page = 1;
+    while (true) {
+      const payload = await this.readSalesPage(page);
       const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      return items.map(normalizeSale);
-    });
+      for (const item of items) {
+        const sale = normalizeSale(item);
+        sales.set(sale.id, sale);
+      }
+      const pagination = Array.isArray(payload) ? undefined : payload.pagination;
+      if (!pagination || pagination.last_page === undefined) break;
+      if (pagination.current_page !== page || !Number.isInteger(pagination.last_page) || pagination.last_page < page) {
+        throw new Error('Invalid transaction history pagination. Please retry.');
+      }
+      if (page === pagination.last_page) break;
+      page += 1;
+    }
+    return [...sales.values()];
   }
 
   /** A missing receipt on an incomplete history page is never proof of absence. */
@@ -367,8 +397,9 @@ export class ApiClient {
     return 'unknown';
   }
 
-  private readSalesPage() {
-    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath('/sales?per_page=100'));
+  private readSalesPage(page = 1) {
+    const suffix = page === 1 ? '' : `&page=${page}`;
+    return this.request<ApiSale[] | ApiSalesPage>(this.versionedPath(`/sales?per_page=100${suffix}`));
   }
 
   listTransactions() {
@@ -405,6 +436,43 @@ export class ApiClient {
     return this.request<ApiPayment>(this.versionedPath(`/payments/${encodeURIComponent(paymentId)}/refresh`), { method: 'POST' }).then(normalizePayment);
   }
 
+  checkoutSession() { return this.request<CheckoutSession>(this.versionedPath('/checkout-session')); }
+  listCheckouts(page = 1) { return this.request<AuthorityPage<AuthorityCheckout>>(this.versionedPath(`/checkouts?per_page=100&page=${page}`)); }
+  createCheckout(items: { productId: number; quantity: number }[], key: string) {
+    return this.request<AuthorityCheckout>(this.versionedPath('/checkouts'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: { items } });
+  }
+  getCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id)); }
+  recoverCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/recover'), { method: 'POST' }); }
+  revalidateCheckout(id: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/revalidate'), { method: 'POST' }); }
+  abandonCheckout(id: string, reason: string) { return this.request<AuthorityCheckout>(this.checkoutPath(id, '/abandon'), { method: 'POST', body: { reason } }); }
+  checkoutCash(id: string, tender: CheckoutTender, key: string) {
+    return this.request<AuthorityCheckout>(this.checkoutPath(id, '/cash'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: tender });
+  }
+  createCheckoutAttempt(id: string, tender: CheckoutTender, key: string) {
+    return this.request<AuthorityCheckout>(this.checkoutPath(id, '/attempts'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: tender });
+  }
+  listCheckoutAttempts(id: string) { return this.request<{ items: AuthorityAttempt[] }>(this.checkoutPath(id, '/attempts')); }
+  getCheckoutAttempt(id: string, attempt: number) { return this.request<AuthorityAttempt>(this.checkoutPath(id, `/attempts/${attempt}`)); }
+  checkoutReservation(id: string, attempt: number) { return this.request<{ checkoutId: string; attemptId: number; reservation: AuthorityAttempt['reservation'] }>(this.checkoutPath(id, `/attempts/${attempt}/reservation`)); }
+  refreshCheckoutAttempt(id: string, attempt: number) { return this.request<AuthorityCheckout>(this.checkoutPath(id, `/attempts/${attempt}/refresh`), { method: 'POST' }); }
+  async checkoutSimulationCapability(id: string, attempt: number) {
+    const session = await this.checkoutSession();
+    if (session.user.role !== 'admin' || !session.simulationAllowed) throw new ApiClientError('Simulation is not available.', 403);
+    return this.request<{ checkoutId: string; attemptId: number; provider: string; url: string }>(this.checkoutPath(id, `/attempts/${attempt}/simulation-capability`), { method: 'POST' });
+  }
+  async listReconciliationCases(page = 1) {
+    await this.requireCheckoutAdmin();
+    return this.request<AuthorityPage<ReconciliationCase>>(this.versionedPath(`/reconciliation-cases?per_page=100&page=${page}`));
+  }
+  async getReconciliationCase(id: number) {
+    await this.requireCheckoutAdmin();
+    return this.request<ReconciliationCase>(this.versionedPath(`/reconciliation-cases/${id}`));
+  }
+  private async requireCheckoutAdmin() {
+    if ((await this.checkoutSession()).user.role !== 'admin') throw new ApiClientError('Administrator access required.', 403);
+  }
+  private checkoutPath(id: string, suffix = '') { return this.versionedPath(`/checkouts/${encodeURIComponent(id)}${suffix}`); }
+
   private versionedPath(path: string) {
     const baseUrl = this.baseUrl ?? '';
     return /\/api\/v1$/i.test(baseUrl) ? path : `/api/v1${path}`;
@@ -412,7 +480,7 @@ export class ApiClient {
 
   private async request<T>(path: string, options: { method?: string; headers?: Record<string, string>; body?: unknown; authenticated?: boolean } = {}) {
     if (!this.baseUrl) {
-      throw new ApiClientError('API URL is not configured. Set EXPO_PUBLIC_API_URL before using the backend.');
+      throw new ApiClientError('The shop server address is not set up on this device.', undefined, 'server_not_configured');
     }
 
     // A late 401 from a previous session must not sign out a newly logged-in user.
@@ -503,9 +571,8 @@ function normalizeProduct(product: ApiProduct): Product {
     id: String(product.id),
     barcode: product.barcode,
     name: product.name,
-    // Laravel stores PHP money as integer centavos. Legacy mock-shaped
-    // responses already use pesos and are kept compatible for local tests.
-    price: stock ? apiPrice / 100 : apiPrice,
+    // The money unit does not depend on whether a stock relation is present.
+    price: apiPrice / 100,
     stock: quantity,
     stockStatus: status,
     ...(reorderLevel === undefined ? {} : { reorderLevel }),

@@ -134,7 +134,7 @@ npm install
 cp .env.example .env
 ```
 
-Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). Sign in in the app with your API-managed email and password. The app saves the returned 30-day session token in native secure storage; no token or password belongs in an Expo public variable. Ask the API maintainer for an account, not a shared token.
+Set `EXPO_PUBLIC_API_URL` in `.env` to `http://<computer-LAN-IP>:8000/api/v1` (no trailing slash). Sign in in the app with your API-managed email and password. The app saves the returned 30-day session token in native secure storage; no token or password belongs in an Expo public variable. Contact your store administrator for account access; see the [API contract](docs/API-CONTRACT.md#authentication-and-roles) for account roles and permissions.
 
 PowerShell can set the URL for the current session (replace the placeholder with the LAN address found above):
 
@@ -224,10 +224,6 @@ Success: lint, TypeScript, and the fast Jest/React Native Testing Library tests 
 
 Use the development app with the `development` API branch for daily integration, and the preview app with the `staging` API branch for formal testing. Mixing app builds and API branches makes failures ambiguous because the app configuration and API changes may not match.
 
-## Build and API pairing
-
-Use the development app with the `development` API branch for daily integration, and the preview app with the `staging` API branch for formal testing. Mixing app builds and API branches makes failures ambiguous because the app configuration and API changes may not match.
-
 ## Staging environment
 
 The EAS `preview` profile is the internal staging/SQA build. It points at the stable staging API origin configured in `eas.json` and is built manually only after every check in the [preview gate](docs/WORKFLOW.md#previewstaging-build-gate) is green. Run from the mobile repository root in either shell:
@@ -240,7 +236,7 @@ eas build --profile preview --platform android
 eas build --profile preview --platform android
 ```
 
-Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the configured staging base, including `/api/v1` and with no trailing slash. Sign in using your own active staging account. Ask the staging API maintainer for access; never bundle or document a password or token. Do not replace the configured staging origin with a phone's `localhost` address.
+Success: EAS completes the internal preview build. Install it on the test device. The preview profile sets `EXPO_PUBLIC_APP_ENV=staging` and `EXPO_PUBLIC_API_URL` to the Lightsail staging origin `https://staging-api.<domain>/api/v1` (including `/api/v1`, with no trailing slash). Funnel is only a break-glass fallback. Sign in using your own active staging account. Ask the staging API maintainer for access; never bundle or document a password or token. Do not replace the configured staging origin with a phone's `localhost` address.
 
 Prove the staging connection by requesting `<staging-api-origin>/health` and confirming a successful response, then load products in the installed app. PowerShell request form:
 
@@ -290,7 +286,7 @@ php artisan migrate:fresh --seed --force
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-Before seeding the isolated local database, configure private `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the API checkout's `.env` (see the API setup guide). Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1`, then sign in with that account. Create cashier accounts through the admin API; there is no staff setup screen on the phone. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
+Before seeding the isolated local database, configure private `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the API checkout's `.env` (see the API setup guide). Point the mobile `.env` at `http://<computer-LAN-IP>:8000/api/v1`, then sign in with that account. Admins can manage cashier accounts from the phone's Users screen; see the [API contract](docs/API-CONTRACT.md#authentication-and-roles) for its access rules and supported operations. A local QR creation without provider keys remains pending; paid, failed, cancelled, and expired results require the API's sandbox fixture or verified webhook flow.
 
 ## Check it works
 
@@ -304,7 +300,9 @@ npm run verify
 npm run verify
 ```
 
-Then sign in, search for a seeded product, add it, choose Cash, enter an amount, and confirm. A successful Laravel sale appears in Transactions and stock is refreshed from Laravel.
+Launch the app and sign in with your own active API-managed admin or cashier account. Invalid credentials should remain on the login screen with an error; a successful sign-in opens the POS with a saved session. On native builds the token is stored in SecureStore, and the next launch validates that saved session with Laravel before the POS opens; signing out returns to login. Never use shared or documented passwords or tokens.
+
+Search for a product, add it to the cart, and proceed to checkout. For Cash, enter the amount received and explicitly confirm; a successful Laravel receipt appears in Transactions. An amount below the total must be rejected without a sale or stock change. For QR Ph, start the attempt and follow the returned payment status; pending/failed/cancelled/expired attempts are not successful sales, and only Laravel-confirmed payment can complete checkout. A local API without provider credentials may remain pending; do not represent that as a successful payment. See [the API contract](docs/API-CONTRACT.md) and [local setup](docs/SETUP.md) for session and checkout lifecycle details.
 
 ## Learn more
 

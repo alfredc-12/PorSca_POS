@@ -1,0 +1,115 @@
+name: Staging state
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-state-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Permanent Lightsail staging API base. Replace <domain> with the staging domain
+  # when it is live; while the placeholder remains, this workflow records the run
+  # but skips the live health assertions.
+  STAGING_API_BASE: "https://staging-api.<domain>/api/v1"
+  # Must match DatabaseSeeder::BASELINE_VERSION in PorSca_POS_API at cycle start.
+  STAGING_SEED_VERSION: qa-baseline-2026-10
+
+jobs:
+  staging-state:
+    name: Record staging state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Check staging origin configuration
+        id: origin
+        run: |
+          if [[ "$STAGING_API_BASE" == *"<domain>"* ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::STAGING_API_BASE is still the placeholder ($STAGING_API_BASE); live staging assertions are skipped until the staging host exists."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read staging health
+        if: steps.origin.outputs.configured == 'true'
+        id: health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 30 "$STAGING_API_BASE/health")"
+          printf '%s\n' "$body" > "$RUNNER_TEMP/staging-health.json"
+          printf '%s\n' "$body"
+
+          read_value() { jq -r "$1 // empty" "$RUNNER_TEMP/staging-health.json"; }
+          environment="$(read_value '.data.environment // .environment')"
+          database="$(read_value '.data.database // .database')"
+          paymongo_mode="$(read_value '.data.paymongo_mode // .paymongo_mode')"
+          status="$(read_value '.data.status // .status')"
+          api_commit="$(read_value '.data.commit // .commit')"
+          seed_version="$(read_value '.data.seed_version // .seed_version')"
+
+          {
+            echo "environment=$environment"
+            echo "database=$database"
+            echo "paymongo_mode=$paymongo_mode"
+            echo "status=$status"
+            echo "api_commit=$api_commit"
+            echo "seed_version=$seed_version"
+          } >> "$GITHUB_OUTPUT"
+
+          test "$environment" = "staging" || { echo "::error::expected environment=staging, got '$environment'"; exit 1; }
+          test "$database" = "ok" || { echo "::error::expected database=ok, got '$database'"; exit 1; }
+          test "$paymongo_mode" = "sandbox" || { echo "::error::expected paymongo_mode=sandbox, got '$paymongo_mode'"; exit 1; }
+          test "$status" = "ok" || { echo "::error::expected status=ok, got '$status'"; exit 1; }
+
+      - name: Pair staging state into the run summary
+        if: always()
+        env:
+          ORIGIN_CONFIGURED: ${{ steps.origin.outputs.configured }}
+          HEALTH_ENVIRONMENT: ${{ steps.health.outputs.environment }}
+          HEALTH_DATABASE: ${{ steps.health.outputs.database }}
+          HEALTH_PAYMONGO_MODE: ${{ steps.health.outputs.paymongo_mode }}
+          HEALTH_STATUS: ${{ steps.health.outputs.status }}
+          HEALTH_API_COMMIT: ${{ steps.health.outputs.api_commit }}
+          HEALTH_SEED_VERSION: ${{ steps.health.outputs.seed_version }}
+        run: |
+          set -euo pipefail
+
+          api_commit="${HEALTH_API_COMMIT:-}"
+          seed_version="${HEALTH_SEED_VERSION:-$STAGING_SEED_VERSION}"
+          if [[ -z "$api_commit" ]]; then
+            api_commit="not reported (the API /health payload has no commit field yet)"
+            echo "::warning::The staging /health payload does not report a commit yet; pair the API commit after the API-side change lands."
+          fi
+
+          {
+            echo "## Staging state"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Mobile commit | \`$GITHUB_SHA\` |"
+            echo "| API commit | $api_commit |"
+            echo "| Staging API base | \`$STAGING_API_BASE\` |"
+            echo "| Seed version | \`$seed_version\` |"
+            echo "| Staging branch | \`$GITHUB_REF_NAME\` |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$ORIGIN_CONFIGURED" != "true" ]]; then
+            {
+              echo "**Live verification skipped:** \`STAGING_API_BASE\` is still the \`<domain>\` placeholder, so no health"
+              echo "request was made. Replace the placeholder with the real Lightsail staging domain to enable the assertions."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "Health: \`environment=$HEALTH_ENVIRONMENT\`, \`database=$HEALTH_DATABASE\`, \`paymongo_mode=$HEALTH_PAYMONGO_MODE\`, \`status=$HEALTH_STATUS\`."
+          } >> "$GITHUB_STEP_SUMMARY"

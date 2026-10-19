@@ -13,6 +13,7 @@ import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 import { useDebouncedValue } from '@/src/hooks/useDebouncedValue';
+import { stockStatus } from '@/src/utils/stockStatus';
 
 /** Trailing debounce for search, so typing does not fire one request per keystroke. */
 export const SEARCH_DEBOUNCE_MS = 280;
@@ -36,10 +37,23 @@ export default function PosScreen() {
     replaceCartLines,
     demoCatalogEnabled,
     apiConfigured,
+    recoverableCheckouts = [],
+    checkoutRecoveryError,
+    canDiscardCorruptCheckout,
+    openPosCheckouts,
+    recoverCheckout,
+    discardCorruptCheckout,
   } = usePos();
   const [query, setQuery] = useState('');
+  const [visibleResultCount, setVisibleResultCount] = useState(5);
+  const changeQuery = (value: string) => {
+    setVisibleResultCount(5);
+    setQuery(value);
+  };
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
+  const [discardReason, setDiscardReason] = useState('');
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [review, setReview] = useState<CartRevalidation>();
   const [checkingPrices, setCheckingPrices] = useState(false);
   const responsive = useResponsive();
@@ -47,11 +61,13 @@ export default function PosScreen() {
   const searchPending = query.trim() !== debouncedQuery.trim();
 
   const totalItems = cart.reduce((sum, line) => sum + line.quantity, 0);
-  const matches = searchResults.slice(0, 5);
+  const matches = searchResults.slice(0, visibleResultCount);
 
   useEffect(() => {
     void searchProducts(debouncedQuery);
   }, [debouncedQuery, searchProducts]);
+
+  useEffect(() => { void openPosCheckouts?.(); }, [openPosCheckouts]);
 
   const retrySearch = () => {
     void searchProducts(query);
@@ -122,6 +138,24 @@ export default function PosScreen() {
 
   return (
     <Screen>
+      {checkoutRecoveryError ? <Text accessibilityRole="alert">{checkoutRecoveryError}</Text> : null}
+      {checkoutRecoveryError ? <Pressable accessibilityRole="button" onPress={() => void openPosCheckouts()}><Text>Retry checkout recovery</Text></Pressable> : null}
+      {canDiscardCorruptCheckout && recoverableCheckouts.length === 0 ? <View>
+        <Text accessibilityRole="alert">Server discovery found no checkout. The unreadable local identity cannot establish a payment outcome. Discarding it does not confirm whether money was collected.</Text>
+        <TextInput testID="corrupt-checkout-discard-reason" accessibilityLabel="Reason for discarding unreadable checkout identity" placeholder="Reason for discarding (8–500 characters)" value={discardReason} onChangeText={value => { setDiscardReason(value); setConfirmDiscard(false); }} maxLength={500} />
+        {confirmDiscard ? <>
+          <Text>Confirm local identity discard. Reason: {discardReason.trim()}</Text>
+          <Pressable testID="confirm-corrupt-checkout-discard" accessibilityRole="button" onPress={() => void discardCorruptCheckout(discardReason).then(reason => {
+            setCartNotice(`Local checkout identity discarded after empty server discovery. Reason: ${reason}. Payment was not confirmed.`);
+            setDiscardReason('');
+            setConfirmDiscard(false);
+          }).catch(() => setCartNotice('The identity was not discarded. Retry server discovery before trying again.'))}><Text>Confirm discard</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setConfirmDiscard(false)}><Text>Cancel discard</Text></Pressable>
+        </> : <Pressable testID="review-corrupt-checkout-discard" accessibilityRole="button" disabled={discardReason.trim().length < 8} onPress={() => setConfirmDiscard(true)}><Text>Review local identity discard</Text></Pressable>}
+      </View> : null}
+      {recoverableCheckouts.map(checkout => <Pressable key={checkout.id} accessibilityRole="button" onPress={() => {
+        void recoverCheckout(checkout.id).then(() => router.push('/checkout')).catch(() => setCartNotice('Resolve the device purchase before recovering another checkout.'));
+      }}><Text>Resume sale • {checkout.items.map(item => `${item.name} × ${item.quantity}`).join(', ')} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}
       <View style={styles.searchRow}>
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
@@ -129,7 +163,7 @@ export default function PosScreen() {
             testID="pos-search-input"
             accessibilityLabel="Search products"
             value={query}
-            onChangeText={setQuery}
+            onChangeText={changeQuery}
             placeholder="Search product or scan barcode..."
             placeholderTextColor={colors.textMuted}
             style={[styles.searchInput, { fontSize: responsive.font(responsive.narrow ? 14 : 15.5) }]}
@@ -162,34 +196,35 @@ export default function PosScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Demo fallback' : 'Offline • Laravel required') : catalogState === 'loading' ? 'Checking Laravel…' : 'Laravel catalog'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{catalogState === 'unavailable' ? (demoCatalogEnabled ? 'Offline • Saved items' : 'Offline • Server required') : catalogState === 'loading' ? 'Checking…' : 'Catalog ready'}</Text>
         </View>
       </View>
 
       {(searchPending || (query.trim() && catalogState === 'loading')) ? (
-        <DataState kind="loading" title="Searching the Laravel catalog" message="Checking current product and stock information." />
+        <DataState kind="loading" title="Searching the catalog" message="Checking current product and stock information." />
       ) : null}
 
       {query.trim() && catalogState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel catalog unavailable"
-          message={catalogError ?? 'The API could not be reached. No demo catalog is in use.'}
+          title="Shop server unavailable"
+          message={catalogError ?? 'We cannot reach the shop server. Check the connection and try again.'}
           actionLabel="Retry search"
           onAction={retrySearch}
         />
       ) : null}
 
       {query.trim() && !searchPending && catalogState === 'ready' && matches.length === 0 ? (
-        <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => setQuery('')} />
+        <DataState kind="no-results" title="No matching product" message="Try a different name or barcode." actionLabel="Clear search" onAction={() => changeQuery('')} />
       ) : null}
 
       {query.trim() && !searchPending && matches.length > 0 && catalogState !== 'loading' ? (
         <View style={[styles.resultsCard, { padding: responsive.narrow ? 10 : spacing.md }]}>
           <Text style={[styles.resultsTitle, { fontSize: responsive.font(typography.label) }]}>Search results</Text>
           {matches.map((product) => {
-            const outOfStock = product.stockStatus === 'out_of_stock' || product.stock === 0;
-            const stockLabel = outOfStock ? 'Out of stock' : product.stockStatus === 'low_stock' ? 'Low stock' : 'In stock';
+            const status = stockStatus(product);
+            const outOfStock = status === 'out_of_stock';
+            const stockLabel = status === 'out_of_stock' ? 'Out of stock' : status === 'low_stock' ? 'Low stock' : 'In stock';
             return (
               <Pressable
                 key={product.id}
@@ -200,7 +235,7 @@ export default function PosScreen() {
                 onPress={() => {
                   const result = addProductChecked(product);
                   if (result.ok) {
-                    setQuery('');
+                    changeQuery('');
                     setCartNotice(undefined);
                   } else {
                     setCartNotice(result.message);
@@ -219,6 +254,19 @@ export default function PosScreen() {
               </Pressable>
             );
           })}
+          <Text accessibilityLiveRegion="polite" style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>
+            Showing {matches.length} of {searchResults.length} matches
+          </Text>
+          {matches.length < searchResults.length ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Show more products"
+              onPress={() => setVisibleResultCount(count => count + 5)}
+              style={styles.moreResults}
+            >
+              <Text style={styles.moreResultsText}>Show more</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -312,7 +360,6 @@ export default function PosScreen() {
 
         <View style={[styles.summaryCard, { padding: responsive.narrow ? 10 : spacing.md, gap: responsive.short ? 8 : 11 }]}>
           <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="calculator-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Subtotal ({totalItems} items)</Text></View><Text style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱{total.toFixed(2)}</Text></View>
-          <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="pricetag-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Discount</Text></View><Text style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱0.00</Text></View>
           <View style={styles.divider} />
           <View style={styles.totalRow}><Text style={[styles.totalLabel, { fontSize: responsive.font(responsive.narrow ? 21 : 23) }]}>Total</Text><Text style={[styles.totalValue, { fontSize: responsive.font(responsive.narrow ? 27 : 30) }]}>₱{total.toFixed(2)}</Text></View>
         </View>
@@ -334,7 +381,7 @@ export default function PosScreen() {
           <View testID="offline-checkout-notice" accessibilityRole="alert" style={styles.offlineNotice}>
             <Ionicons name="cloud-offline-outline" size={responsive.s(19)} color={colors.warning} />
             <Text style={[styles.offlineNoticeText, { fontSize: responsive.font(12.5) }]}>
-              Connect to the Laravel API to complete a sale. The cart stays editable and nothing is recorded locally.
+              Connect to the shop server to complete a sale. The cart stays editable and nothing is recorded locally.
             </Text>
           </View>
         ) : null}
@@ -415,6 +462,8 @@ const styles = StyleSheet.create({
   greenDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success },
   greenDotSmall: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   resultsCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, gap: 4 },
+  moreResults: { minHeight: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primarySoft, borderRadius: radius.md },
+  moreResultsText: { color: colors.primary, fontWeight: '800' },
   resultsTitle: { color: colors.text, fontWeight: '800', marginBottom: 2 },
   resultRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.outline },
   resultCopy: { flex: 1 },

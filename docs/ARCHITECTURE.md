@@ -2,9 +2,13 @@
 
 ## Release boundary
 
-Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v2`.
+Expo/React Native is the only user-facing frontend. Laravel (`niks0501/PorSca_POS_API`) is the sole backend for staging and release. Mobile code calls the API only through [`src/api/client.ts`](../src/api/client.ts), which is configured by `EXPO_PUBLIC_API_URL` and uses contract version `porsca-mobile-api-v3`.
 
 The mobile bundle never contains PayMongo secrets. QR creation, payment status checks, webhook verification, sale persistence, idempotency, and final inventory deduction belong to Laravel. The former embedded Express scaffold is retired.
+
+## Documentation traceability
+
+The approved deployment is Laravel on AWS Lightsail, with EAS distributing the phone app. PayMongo is integrated in Laravel, not a separate PorSca payment repository. Tailscale Funnel is a break-glass fallback only. See [DEPLOYMENT.md](DEPLOYMENT.md) for the reconciliation of report sections **6.2**, **7**, and **Test Plan 2.1**, deployment ownership, and required evidence. The configured staging hostname is a placeholder until operator setup and live verification are recorded. [Documentation gap issue](https://github.com/alfredc-12/PorSca_POS/issues/62) tracks teammate reconciliation of the external report and test plan.
 
 ## Mobile app
 
@@ -19,6 +23,8 @@ app/
   checkout.tsx
   product-form.tsx
   users.tsx           # admin-only cashier account management
+  diagnostics.tsx     # admin support-code lookup from failure records
+  transaction-detail.tsx  # read-only receipt from loaded sale history
   (tabs)/
     _layout.tsx
     pos.tsx
@@ -31,11 +37,21 @@ src/
   config/             # offline policy and its environment flag
   context/            # authentication + POS state and the cart reducer host
   data/               # seeded local demonstration data and barcode fixtures
-  domain/             # behavior rules: money/stock, cart, barcode, revalidation
+  domain/             # behavior rules: cart, barcode, revalidation, checkout and money
   hooks/              # scan session, debounce, responsive metrics
   theme/
   types/
 ```
+
+Runtime checkout is coordinated by `DurableCheckout` in
+`src/domain/durableCheckout.ts`; `PosProvider` sends creation, tender, recovery,
+and verification operations through the shared API client. Laravel authority
+responses feed `checkoutMachine.ts` through `checkoutAuthorityAdapter.ts`. The
+machine owns pure UI tender-lock transitions and cash grammar, not network,
+persistence, sales, or inventory effects. Money uses integer centavos with
+strict cash parsing and pure formatting; the QR minimum is explicitly
+staging-provisional. See [API-CONTRACT.md](API-CONTRACT.md#durable-checkout-lifecycle-v3)
+for the authoritative lifecycle and recovery rules.
 
 `AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form and Users screen also require admin. Admin navigation exposes Users while cashier navigation does not. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Users actions stay inside the single API client; cashier permissions remain fixed by role, and cashiers read all sales without per-cashier scoping.
 
@@ -44,8 +60,10 @@ src/
 reconciliation goes through it, so no screen can reach an unchecked add.
 
 Scanning decisions live in `src/hooks/useBarcodeScan.ts` on top of the pure
-barcode helpers in `src/domain/barcode.ts`, and the camera binding stays in
-`app/scanner.tsx`. That seam is what makes the camera path fixture-testable.
+barcode helpers in `src/domain/barcode.ts`. `src/components/BarcodeScanner.tsx`
+owns screen orchestration, `src/components/ScannerCamera.tsx` binds Expo Camera,
+and `app/scanner.tsx` selects the route mode. The seams make scanner behavior
+fixture-testable.
 
 Before a cart is handed to checkout, `revalidateCart` re-reads every line from
 `GET /products/:id` and `src/domain/revalidation.ts` reports price and stock
@@ -62,7 +80,8 @@ pricing and sale authority.
 ## Intended flow
 
 ```text
-Login or SecureStore token -> /auth/me validation -> signed-in route guard
+Login credential check -> signed-in route guard
+Saved SecureStore token -> /auth/me restore -> signed-in route guard
   -> Phone camera/search
   -> product lookup through the session/API boundary
   -> cart and total rules
@@ -84,7 +103,7 @@ The mobile client covers products, inventory, sales, transactions, payments, and
 ## SQA seams
 
 - Fast local/PR seam: `npm run verify` (lint, typecheck, Jest, and React Native Testing Library).
-- Formal frontend seam: Appium + native Android, under `automation/appium/`, after the staging gate.
+- Formal frontend seam: Appium + native Android, under `automation/appium/`, against the backend under test (see [its README](../automation/appium/README.md)).
 - Formal backend seam: the API track's Postman/Newman contract.
 - Defect truth: GitHub Issues and the shared cycle record in [WORKFLOW.md](WORKFLOW.md).
 - Evidence: Appium, Postman/Newman, Jest/RNTL, and Laravel artifacts. Large raw logs stay in artifact storage.

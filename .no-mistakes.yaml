@@ -1,0 +1,79 @@
+
+protected_paths:
+  - ".no-mistakes.yaml"
+  - "eas.json"
+  - "app.json"
+  - ".github/workflows/**"
+
+document:
+  instructions: |
+    README.md owns installation and onboarding.
+    docs/WORKFLOW.md owns delivery and QA procedures.
+    docs/API-CONTRACT.md owns mobile/API integration.
+    docs/ARCHITECTURE.md owns application architecture.
+    docs/DEPLOYMENT.md owns deployment guidance.
+    Keep documentation consistent with the Laravel API.
+    Update authoritative documents instead of duplicating them.
+
+review:
+  path_instructions:
+    - path: "src/domain/**"
+      instructions: |
+        Preserve monetary correctness, checkout state,
+        stock invariants, and transaction consistency.
+        Check rounding, duplicate submissions, and failures.
+
+    - path: "src/api/**"
+      instructions: |
+        Check API contract compatibility, authentication,
+        retries, idempotency, and error handling.
+        Never infer payment success from a client-only state.
+
+    - path: "src/auth/**"
+      instructions: |
+        Check secure token storage, session expiration,
+        logout behavior, and access boundaries.
+
+    - path: "app/checkout.tsx"
+      instructions: |
+        Check cashier workflow, payment state visibility,
+        confirmation safety, and duplicate-sale prevention.
+
+    - path: "app/scanner.tsx"
+      instructions: |
+        Check barcode interpretation, error handling,
+        product selection, and permission fallbacks.
+
+test:
+  instructions: |
+    Run the relevant automated tests using
+    the project's existing verification commands.
+
+    Use only Expo Web through chrome-devtools-axi
+    for browser-compatible live verification.
+
+    Assign a unique CHROME_DEVTOOLS_AXI_SESSION per run,
+    derived from the run or isolated worktree identity.
+    Reuse the same session for all browser commands.
+    Use AXI's default isolated Chrome launch mode.
+    Never attach to a shared browser or worker session.
+    Do not set a shared CHROME_DEVTOOLS_AXI_PORT.
+    Use an available worktree-owned application port.
+
+    Verify browser-supported cashier workflows.
+    Inspect UI behavior, errors, and network requests.
+    Use only authorized, isolated test API data.
+    Do not start the deprecated server/ scaffold
+    as the authoritative PorSca backend.
+
+    Never use agent-device, phones, emulators, ADB,
+    native builds, or device E2E.
+    Never trigger real payments or deployments.
+    Do not create persistent E2E scripts.
+
+    Browser success does not establish native correctness.
+    Report actual defects as no-go.
+    Report unsupported or unavailable verification as
+    inconclusive with reasons and manual testing steps.
+    Never mark unverified behavior as passed.
+    Clean up only resources owned by this run.

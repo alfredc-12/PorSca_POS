@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { BarcodeLookupResult, BarcodeResolver } from '@/src/domain/barcode';
-import { SAME_BARCODE_COOLDOWN_MS, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
+import { SAME_BARCODE_COOLDOWN_MS, SAME_SYMBOL_RELEASE_MS, useBarcodeScan } from '@/src/hooks/useBarcodeScan';
 import {
   EAN13_IN_STOCK,
   EAN13_OUT_OF_STOCK,
@@ -74,6 +74,132 @@ describe('useBarcodeScan camera cases', () => {
 
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(result.current.outcome?.kind).toBe('found');
+  });
+
+  it('F11: continuous success stays armed, suppresses a held symbol for five seconds, then accepts deliberate repeat after release', async () => {
+    const clock = fakeClock();
+    const resolve = jest.fn().mockResolvedValue(found());
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    expect(result.current.scanning).toBe(true);
+    for (let elapsed = 0; elapsed < 5000; elapsed += 250) {
+      act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+      clock.advance(250);
+    }
+    expect(resolve).toHaveBeenCalledTimes(1);
+    clock.advance(SAME_SYMBOL_RELEASE_MS);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2));
+  });
+
+  it('F11: accepts the same symbol again after an 800 ms absence in the armed success flow', async () => {
+    const clock = fakeClock();
+    const resolve = jest.fn().mockResolvedValue(found());
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+
+    clock.advance(800);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.busy).toBe(false);
+    });
+    expect(result.current.scanning).toBe(true);
+  });
+
+  it('F11: accepts a released repeat observed during a 1000 ms lookup', async () => {
+    const clock = fakeClock();
+    let finishLookup!: (value: BarcodeLookupResult) => void;
+    const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
+      finishLookup = complete;
+    }));
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(result.current.scanning).toBe(true);
+
+    clock.advance(800);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(200);
+    await act(async () => {
+      finishLookup(found());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    resolve.mockResolvedValue(found());
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.busy).toBe(false);
+    });
+  });
+
+  it('F11: in-flight re-observation keeps a symbol held through a 1000 ms lookup', async () => {
+    const clock = fakeClock();
+    let finishLookup!: (value: BarcodeLookupResult) => void;
+    const resolve = jest.fn((_barcode: string) => new Promise<BarcodeLookupResult>((complete) => {
+      finishLookup = complete;
+    }));
+    const { result } = renderHook(() => useBarcodeScan({ resolve, now: clock.now, stayArmedAfterSuccess: true }));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(500);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(400);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    clock.advance(100);
+    await act(async () => {
+      finishLookup(found());
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+    clock.advance(400);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('F11: a distinct symbol replaces success immediately while failures remain disarmed', async () => {
+    const resolve = jest.fn().mockResolvedValueOnce(found()).mockResolvedValueOnce(found());
+    const { result } = renderHook(() => useBarcodeScan({ resolve, stayArmedAfterSuccess: true }));
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    act(() => result.current.handleBarcode(GS1_EXAMPLE_VALID));
+    await waitFor(() => expect(result.current.outcome?.barcode).toBe(GS1_EXAMPLE_VALID));
+    expect(result.current.scanning).toBe(true);
+  });
+
+  it('keeps the lock consistent when success arming mode changes', async () => {
+    const resolve = jest.fn().mockResolvedValue(found());
+    const { result, rerender } = renderHook(
+      ({ stayArmedAfterSuccess }: { stayArmedAfterSuccess: boolean }) => useBarcodeScan({ resolve, stayArmedAfterSuccess }),
+      { initialProps: { stayArmedAfterSuccess: false } },
+    );
+
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    await waitFor(() => expect(result.current.outcome?.kind).toBe('found'));
+    expect(result.current.scanning).toBe(false);
+
+    rerender({ stayArmedAfterSuccess: true });
+    expect(result.current.scanning).toBe(true);
+    act(() => result.current.handleBarcode(GS1_EXAMPLE_VALID));
+    await waitFor(() => {
+      expect(resolve).toHaveBeenCalledTimes(2);
+      expect(result.current.outcome?.barcode).toBe(GS1_EXAMPLE_VALID);
+    });
+
+    rerender({ stayArmedAfterSuccess: false });
+    expect(result.current.scanning).toBe(false);
+    act(() => result.current.handleBarcode(EAN13_IN_STOCK));
+    expect(resolve).toHaveBeenCalledTimes(2);
   });
 
   it('S5: an explicit retry still suppresses the same symbol inside the cooldown, then accepts it', async () => {

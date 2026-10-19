@@ -42,7 +42,7 @@ export function CartReviewSheet({ visible, revalidation, onApply, onDismiss }: P
             </View>
             <View style={styles.headerCopy}>
               <Text style={styles.title}>Review before payment</Text>
-              <Text style={styles.subtitle}>Laravel recomputes the final amount. Nothing has been charged yet.</Text>
+              <Text style={styles.subtitle}>The shop server recomputes the final amount. Nothing has been charged yet.</Text>
             </View>
             <Pressable accessibilityRole="button" accessibilityLabel="Close review" onPress={onDismiss} style={styles.close}>
               <Ionicons name="close" size={22} color={colors.textMuted} />
