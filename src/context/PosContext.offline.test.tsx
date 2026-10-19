@@ -31,7 +31,7 @@ describe('offline policy with the demo catalog off (default)', () => {
     expect(result.current.searchResults).toEqual([]);
     expect(result.current.catalogUsingFallback).toBe(false);
     expect(result.current.catalogState).toBe('unavailable');
-    expect(result.current.catalogError).toContain('Laravel API is not configured');
+    expect(result.current.catalogError).toContain('not connected to the shop server yet');
   });
 
   it('refuses a barcode lookup rather than inventing a demo product', async () => {

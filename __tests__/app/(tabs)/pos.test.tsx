@@ -3,9 +3,11 @@ import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
 import { ApiClient, ApiClientError } from '@/src/api/client';
+import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
 import { PosProvider, usePos } from '@/src/context/PosContext';
 import { Product } from '@/src/types';
+import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 
 jest.mock('expo-router', () => ({
   __esModule: true,
@@ -77,6 +79,69 @@ describe('POS cart consistency', () => {
   beforeEach(() => {
     jest.useRealTimers();
     router.push.mockReset();
+  });
+
+  it('describes each recoverable sale by its basket and amount while recovering its internal identity', async () => {
+    const first: AuthorityCheckout = { id: 'internal-uuid-one', storeId: 'shop', state: 'payment_unresolved', revision: 1, amountCentavos: 4400, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 2, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
+    const second: AuthorityCheckout = { ...first, id: 'internal-uuid-two', state: 'ready_for_attempt', amountCentavos: 900, items: [{ productId: 2, name: plenty.name, quantity: 1, unitPriceCentavos: 900 }] };
+    const checkouts = [first, second];
+    const recoverCheckout = jest.fn(async (id: string) => checkouts.find(checkout => checkout.id === id)!);
+    const recoveryClient = {
+      isConfigured: true,
+      listCheckouts: jest.fn().mockResolvedValue({ items: checkouts, pagination: { current_page: 1, last_page: 1, total: 2 } }),
+      getCheckout: jest.fn(async (id: string) => checkouts.find(checkout => checkout.id === id)!),
+      recoverCheckout,
+      getProduct: jest.fn().mockResolvedValue({ ...plenty, id: '2' }),
+      listProducts: jest.fn().mockResolvedValue([]),
+    } as unknown as ApiClient;
+    const checkoutStore: CheckoutStorage = { load: async () => null, save: async () => undefined };
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={checkoutStore}><PosScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByRole('button', { name: `Resume sale • ${single.name} × 2 • ₱44.00` })).toBeTruthy());
+    const entry = view.getByRole('button', { name: `Resume sale • ${plenty.name} × 1 • ₱9.00` });
+    expect(view.queryByText(/internal-uuid|payment_unresolved|ready_for_attempt/)).toBeNull();
+    await act(async () => { fireEvent.press(entry); });
+    expect(recoverCheckout).toHaveBeenCalledTimes(1);
+    expect(recoverCheckout).toHaveBeenCalledWith(second.id);
+    expect(router.push).toHaveBeenCalledWith('/checkout');
+  });
+
+  it('requires an attributed reason and confirmation to discard a corrupt identity after empty discovery', async () => {
+    const store: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('legacy basket [[null,1]]')),
+      save: jest.fn(async (_handle: CheckoutHandle | null) => undefined),
+    };
+    const recoveryClient = {
+      isConfigured: true,
+      baseUrl: 'https://shop.test/api/v1',
+      listCheckouts: jest.fn().mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }),
+    } as unknown as ApiClient;
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={store}><PosScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('review-corrupt-checkout-discard')).toBeTruthy());
+    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
+    expect(view.queryByTestId('confirm-corrupt-checkout-discard')).toBeNull();
+    fireEvent.changeText(view.getByTestId('corrupt-checkout-discard-reason'), 'Operator approved discard');
+    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
+    fireEvent.press(view.getByTestId('confirm-corrupt-checkout-discard'));
+    await waitFor(() => expect(store.save).toHaveBeenCalledWith(null));
+    expect(view.getByText(/Reason: Operator approved discard/)).toBeTruthy();
+    expect(view.getByText(/Payment was not confirmed/)).toBeTruthy();
+  });
+
+  it('shows accurate subtotal and total without an unsupported discount row', async () => {
+    const view = renderPos();
+
+    expect(view.queryByText(/discount/i)).toBeNull();
+    expect(view.getByText('Subtotal (0 items)')).toBeTruthy();
+    expect(view.getByText('Total')).toBeTruthy();
+    expect(view.getAllByText('₱0.00')).toHaveLength(2);
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    fireEvent.press(view.getByLabelText('Increase Instant Coffee 30g'));
+
+    await waitFor(() => expect(view.getByText('Subtotal (2 items)')).toBeTruthy());
+    // One line amount plus the subtotal and total, all reflecting two units.
+    expect(view.getAllByText('₱18.00')).toHaveLength(3);
+    expect(view.queryByText(/discount/i)).toBeNull();
   });
 
   it('surfaces the stock limit on the cart "+" instead of a silent no-op', async () => {
@@ -199,6 +264,55 @@ describe('POS search', () => {
     }
   });
 
+  it('reveals every match in batches and adds a product beyond the first five', async () => {
+    const products = Array.from({ length: 12 }, (_, index) => ({
+      ...plenty, id: `coffee-${index}`, name: `Coffee ${index + 1}`,
+    }));
+    const listProducts = jest.fn().mockResolvedValue(products);
+    const view = renderPos({ isConfigured: true, listProducts } as unknown as ApiClient);
+    const input = view.getByTestId('pos-search-input');
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+    fireEvent.changeText(input, 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(5));
+    expect(view.getByText('Showing 5 of 12 matches')).toBeTruthy();
+    expect(view.queryByLabelText('Add Coffee 6')).toBeNull();
+    const reads = listProducts.mock.calls.length;
+
+    fireEvent.press(view.getByLabelText('Show more products'));
+    expect(view.getAllByTestId('search-result')).toHaveLength(10);
+    fireEvent.press(view.getByLabelText('Show more products'));
+    expect(view.getAllByTestId('search-result')).toHaveLength(12);
+    expect(view.getByText('Showing 12 of 12 matches')).toBeTruthy();
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+    expect(listProducts).toHaveBeenCalledTimes(reads);
+
+    fireEvent.press(view.getByLabelText('Add Coffee 12'));
+    await waitFor(() => expect(view.getByText('(1 item)')).toBeTruthy());
+    expect(view.getByText('Coffee 12')).toBeTruthy();
+    expect(input.props.value).toBe('');
+    expect(view.queryAllByTestId('search-result')).toHaveLength(0);
+
+    fireEvent.changeText(input, 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(5));
+    fireEvent.press(view.getByLabelText('Show more products'));
+    fireEvent.changeText(input, 'Coffee 1');
+    await waitFor(() => expect(listProducts).toHaveBeenLastCalledWith({ search: 'Coffee 1' }));
+    await waitFor(() => {
+      expect(view.getAllByTestId('search-result')).toHaveLength(5);
+      expect(view.getByText('Showing 5 of 12 matches')).toBeTruthy();
+    });
+  }, 15000);
+
+  it.each([1, 5])('does not offer Show more for %i matches', async (count) => {
+    const listProducts = jest.fn().mockResolvedValue(Array.from({ length: count }, (_, index) => ({
+      ...plenty, id: `coffee-${index}`, name: `Coffee ${index + 1}`,
+    })));
+    const view = renderPos({ isConfigured: true, listProducts } as unknown as ApiClient);
+    fireEvent.changeText(view.getByTestId('pos-search-input'), 'Coffee');
+    await waitFor(() => expect(view.getAllByTestId('search-result')).toHaveLength(count));
+    expect(view.queryByLabelText('Show more products')).toBeNull();
+  });
+
   it('asks for an exact barcode read when the query looks like a barcode', async () => {
     const listProducts = jest.fn().mockResolvedValue([]);
     const searchClient = { isConfigured: true, listProducts } as unknown as ApiClient;
@@ -211,6 +325,20 @@ describe('POS search', () => {
     fireEvent.changeText(view.getByTestId('pos-search-input'), '4800010000011');
 
     await waitFor(() => expect(listProducts).toHaveBeenCalledWith({ barcode: '4800010000011' }));
+  });
+
+  it('labels an offline demo result without a Laravel status as low stock by the default threshold', async () => {
+    const offline = { isConfigured: false } as unknown as ApiClient;
+    const view = render(
+      <PosProvider client={offline} demoCatalogEnabled>
+        <PosScreen />
+      </PosProvider>,
+    );
+
+    fireEvent.changeText(view.getByTestId('pos-search-input'), 'Piattos');
+
+    await waitFor(() => expect(view.getByTestId('search-result')).toBeTruthy());
+    expect(view.getByText('Low stock (8) • ₱20.00')).toBeTruthy();
   });
 });
 

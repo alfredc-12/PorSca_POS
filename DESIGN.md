@@ -74,7 +74,7 @@ Login uses the same cream/green PorSca shell, labeled email/password inputs, a m
 
 ### POS
 
-The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. The cart provides quantity controls, stock visibility, subtotal/discount/total, and a secure payment handoff.
+The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. POS initially shows five matches with a match count; **Show more** reveals another five at a time until every match is reachable. Editing or clearing the query resets the compact view, and selecting a product uses the same guarded cart-add flow. The cart provides quantity controls, stock visibility, subtotal/total, and a secure payment handoff.
 
 Cart states added in week 6:
 
@@ -89,15 +89,17 @@ Search and inventory scanning sit above a four-part health summary: total produc
 
 ### Transactions
 
-Search/filter sits above a summary for sales amount, completed sales, cash count, and QR Ph count. Filter chips support All, Today, Cash, and QR Ph. Transaction rows show receipt ID, time, item count, payment method, completed state, and total.
+Search/filter sits above a summary for sales amount, completed sales, cash count, and QR Ph count. Filter chips support All, Today, Cash, and QR Ph, and a YYYY-MM-DD date field narrows the list to a single local day. The full sales history is available rather than only the most recent page, and the list reveals older receipts 50 at a time through a **Show more transactions** action. Transaction rows show receipt ID, time, item count, payment method, completed state, and total, and open a read-only Transaction details receipt with the historical item snapshots, quantities, totals, payment method, and cash received/change. Missing cash details read "Not available" rather than invented values, and a receipt from stale history stays visible behind a retry notice.
 
 ### Checkout
 
-Checkout inherits the same cream/green visual system. It presents amount due, order summary, Cash / QR Ph selection, cash received/change handling, or the QR Ph sandbox state. Stock changes only after successful completion.
+Checkout inherits the same cream/green visual system. It presents amount due, order summary, Cash / QR Ph selection, cash received/change handling, or the QR Ph sandbox state. Cash entry stays inline: strict two-decimal input with in-place shortfall or format feedback, and Cash confirmation disabled until the received amount covers the amount due; presets offer the exact amount plus only denominations that cover it. Invalid or insufficient cash never opens a dialog or records a sale. While payment is processing or unresolved, keep its tender selected, disable the opposite tender and cash confirmation, and explain the lock; only a verified non-payable QR result permits a new tender. If a provider-rendered QR image fails to load, show an in-panel recovery message rather than a blank box; this is not a payment outcome. Stock changes only after successful completion.
 
 ### Product editor
 
-Admin-only product create/edit uses the same surface and form system and includes product category. Inventory barcode scanning can pre-fill a new product barcode.
+Inventory owns the camera overlay and the shared cream/green product modal. Admin scans immediately open Edit Product with the freshly returned item, or Add Product after a confirmed API miss. Manual Add Product and row edits share the same form. Cashiers retain read-only scanning.
+
+The barcode starts locked and outside keyboard focus order; its pencil/Edit action unlocks and focuses the field, and Done locks it. Price uses a larger whole-peso input and a smaller two-digit centavo input separated by a decimal point. Stock is a non-negative whole-number spinner. Category is an editable combo box with presets and loaded categories in its dropdown; custom names remain supported. Invalid fields show red borders and inline recovery text during editing and on blur. The form keeps drafts on errors, blocks duplicate submission, and offers refresh-only recovery after an acknowledged save. Cancel or Escape confirms dirty drafts in place; the backdrop does not dismiss. The browser modal traps focus and restores it on close.
 
 ### Users
 
@@ -107,15 +109,17 @@ The admin-only Users screen lists account name, email, role, and active state. A
 
 Scanner is the intentional dark exception because the live camera image is the primary surface. A clear white scan frame, green scan line, mode label, and concise privacy copy keep it recognizably PorSca without obscuring the camera.
 
+Browser development includes a temporary floating camera panel, revealed by five quick Space presses outside interactive controls. It selects connected cameras and applies horizontal mirror/vertical flip to the video preview only. Scanning pauses while settings are open; close or Escape resumes it. The panel uses the existing cream/green controls, keeps keyboard focus within reach, and resets its settings when the scanner closes.
+
 Scanner states added in week 6. Each is a light card on the dark surface with an icon, a headline, and text, so no state depends on color alone:
 
-- **Added confirmation** — the product name, unit price, cart quantity, and stock, with a **Done** action. The scanner returns to the cart on its own after ~1.2 s.
+- **Added confirmation** — the product name, unit price, cart quantity, and stock, with a **Done** action. POS scanning stays armed for another item; the scanner returns to the cart ~1.2 s after the last successful scan. A same barcode can be intentionally scanned again after 700 ms of absence.
 - **Out of stock** — its own headline with **Scan again** and **Back to cart**.
 - **Stock limit reached** — the cart already holds all available stock, with the same recovery actions.
 - **Product not found** — names the code, notes that both the UPC-A and EAN-13 forms were tried, and flags a failing check digit as a possible misread.
 - **Not a product barcode** — a non-numeric, too short, or over-long code, answered without a request, pointing the cashier at Search.
 - **API unavailable** — the lookup could not reach Laravel, with **Scan again** and **Back to cart**.
-- **Inventory: not in inventory** — **Scan again** or, for admins only, **Add product** with the scanned barcode pre-filled. Cashiers can return to read-only inventory.
+- **Inventory: not in inventory** — Inventory opens Add Product automatically for admins after an authoritative lookup miss. The standalone scanner route retains its Add product action. Invalid codes and unavailable lookups offer recovery without creating a product. Cashiers can return to read-only inventory.
 - **Starting the camera** — scanning stays disarmed until the camera reports ready.
 
 ## Accessibility and resilience

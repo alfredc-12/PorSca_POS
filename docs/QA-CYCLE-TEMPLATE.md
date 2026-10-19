@@ -13,9 +13,13 @@ See [WORKFLOW.md](WORKFLOW.md) for the standing collaboration and release rules 
 - **QA owner:** `<designated human tester>`
 - **Release owner:** `<human release owner>`
 - **Environment:** `staging`
-- **Staging API address:** `<stable HTTPS address ending in /api/v1>`
+- **Staging API address:** `<the Lightsail HTTPS origin ending in /api/v1 configured in the preview build>`
+- **API deployment evidence:** `<manual workflow URL, dispatched full SHA, timestamped external health result with matching commit and staging/database/sandbox/status fields>`
+- **Mobile artifact:** `<EAS build ID/link, bundled API origin, native runtime/build, applied OTA update ID or none>`
+- **Documentation traceability:** `section 6.2; section 7; Test Plan 2.1` — see [DEPLOYMENT.md](DEPLOYMENT.md)
+- **Break-glass exception:** `<none, or human-authorized temporary origin and reason; never an implicit switch from Lightsail>`
 - **App profile:** `preview`, after the pre-build checklist is green
-- **API contract:** `porsca-mobile-api-v2`
+- **API contract:** `porsca-mobile-api-v3`
 - **Cycle status:** `not started | in progress | approval pending | approved | rejected`
 - **Approval:** `<human decision, date, and evidence links>`
 
@@ -46,18 +50,17 @@ If sandbox credentials are unavailable, practice-labeled QR results may be recor
 
 ## Pre-build checklist
 
-Complete these items before creating or installing a preview build:
+Use the five required checks in [WORKFLOW.md](WORKFLOW.md#previewstaging-build-gate). A connectivity preview build may precede the formal cycle record and Postman/Newman follow-up; it is not yet a formal SQA candidate. When this record is created, attach the prior pre-build evidence:
 
-- [ ] The exact mobile and API SHAs are recorded and still available on `staging`.
-- [ ] The stable staging API address answers the health check and required routes.
+- [ ] Mobile and API CI are tied to the exact paired candidate SHAs.
+- [ ] The deployed Lightsail staging API answers health and required routes, with health commit matching the paired API SHA.
 - [ ] The isolated staging database has been reset and seeded with the recorded version.
-- [ ] The database will remain unchanged during this cycle.
+- [ ] The baseline will not be reset or reseeded during this cycle; retain the changes produced by testing for reproduction.
 - [ ] Mobile CI is green for the exact mobile candidate.
 - [ ] API CI and `composer verify` are green for the exact API candidate.
-- [ ] Postman/Newman backend checks pass against the stable staging address.
 - [ ] PayMongo sandbox configuration and webhook reachability are recorded.
-- [ ] The required mobile smoke checks are ready to run.
-- [ ] The human release owner records the checklist result.
+- [ ] PayMongo sandbox keys are present server-side and the sandbox webhook is registered/enabled.
+- [ ] The human release owner authorizes the preview build on the recorded pre-build results.
 
 Only the human release owner may authorize the manual preview build after this checklist is green.
 
@@ -65,18 +68,26 @@ Only the human release owner may authorize the manual preview build after this c
 eas build --profile preview --platform android
 ```
 
+## Before formal SQA (after a connectivity preview build if needed)
+
+- [ ] The exact mobile and API SHAs are recorded and still available on `staging`.
+- [ ] Postman/Newman backend checks pass against the recorded staging address.
+- [ ] The human release owner records the gate decision, seed/data version and sandbox context in this cycle record.
+- [ ] The installed preview artifact and any OTA update match the mobile candidate and recorded API origin.
+- [ ] Required mobile smoke checks are ready to run; record their results below after installation.
+
 ## Required smoke checks
 
 Record a result and evidence for each behavior. Record stock before and after every successful sale.
 
-Before sale checks, verify individual admin/cashier login, secure token restoration on restart, failed login, logout, and expired/revoked-token redirect to login. Confirm cashier inventory is read-only (no add/edit controls), admin product writes are available, and both roles can read all sales. Staff setup stays API-only. Record account role labels, never passwords or tokens.
+Before sale checks, verify individual admin/cashier login, secure token restoration on restart, failed login, logout, and expired/revoked-token redirect to login. Confirm cashier inventory is read-only (no add/edit controls), admin product writes are available, and both roles can read all sales. Verify that admins can manage cashier accounts from the phone's Users screen; see [API-CONTRACT.md](API-CONTRACT.md#authentication-and-roles) for access rules and supported operations. Record account role labels, never passwords or tokens.
 
 1. Search a product, add it to the cart, and complete a cash checkout.
 2. Scan a barcode, add it to the cart, and complete a cash checkout.
 3. Reject insufficient stock without creating a sale or negative stock.
 4. Reject insufficient cash without creating a sale or changing stock.
 5. Complete a successful QR Ph sandbox payment.
-6. Complete a failed or expired QR Ph payment without creating a sale or changing stock, and leave a pending payment without cancelling it (leaving keeps the cart; the reservation expires server-side).
+6. Verify failed/non-payable QR outcomes without a sale or stock deduction. Leave/reopen a pending attempt, simulate verification uncertainty, and confirm that pending/unknown or reservation expiry alone never unlocks Cash or another QR attempt. Verify restart recovery through Laravel. For `paid_unfulfilled` or contradictory outcomes, retain the recovery handle and tender lock; require operator reconciliation without a new payment.
 7. Show a successful sale in transaction history.
 8. Retry the same payment or idempotency key and verify one sale and one inventory deduction.
 
@@ -90,7 +101,7 @@ Attach or link concise evidence for:
 - API CI and `composer verify`.
 - Postman/Newman output and the exact collection/API revision.
 - Appium screenshots, video, logs, and result report.
-- API health, migration, seed, checkout, payment, and webhook results.
+- API deployment run, timestamped external health matching the deployed SHA, migration, seed, checkout, payment, and signed webhook results. See [Test Plan 2.1 evidence requirements](DEPLOYMENT.md#qa-evidence-test-plan-21); historical/local checks are not live deployment or payment proof.
 - Defect issues, fixes, and human retest results.
 
 Keep large raw artifacts in the agreed evidence store rather than source control. Redact tokens, secrets, and authorization headers.

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { router } from 'expo-router';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
@@ -10,11 +9,16 @@ import { useAuth } from '@/src/context/AuthContext';
 import { Product } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { BarcodeScanner } from '@/src/components/BarcodeScanner';
+import { ProductEditorModal } from '@/src/components/ProductEditorModal';
+import { stockStatus } from '@/src/utils/stockStatus';
 
 export default function InventoryScreen() {
   const { inventoryProducts, inventoryState, inventoryError, inventoryUsingFallback, refreshInventory } = usePos();
   const { isAdmin } = useAuth();
   const [query, setQuery] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [editor, setEditor] = useState<{ product?: Product; scannedBarcode?: string }>();
   const responsive = useResponsive();
 
   const filtered = useMemo(() => {
@@ -27,9 +31,9 @@ export default function InventoryScreen() {
     );
   }, [inventoryProducts, query]);
 
-  const lowStock = inventoryProducts.filter((product) => product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10)).length;
-  const outOfStock = inventoryProducts.filter((product) => product.stockStatus === 'out_of_stock' || product.stock === 0).length;
-  const healthy = inventoryProducts.filter((product) => (product.stockStatus ?? (product.stock > 10 ? 'in_stock' : 'low_stock')) === 'in_stock').length;
+  const lowStock = inventoryProducts.filter((product) => stockStatus(product) === 'low_stock').length;
+  const outOfStock = inventoryProducts.filter((product) => stockStatus(product) === 'out_of_stock').length;
+  const healthy = inventoryProducts.filter((product) => stockStatus(product) === 'in_stock').length;
 
   useEffect(() => {
     void refreshInventory();
@@ -60,7 +64,7 @@ export default function InventoryScreen() {
           ]}
           accessibilityRole="button"
           accessibilityLabel="Scan product barcode"
-          onPress={() => router.push({ pathname: '/scanner', params: { mode: 'inventory' } })}
+          onPress={() => setScanning(true)}
         >
           <Ionicons name="barcode-outline" size={responsive.s(25)} color={colors.white} />
           {!responsive.veryNarrow ? <Text style={[styles.scanText, { fontSize: responsive.font(16) }]}>Scan</Text> : null}
@@ -74,19 +78,19 @@ export default function InventoryScreen() {
         </View>
         <View style={styles.statusCopy}>
           <View style={styles.greenDot} />
-          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryUsingFallback ? 'Offline • Demo fallback' : inventoryState === 'unavailable' ? 'Offline • Laravel required' : inventoryState === 'loading' ? 'Checking Laravel…' : 'Laravel inventory'}</Text>
+          <Text style={[styles.statusText, { fontSize: responsive.font(12.5) }]}>{inventoryUsingFallback ? 'Offline • Saved stock' : inventoryState === 'unavailable' ? 'Offline • Server required' : inventoryState === 'loading' ? 'Checking…' : 'Stock ready'}</Text>
         </View>
       </View>
 
       {inventoryState === 'loading' ? (
-        <DataState kind="loading" title="Loading inventory from Laravel" message="Fetching authoritative product and stock information." />
+        <DataState kind="loading" title="Loading inventory" message="Fetching current product and stock information." />
       ) : null}
 
       {inventoryState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel inventory unavailable"
-          message={inventoryError ?? 'The API could not be reached. Inventory is unchanged; nothing was substituted.'}
+          title="Shop server unavailable"
+          message={inventoryError ?? 'We cannot reach the shop server. Inventory is unchanged.'}
           actionLabel="Retry inventory"
           onAction={() => void refreshInventory()}
         />
@@ -116,12 +120,12 @@ export default function InventoryScreen() {
 
       {inventoryState !== 'loading' ? <View style={styles.listCard}>
         {filtered.length ? filtered.map((product, index) => (
-          <ProductRow key={product.id} product={product} first={index === 0} editable={isAdmin} />
+          <ProductRow key={product.id} product={product} first={index === 0} editable={isAdmin} onEdit={() => setEditor({ product })} />
         )) : (
           <View style={[styles.empty, { minHeight: responsive.heightValue(0.26, 190, 250) }]}>
             <Ionicons name="search-outline" size={responsive.s(34)} color={colors.textMuted} />
             <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>{inventoryProducts.length ? 'No products match your search' : 'No inventory products returned'}</Text>
-            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>{inventoryProducts.length ? 'Try a product name, barcode, or category.' : 'Laravel has no active inventory records yet.'}</Text>
+            <Text style={[styles.emptyBody, { fontSize: responsive.font(typography.label) }]}>{inventoryProducts.length ? 'Try a product name, barcode, or category.' : 'There are no active inventory records yet.'}</Text>
           </View>
         )}
       </View> : null}
@@ -136,7 +140,7 @@ export default function InventoryScreen() {
               width: responsive.veryNarrow ? '100%' : undefined,
             },
           ]}
-          onPress={() => router.push('/product-form')}
+          onPress={() => setEditor({})}
           accessibilityRole="button"
           accessibilityLabel="Add product"
         >
@@ -144,6 +148,13 @@ export default function InventoryScreen() {
           <Text style={[styles.addText, { fontSize: responsive.font(16) }]}>Add Product</Text>
         </Pressable>
       </View> : null}
+      {scanning ? <Modal visible animationType="fade" onRequestClose={() => setScanning(false)}>
+        <BarcodeScanner inventoryMode onClose={() => setScanning(false)} onInventoryResult={(outcome) => {
+          setScanning(false);
+          setEditor(outcome.product ? { product: outcome.product } : { scannedBarcode: outcome.barcode });
+        }} />
+      </Modal> : null}
+      {isAdmin && editor ? <ProductEditorModal product={editor.product} scannedBarcode={editor.scannedBarcode} onClose={() => setEditor(undefined)} /> : null}
     </Screen>
   );
 }
@@ -171,10 +182,10 @@ function Metric({ icon, value, label, tone }: { icon: React.ComponentProps<typeo
   );
 }
 
-function ProductRow({ product, first, editable }: { product: Product; first: boolean; editable: boolean }) {
+function ProductRow({ product, first, editable, onEdit }: { product: Product; first: boolean; editable: boolean; onEdit: () => void }) {
   const responsive = useResponsive();
-  const low = product.stockStatus === 'low_stock' || (!product.stockStatus && product.stock > 0 && product.stock <= 10);
-  const out = product.stockStatus === 'out_of_stock' || product.stock === 0;
+  const low = stockStatus(product) === 'low_stock';
+  const out = stockStatus(product) === 'out_of_stock';
   const badgeBackground = out ? colors.dangerSoft : low ? colors.warningSoft : colors.primarySoft;
   const badgeColor = out ? colors.danger : low ? colors.warning : colors.primary;
   const badgeText = out ? 'Out of Stock' : low ? 'Low Stock' : 'In Stock';
@@ -185,7 +196,7 @@ function ProductRow({ product, first, editable }: { product: Product; first: boo
       accessibilityRole={editable ? 'button' : undefined}
       accessibilityLabel={editable ? `Edit ${product.name}` : product.name}
       disabled={!editable}
-      onPress={() => router.push({ pathname: '/product-form', params: { id: product.id } })}
+      onPress={onEdit}
       style={({ pressed }) => [
         styles.productRow,
         !first && styles.rowBorder,
@@ -215,7 +226,7 @@ function ProductRow({ product, first, editable }: { product: Product; first: boo
             <Text style={[styles.badgeText, { color: badgeColor, fontSize: responsive.font(10.5) }]}>{badgeText}</Text>
           </View>
         ) : null}
-        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{product.price > 0 ? `₱${product.price.toFixed(2)}` : 'Price unavailable'}</Text>
+        <Text style={[styles.price, { fontSize: responsive.font(responsive.narrow ? 15 : 17) }]}>{`₱${product.price.toFixed(2)}`}</Text>
       </View>
       {editable ? <Ionicons name="ellipsis-vertical" size={responsive.s(20)} color={colors.textMuted} /> : null}
     </Pressable>

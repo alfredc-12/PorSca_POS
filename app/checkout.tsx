@@ -1,16 +1,24 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
 import { AppButton } from '@/src/components/AppButton';
-import { ProductThumbnail } from '@/src/components/ProductThumbnail';
+import { FailureNotice } from '@/src/components/FailureNotice';
+import { CheckoutOrderSummary } from '@/src/components/CheckoutOrderSummary';
+import { QrPaymentCode } from '@/src/components/QrPaymentCode';
 import { ApiClientError, Payment } from '@/src/api/client';
-import { usePos } from '@/src/context/PosContext';
-import { cashChange, paymentError } from '@/src/domain/pos';
-import { saleFailureCopy } from '@/src/domain/checkout';
+import { useCheckout } from '@/src/context/PosContext';
+import { paymentError } from '@/src/domain/pos';
+import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
+import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
+import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
+import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
+import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
+import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
+import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 import { OFFLINE_COPY } from '@/src/config/offline';
-import { PaymentStatus } from '@/src/types';
+import { PaymentStatus, Sale } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 
 type QrViewStatus = PaymentStatus | 'idle' | 'creating' | 'verification';
@@ -21,174 +29,347 @@ export default function CheckoutScreen() {
     total,
     cart,
     apiConfigured,
-    resetCart,
     completeCashSale,
     startQrPhPayment,
     refreshQrPhPayment,
     confirmQrPhPayment,
-  } = usePos();
-  const [mode, setMode] = useState<'cash' | 'qrph'>(method === 'qrph' ? 'qrph' : 'cash');
-  const [cash, setCash] = useState('');
-  const [qrStatus, setQrStatus] = useState<QrViewStatus>('idle');
-  const [qrPayment, setQrPayment] = useState<Payment>();
-  const [qrError, setQrError] = useState<string>();
-  const [cashError, setCashError] = useState<string>();
+    unresolvedQrPayment,
+    authorityCheckout,
+    checkoutMachine,
+    checkoutProgress,
+    checkoutCompletion,
+    acknowledgeCheckout,
+    claimCheckoutCompletionAlert,
+    recoverCheckout,
+    revalidateCheckout,
+    abandonCheckout,
+  } = useCheckout();
+  const [retainedPayment] = useState(() => unresolvedQrPayment());
+  const [selectedMode, setMode] = useState<'cash' | 'qrph'>(() => retainedPayment || method === 'qrph' ? 'qrph' : 'cash');
+  const [enteredCash, setCash] = useState('');
+  const cash = checkoutProgress?.cashInput ?? enteredCash;
+  const [qrStatus, setQrStatus] = useState<QrViewStatus>(retainedPayment?.status ?? 'idle');
+  const [qrPayment, setQrPayment] = useState<Payment | undefined>(retainedPayment);
+  const [qrError, setQrError] = useState<DescribedFailure>();
+  const [qrFailure, setQrFailure] = useState<DescribedFailure>();
+  const [cashError, setCashError] = useState<DescribedFailure>();
   const [cashSubmitting, setCashSubmitting] = useState(false);
   const [qrBusy, setQrBusy] = useState(false);
   const cashBusyRef = useRef(false);
   const qrBusyRef = useRef(false);
   const handledPaidPayment = useRef<string | undefined>(undefined);
+  const navigatedDone = useRef(false);
+  const visibleRef = useRef(false);
+  // Done used to acknowledge the completion and leave in one commit. The native
+  // stack is removing this screen then, and swapping the completed receipt for
+  // the empty-cart tree in that same commit makes Fabric re-parent the
+  // receipt's views inside the outgoing screen (Android: addViewAt ... View
+  // already has a parent), which kills the React host. Leave first, and
+  // acknowledge once this screen is actually gone.
+  const done = useCallback(() => {
+    if (navigatedDone.current) return;
+    navigatedDone.current = true;
+    router.replace('/(tabs)/transactions');
+  }, []);
+  useEffect(() => () => {
+    if (navigatedDone.current) acknowledgeCheckout?.();
+  }, [acknowledgeCheckout]);
+  const alertCompletion = useCallback((sale: Sale) => {
+    if (!visibleRef.current || handledPaidPayment.current === sale.id) return;
+    if (claimCheckoutCompletionAlert && !claimCheckoutCompletionAlert(sale.id)) return;
+    handledPaidPayment.current = sale.id;
+    Alert.alert('Payment completed', receiptText(sale), [{ text: 'Done', onPress: done }]);
+  }, [done, claimCheckoutCompletionAlert]);
 
-  const received = Number(cash) || 0;
-  const cashResult = useMemo(() => cashChange(total, received), [received, total]);
-  const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const recordedTerminalStatus = useRef<string | undefined>(undefined);
+
+  const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
+  const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
+  const cashFeedback = cashResult.kind === 'insufficient'
+    ? `Short by ${formatCheckoutMoney(cashResult.shortfallCentavos)}. Add cash before confirming.`
+    : cashResult.kind === 'invalid'
+      ? 'Enter digits and at most two decimal places (for example, 100.00).'
+      : cashResult.kind === 'empty' ? 'Enter the cash received or choose a preset.' : undefined;
+  const [abandonReason, setAbandonReason] = useState('');
+  const [recoveryError, setRecoveryError] = useState<string>();
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [showSaleHelp, setShowSaleHelp] = useState(false);
+  const operationRef = useRef(false);
+  const [receiptRefresh, setReceiptRefresh] = useState<'running' | 'failed' | 'ready'>();
+  const recoveryAction = async (action: () => Promise<void>) => {
+    if (operationRef.current || administratorRequired) return;
+    operationRef.current = true;
+    setRecoveryBusy(true);
+    setRecoveryError(undefined);
+    try {
+      await action();
+      const retained = unresolvedQrPayment();
+      if (retained) await showQrPayment(retained);
+      else { setQrPayment(undefined); setQrStatus('idle'); setQrError(undefined); }
+      setCashError(undefined);
+    } catch (error) {
+      setQrError(describeQrVerification(error));
+      setRecoveryError('We could not recover this purchase. Keep it open and try again before taking payment.');
+    }
+    finally { operationRef.current = false; setRecoveryBusy(false); }
+  };
+
+  // Mirror the authority gate in presentation without replacing any handler
+  // guard. A verified non-payable attempt remains eligible for a new tender.
+  const authorityTenderLocked = !canAcceptCheckoutTender(checkoutMachine);
+  const guidance = checkoutGuidance({ authority: authorityCheckout, machine: checkoutMachine, progress: checkoutProgress,
+    operation: cashSubmitting ? 'cash' : qrStatus === 'creating' ? 'qr-create' : recoveryBusy ? 'recover' : qrBusy ? 'check' : undefined,
+    receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
+  const administratorRequired = Boolean(guidance?.admin);
+  const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
+  const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
+  const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
+  // Recovery/deep links must display the retained tender, not a route default.
+  const mode = checkoutProgress?.uncertainTender ?? (authorityTenderLocked && activeAttempt
+    ? activeAttempt.method === 'qr' ? 'qrph' : 'cash'
+    : selectedMode);
+  const terminalLocked = checkoutMachine?.reconciliationRequired
+    || checkoutMachine?.state === 'completed'
+    || checkoutMachine?.state === 'abandoned'
+    || checkoutMachine?.state === 'paid-but-unfulfilled';
+  const tenderLockReason = terminalLocked
+    ? 'This purchase is locked. Do not take another payment.'
+    : 'Do not take another payment while this payment is waiting.';
+
+  const checkoutItems = authorityCheckout?.items;
+  const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
+    product: { id: String(item.productId), name: item.name, price: item.unitPriceCentavos / 100, barcode: '', stock: 0 },
+    quantity: item.quantity,
+  })), [checkoutItems]);
+  const displayedCart = authoritativeCart ?? cart;
+  const dueItemCount = displayedCart.reduce((sum, line) => sum + line.quantity, 0);
+  const presets = useMemo(() => cashTenderPresets(dueAmountCentavos), [dueAmountCentavos]);
+
+  // A refusal because the provider still holds an earlier attempt is not a dead
+  // end: show the stored authority attempt with its status check. Ambiguous
+  // creation is recoverable by durable checkout id, even without a payment id.
+  const surfaceRetainedQrAttempt = useCallback((error: unknown) => {
+    const apiError = error instanceof ApiClientError ? error : undefined;
+    if (apiError?.code !== 'qr_payment_unresolved') return false;
+    const retained = unresolvedQrPayment();
+    if (!retained) return false;
+    setQrPayment(retained);
+    setQrStatus(retained.status === 'paid' ? 'verification' : retained.status);
+    setQrError(undefined);
+    return true;
+  }, [unresolvedQrPayment]);
 
   const finishCash = async () => {
     setCashError(undefined);
+    // Switching tabs does not cancel a QR attempt. Creation and verification
+    // errors are unresolved too: the provider may still collect payment.
+    // Only a server-confirmed unpaid terminal state permits another tender.
+    if (operationRef.current || guidance?.admin || !canAcceptCheckoutTender(checkoutMachine) || checkoutProgress?.uncertainTender === 'qrph') {
+      const failure = localFailure('Payment is still waiting', 'Do not take another payment. Check this purchase before accepting cash.');
+      setCashError(failure);
+      Alert.alert(failure.title, failure.body);
+      return;
+    }
     // Strict online: no sale can be recorded without Laravel, so a stale or
     // deep-linked checkout can never fall through to a local sale (defect F1).
     if (!apiConfigured) {
-      const message = OFFLINE_COPY.checkoutNotConfigured;
-      setCashError(message);
-      Alert.alert('Unable to complete sale', message);
+      const failure = localFailure('The sale was not saved', OFFLINE_COPY.checkoutNotConfigured, { action: 'retry', actionLabel: 'Try again' });
+      setCashError(failure);
+      Alert.alert(failure.title, failure.body);
       return;
     }
-    if (!cashResult.sufficient) {
-      const message = `You are ₱${cashResult.shortfall.toFixed(2)} short. Enter at least ₱${total.toFixed(2)} and confirm again.`;
-      setCashError(message);
-      Alert.alert('Insufficient cash', message);
-      return;
-    }
+    if (cashResult.kind !== 'sufficient') return;
     // Single-submit guard: the disabled button state commits a render later,
     // so a second tap before that must not record a second sale.
     if (cashBusyRef.current) return;
     cashBusyRef.current = true;
+    operationRef.current = true;
     setCashSubmitting(true);
     try {
-      const sale = await completeCashSale(received);
+      const sale = await completeCashSale(cash);
       if (!sale) {
-        const message = 'The cart is empty. Return to the POS and add a product before trying again.';
-        setCashError(message);
-        Alert.alert('Unable to complete sale', message);
+        const failure = localFailure('The sale was not saved', 'The cart is empty. Return to the POS and add a product before trying again.', { action: 'retry', actionLabel: 'Try again' });
+        setCashError(failure);
+        Alert.alert(failure.title, failure.body);
         return;
       }
-      Alert.alert('Payment recorded', `${sale.id} was completed successfully.`, [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }]);
+      alertCompletion(sale);
     } catch (error) {
+      surfaceRetainedQrAttempt(error);
       const apiError = error instanceof ApiClientError ? error : undefined;
+      if (apiError?.code === 'revalidation_required') setShowSaleHelp(true);
       const failure = saleFailureCopy({
         status: apiError?.status,
         code: apiError?.code,
         message: apiError?.message,
         details: apiError?.details,
       });
-      setCashError(failure.message);
-      Alert.alert(failure.title, failure.message);
+      setCashError(failure);
+      Alert.alert(failure.title, alertBody(failure));
     } finally {
       cashBusyRef.current = false;
+      operationRef.current = false;
       setCashSubmitting(false);
     }
   };
 
   const showQrPayment = useCallback(async (payment: Payment) => {
+    setMode('qrph');
     setQrPayment(payment);
-    setQrStatus(payment.status);
+    setQrStatus(payment.status === 'paid' ? 'verification' : payment.status);
     setQrError(undefined);
+    const terminal = payment.status === 'failed' || payment.status === 'cancelled' || payment.status === 'expired';
+    if (terminal && recordedTerminalStatus.current !== payment.status) {
+      recordedTerminalStatus.current = payment.status;
+      setQrFailure(describeAndRecordFailure({ code: payment.status }, { screen: 'qr-payment' }));
+    }
 
     if (payment.status === 'paid_unfulfilled') {
+      const failure = describeAndRecordFailure({ code: 'paid_unfulfilled' }, { screen: 'qr-payment' });
+      setQrFailure(failure);
       try {
         await confirmQrPhPayment(payment);
         setQrStatus('paid_unfulfilled');
-        if (handledPaidPayment.current !== payment.id) {
+        if (visibleRef.current && handledPaidPayment.current !== payment.id) {
           handledPaidPayment.current = payment.id;
-          Alert.alert(
-            'Payment needs reconciliation',
-            'Laravel received the money but could not fulfil stock. No sale was recorded; reconcile with the operator before refunding.',
-          );
+          Alert.alert(failure.title, alertBody(failure));
         }
       } catch (error) {
-        setQrStatus('verification');
-        setQrError(verificationMessage(error));
+        setQrStatus('paid_unfulfilled');
+        setQrError(describeQrVerification(error));
       }
       return;
     }
 
     if (payment.status !== 'paid') return;
 
+    setReceiptRefresh('running');
     try {
-      await confirmQrPhPayment(payment);
+      const sale = await confirmQrPhPayment(payment);
+      if (!sale) throw new Error('No completed receipt was returned.');
+      setReceiptRefresh('ready');
       setQrStatus('paid');
-      if (handledPaidPayment.current !== payment.id) {
-        handledPaidPayment.current = payment.id;
-        resetCart();
-        Alert.alert(
-          'Payment recorded',
-          `QR Ph payment ${payment.saleId ?? payment.id} was confirmed by Laravel.`,
-          [{ text: 'Done', onPress: () => router.replace('/(tabs)/transactions') }],
-        );
-      }
+      alertCompletion(sale);
     } catch (error) {
+      setReceiptRefresh('failed');
       setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      setQrError(describeQrVerification(error));
     }
-  }, [confirmQrPhPayment, resetCart]);
+  }, [confirmQrPhPayment, alertCompletion]);
+
+  const [authorityViewInputs, setAuthorityViewInputs] = useState<{
+    authorityCheckout: typeof authorityCheckout;
+    operationBusy: boolean;
+    receiptRefresh: typeof receiptRefresh;
+    unresolvedQrPayment: typeof unresolvedQrPayment;
+    uncertainTender: string | undefined;
+  }>();
+  const uncertainTender = checkoutProgress?.uncertainTender;
+  if (!authorityViewInputs
+    || authorityViewInputs.authorityCheckout !== authorityCheckout
+    || authorityViewInputs.operationBusy !== operationBusy
+    || authorityViewInputs.receiptRefresh !== receiptRefresh
+    || authorityViewInputs.unresolvedQrPayment !== unresolvedQrPayment
+    || authorityViewInputs.uncertainTender !== uncertainTender) {
+    setAuthorityViewInputs({ authorityCheckout, operationBusy, receiptRefresh, unresolvedQrPayment, uncertainTender });
+    if (!operationBusy) {
+      const retained = unresolvedQrPayment();
+      if (!retained) {
+        if (uncertainTender === 'qrph') { setMode('qrph'); setQrPayment(undefined); setQrStatus('verification'); }
+      } else {
+        setMode('qrph');
+        setQrPayment(retained);
+        setQrStatus(retained.status === 'paid' ? receiptRefresh === 'ready' ? 'paid' : 'verification' : retained.status);
+      }
+    }
+  }
 
   const startQrPayment = useCallback(async (forceNew = false) => {
-    if (qrBusyRef.current) return;
+    if (operationRef.current || administratorRequired) return;
+    operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     setQrStatus('creating');
     setQrError(undefined);
+    setQrFailure(undefined);
+    recordedTerminalStatus.current = undefined;
     try {
       const payment = await startQrPhPayment(forceNew);
       await showQrPayment(payment);
     } catch (error) {
-      setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      if (surfaceRetainedQrAttempt(error)) return;
+      if (error instanceof ApiClientError && error.code === 'revalidation_required') setShowSaleHelp(true);
+      const startFailure = qrStartFailure(error);
+      setQrStatus(startFailure.status);
+      setQrError(startFailure.failure);
     } finally {
+      operationRef.current = false;
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [showQrPayment, startQrPhPayment]);
+  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired]);
 
-  const checkQrPayment = useCallback(async () => {
-    if (!qrPayment || qrBusyRef.current) return;
+  const performQrCheck = useCallback(async () => {
+    if (!qrPayment || operationRef.current || administratorRequired) return;
+    operationRef.current = true;
     qrBusyRef.current = true;
     setQrBusy(true);
     try {
       const payment = await refreshQrPhPayment(qrPayment.id);
       await showQrPayment(payment);
     } catch (error) {
-      setQrStatus('verification');
-      setQrError(verificationMessage(error));
+      setQrStatus('verification'); setQrError(describeQrVerification(error));
     } finally {
+      operationRef.current = false;
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [qrPayment, refreshQrPhPayment, showQrPayment]);
+  }, [qrPayment, refreshQrPhPayment, showQrPayment, administratorRequired]);
 
-  // Laravel exposes no cashier cancel action: leaving the QR screen does not
-  // cancel the payment attempt. The pending payment stays payable until the
-  // provider settles it or the server-side reservation expires, so the cart
-  // is kept and the cashier returns to the POS.
+  const retryReceiptRefresh = useCallback(async () => {
+    const retained = unresolvedQrPayment();
+    if (operationRef.current || retained?.status !== 'paid' || administratorRequired || authorityCheckout?.state !== 'completed' || !authorityCheckout.sale
+      || String(authorityCheckout.attempts[authorityCheckout.attempts.length - 1]?.id) !== retained.id) return;
+    operationRef.current = true;
+    qrBusyRef.current = true;
+    setQrBusy(true);
+    try { await showQrPayment(retained); }
+    finally { operationRef.current = false; qrBusyRef.current = false; setQrBusy(false); }
+  }, [authorityCheckout, administratorRequired, unresolvedQrPayment, showQrPayment]);
+
+  // Leaving never cancels an attempt. Hold expiry does not establish financial finality.
   const leaveQrPayment = useCallback(() => {
     router.back();
   }, []);
 
-  useEffect(() => {
-    if (mode !== 'qrph' || qrStatus !== 'pending' || !qrPayment) return;
-    const timer = setInterval(() => {
-      void checkQrPayment();
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [checkQrPayment, mode, qrPayment, qrStatus]);
+  const { checkNow: checkQrPayment, visible } = useCheckoutPaymentPolling({
+    identity: qrPayment ? `${authorityCheckout?.id ?? checkoutMachine?.id}:${qrPayment.id}` : undefined,
+    eligible: mode === 'qrph' && qrStatus === 'pending' && activeAttempt?.payment === 'pending' && !activeAttempt.finalEvidence && !terminalLocked && !guidance?.admin && receiptRefresh !== 'running' && receiptRefresh !== 'failed',
+    busy: operationBusy, check: performQrCheck,
+  });
+  useLayoutEffect(() => { visibleRef.current = visible; return () => { visibleRef.current = false; }; }, [visible]);
+  useEffect(() => { if (visible && checkoutCompletion && !guidance?.admin) alertCompletion(checkoutCompletion.sale); }, [visible, checkoutCompletion, guidance?.admin, alertCompletion]);
 
-  if (cart.length === 0) {
+  if (checkoutCompletion && !guidance?.admin) {
+    const sale = checkoutCompletion.sale;
+    return <Screen title="Checkout" back>
+      <View testID="checkout-completed-receipt" style={styles.paymentCard}>
+        <View style={styles.headingRow}><Ionicons name="checkmark-circle" size={26} color={colors.primary} /><Text style={styles.sectionTitle}>Payment completed</Text></View>
+        {receiptText(sale).split('\n').map(line => <Text key={line}>{line}</Text>)}
+        <AppButton label="Done" onPress={done} />
+      </View>
+    </Screen>;
+  }
+
+  if (cart.length === 0 && !guidance) {
     return (
       <Screen title="Checkout" subtitle="There is nothing to pay yet." back>
         <View style={styles.emptyCard}>
           <View style={styles.emptyIcon}><Ionicons name="cart-outline" size={36} color={colors.primary} /></View>
           <Text style={styles.emptyTitle}>The cart is empty</Text>
           <Text style={styles.emptyBody}>Return to the POS and add a product before starting payment.</Text>
+          <AppButton label="Recover device purchase" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={recoveryBusy} />
+          {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
           <AppButton testID="return-to-pos" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
       </Screen>
@@ -200,12 +381,12 @@ export default function CheckoutScreen() {
   // checkout path exists without Laravel (defect F1).
   if (!apiConfigured) {
     return (
-      <Screen title="Checkout" subtitle="Laravel is not reachable." back>
+      <Screen title="Checkout" subtitle="This phone needs shop setup." back>
         <View style={styles.emptyCard}>
           <View style={styles.emptyIcon}><Ionicons name="cloud-offline-outline" size={36} color={colors.warning} /></View>
-          <Text style={styles.emptyTitle}>No sale can be recorded</Text>
+          <Text style={styles.emptyTitle}>Administrator required</Text>
           <Text testID="checkout-offline-notice" accessibilityRole="alert" style={styles.emptyBody}>
-            {OFFLINE_COPY.checkoutNotConfigured} The cart has been kept; return to the POS, connect to the Laravel API, and start payment again.
+            This phone needs shop setup or permission before it can record a payment. Call the shop administrator now. Do not take payment or hand over goods until the administrator fixes this phone.
           </Text>
           <AppButton testID="return-to-pos-offline" label="Return to POS" onPress={() => router.replace('/(tabs)/pos')} style={styles.fullButton} />
         </View>
@@ -218,29 +399,46 @@ export default function CheckoutScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title="Checkout" subtitle="Confirm the sale, then record payment before inventory is deducted." back>
+      <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
+        {guidance ? <View testID="checkout-guidance" style={styles.paymentCard} accessibilityLiveRegion="polite">
+          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
+          <Text>{guidance.body}</Text>
+          <Text>{guidance.safety}</Text>
+          {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : <AppButton
+            testID={guidance.action === 'check' ? qrStatus === 'pending' ? 'refresh-qr-payment' : 'retry-qr-verification' : guidance.action === 'start' ? 'start-qrph-payment' : guidance.action === 'refresh' ? 'retry-qr-verification' : undefined}
+            label={guidance.action === 'done' ? 'Finish this sale' : guidance.label} disabled={guidance.action === 'wait' || operationBusy}
+            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover' || guidance.action === 'done') void recoveryAction(() => recoverCheckout()); }} />}
+          {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
+        </View> : null}
+        {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>
-            <Text style={styles.dueTotal}>₱{total.toFixed(2)}</Text>
-            <Text style={styles.dueItems}>{itemCount} {itemCount === 1 ? 'item' : 'items'} in this sale</Text>
+            <Text style={styles.dueTotal}>₱{(dueAmountCentavos / 100).toFixed(2)}</Text>
+            <Text style={styles.dueItems}>{dueItemCount} {dueItemCount === 1 ? 'item' : 'items'} in this sale</Text>
           </View>
           <View style={styles.dueIcon}><Ionicons name="bag-check-outline" size={30} color={colors.primary} /></View>
         </View>
 
         <View style={styles.orderCard}>
-          <Text style={styles.sectionTitle}>Order summary</Text>
-          {cart.map((line, index) => (
-            <View key={line.product.id} style={[styles.orderLine, index > 0 && styles.orderBorder]}>
-              <ProductThumbnail product={line.product} size={46} />
-              <View style={styles.orderCopy}>
-                <Text numberOfLines={1} style={styles.orderName}>{line.product.name}</Text>
-                <Text style={styles.orderMeta}>Qty {line.quantity} • ₱{line.product.price.toFixed(2)} each</Text>
-              </View>
-              <Text style={styles.orderAmount}>₱{(line.quantity * line.product.price).toFixed(2)}</Text>
-            </View>
-          ))}
+          <CheckoutOrderSummary cart={displayedCart} />
         </View>
+
+        {guidance?.category === 'interrupted' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
+          <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
+            <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
+          </Pressable>
+          {!showSaleHelp ? <Text style={styles.helper}>This sale needs attention. Open help only if the payment was interrupted.</Text> : null}
+          {showSaleHelp ? <>
+            <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
+            <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
+            <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
+            <Text style={styles.label}>Cancel this sale</Text>
+            <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
+            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
+            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
+          </> : null}
+        </View> : null}
 
         <View style={styles.paymentCard}>
           <View style={styles.paymentHeader}>
@@ -248,17 +446,19 @@ export default function CheckoutScreen() {
             <Text style={styles.helper}>Choose one</Text>
           </View>
           <View style={styles.segmentRow}>
-            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash' }} onPress={() => setMode('cash')} style={[styles.segment, mode === 'cash' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-cash" accessibilityRole="button" accessibilityLabel="Pay with cash" accessibilityState={{ selected: mode === 'cash', disabled: (guidance?.admin || tenderLocked && mode !== 'cash') }} disabled={(guidance?.admin || tenderLocked && mode !== 'cash')} onPress={() => { if (!tenderLocked) setMode('cash'); }} style={[styles.segment, mode === 'cash' && styles.segmentActive, (guidance?.admin || tenderLocked && mode !== 'cash') && styles.segmentDisabled]}>
               <Ionicons name="cash-outline" size={22} color={mode === 'cash' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>Cash</Text>
               <Ionicons name={mode === 'cash' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'cash' ? colors.primary : colors.outline} />
             </Pressable>
-            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph' }} onPress={() => setMode('qrph')} style={[styles.segment, mode === 'qrph' && styles.segmentActive]}>
+            <Pressable testID="checkout-payment-qrph" accessibilityRole="button" accessibilityLabel="Pay with QR Ph" accessibilityState={{ selected: mode === 'qrph', disabled: (guidance?.admin || tenderLocked && mode !== 'qrph') }} disabled={(guidance?.admin || tenderLocked && mode !== 'qrph')} onPress={() => { if (!tenderLocked) setMode('qrph'); }} style={[styles.segment, mode === 'qrph' && styles.segmentActive, (guidance?.admin || tenderLocked && mode !== 'qrph') && styles.segmentDisabled]}>
               <Ionicons name="qr-code-outline" size={22} color={mode === 'qrph' ? colors.primary : colors.textMuted} />
               <Text style={styles.segmentText}>QR Ph</Text>
               <Ionicons name={mode === 'qrph' ? 'checkmark-circle' : 'ellipse-outline'} size={21} color={mode === 'qrph' ? colors.primary : colors.outline} />
             </Pressable>
           </View>
+
+          {tenderLocked ? <Text testID="checkout-tender-lock-reason" accessibilityLiveRegion="polite" style={styles.tenderLockReason}>{tenderLockReason}</Text> : null}
 
           {mode === 'cash' ? (
             <View style={styles.cashPanel}>
@@ -269,6 +469,7 @@ export default function CheckoutScreen() {
                   testID="cash-received-input"
                   value={cash}
                   onChangeText={setCash}
+                  editable={!tenderLocked}
                   keyboardType="decimal-pad"
                   placeholder="0.00"
                   placeholderTextColor={colors.textMuted}
@@ -276,73 +477,76 @@ export default function CheckoutScreen() {
                   accessibilityLabel="Cash received"
                 />
               </View>
+              {cashFeedback ? <Text testID="cash-tender-feedback" accessibilityLiveRegion="polite">{cashFeedback}</Text> : null}
+              <View style={styles.segmentRow}>
+                {presets.map(preset => <Pressable key={preset.label} accessibilityRole="button" accessibilityLabel={`Cash ${preset.label}`} disabled={tenderLocked} onPress={() => { if (!tenderLocked) setCash(preset.input); }}><Text>{preset.label}</Text></Pressable>)}
+              </View>
               <View style={styles.changeBox}>
                 <Text style={styles.changeLabel}>Change to customer</Text>
-                <Text style={styles.changeValue}>₱{cashResult.change.toFixed(2)}</Text>
+                <Text style={styles.changeValue}>{cashResult.kind === 'sufficient' ? `₱${(cashResult.changeCentavos / 100).toFixed(2)}` : '—'}</Text>
               </View>
-              {cashError ? <Text testID="checkout-cash-error" accessibilityRole="alert" style={styles.cashError}>{cashError}</Text> : null}
+              {cashError && !guidance ? <FailureNotice testID="checkout-cash-error" failure={cashError} /> : null}
               <AppButton
                 testID="confirm-cash-payment"
                 label={cashSubmitting ? 'Recording Cash Payment…' : 'Confirm Cash Payment'}
                 onPress={finishCash}
-                disabled={cashSubmitting}
+                disabled={tenderLocked || recoveryBusy || cashResult.kind !== 'sufficient'}
                 style={styles.fullButton}
               />
             </View>
           ) : (
             <View style={styles.qrPanel}>
-              {qrPayment?.qrPayload ? <QrPayload payload={qrPayment.qrPayload} /> : (
+              {guidance?.admin || authorityCheckout?.sale ? null : qrPayment?.qrPayload ? <QrPaymentCode payload={qrPayment.qrPayload} /> : (
                 <View style={styles.qrPlaceholder}>
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
               )}
-              <Text style={styles.qrTitle}>Laravel QR Ph payment</Text>
-              <Text style={styles.qrBody}>Laravel creates the transaction QR and confirms the payment before the sale is recorded. Failed, cancelled, expired, or unverified payments leave stock unchanged. Leaving this screen never cancels the attempt: a pending payment stays payable until the provider settles it or the reservation expires.</Text>
+              <Text style={styles.qrTitle}>QR Ph practice payment (sandbox)</Text>
+              <Text style={styles.qrBody}>Leaving does not cancel this payment.</Text>
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
-                  {qrStatusText(qrStatus)}
+                  {receiptRefresh === 'running' ? 'Payment pending…' : qrStatusText(qrStatus)}
                 </Text>
               ) : null}
-              {qrError ? <Text testID="qr-payment-error" accessibilityRole="alert" style={styles.qrError}>{qrError}</Text> : null}
-              {qrPayment?.failureReason && (qrTerminal || qrStatus === 'paid_unfulfilled') ? (
-                <Text testID="qr-payment-failure-reason" style={styles.qrFailureReason}>Reference: {qrPayment.failureReason}</Text>
+              {qrError && !guidance ? <FailureNotice testID="qr-payment-error" failure={qrError} /> : null}
+              {qrFailure && !guidance ? <FailureNotice testID="qr-payment-failure" failure={qrFailure} /> : null}
+              {!guidance && (qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment) ? (
+                <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy || cashSubmitting} style={styles.fullButton} />
               ) : null}
-              {qrStatus === 'idle' || qrStatus === 'verification' && !qrHasPayment ? (
-                <AppButton testID="start-qrph-payment" label={qrStatus === 'verification' ? 'Retry QR Ph Payment' : 'Start QR Ph Payment'} onPress={() => void startQrPayment(false)} disabled={qrBusy} style={styles.fullButton} />
-              ) : null}
-              {qrStatus === 'creating' ? (
+              {!guidance && qrStatus === 'creating' ? (
                 <AppButton testID="start-qrph-payment" label="Creating QR Ph Payment…" onPress={() => undefined} disabled style={styles.fullButton} />
               ) : null}
-              {qrStatus === 'pending' && qrPayment ? (
+              {!guidance && qrStatus === 'pending' && qrPayment ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
-              {qrStatus === 'verification' && qrPayment ? (
+              {!guidance && (qrStatus === 'verification' || qrStatus === 'unknown') && qrPayment ? (
                 <View style={styles.qrActions}>
                   <AppButton testID="retry-qr-verification" label="Retry Payment Verification" onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
-              {qrStatus === 'paid_unfulfilled' && qrPayment ? (
+              {!guidance && qrStatus === 'paid_unfulfilled' && qrPayment ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking Laravel…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="refresh-qr-payment" label={qrBusy ? 'Checking…' : 'Check Payment Status'} onPress={() => void checkQrPayment()} disabled={qrBusy} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
-              {qrTerminal ? (
+              {!guidance && qrTerminal ? (
                 <View style={styles.qrActions}>
-                  <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy} style={styles.fullButton} />
+                  <AppButton testID="retry-qr-payment" label="Start a New QR Ph Payment" onPress={() => void startQrPayment(true)} disabled={qrBusy || cashSubmitting} style={styles.fullButton} />
                   <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={() => leaveQrPayment()} disabled={qrBusy} variant="secondary" style={styles.fullButton} />
                 </View>
               ) : null}
             </View>
           )}
 
+          {guidance && mode === 'qrph' ? <AppButton testID="leave-qr-payment" label="Leave Payment" onPress={leaveQrPayment} disabled={operationBusy} variant="secondary" /> : null}
           <View style={styles.secureRow}>
             <Ionicons name="shield-checkmark" size={16} color={colors.primary} />
-            <Text style={styles.secureText}>Only a Laravel-confirmed payment can update stock or transaction history.</Text>
+            <Text style={styles.secureText}>Stock and history change only after the sale is recorded.</Text>
           </View>
         </View>
       </Screen>
@@ -350,38 +554,70 @@ export default function CheckoutScreen() {
   );
 }
 
-function QrPayload({ payload }: { payload: string }) {
-  const imagePayload = payload.startsWith('data:image/') || /^https?:\/\//i.test(payload);
-  if (imagePayload) {
-    return <Image testID="qr-payment-image" accessibilityLabel="QR Ph payment code" source={{ uri: payload }} style={styles.qrImage} resizeMode="contain" />;
-  }
-
-  return (
-    <View testID="qr-payment-payload" style={styles.qrPayloadCard}>
-      <Ionicons name="qr-code" size={64} color={colors.text} />
-      <Text style={styles.qrPayloadLabel}>Scan this QR Ph payload</Text>
-      <Text selectable style={styles.qrPayloadText}>{payload}</Text>
-    </View>
-  );
+function receiptText(sale: Sale) {
+  const facts = [sale.paymentMethod === 'cash' ? 'Cash payment and sale are recorded.' : 'Payment confirmed. Stock and history updated.', `Receipt ${sale.id}`, `Paid ₱${sale.total.toFixed(2)}`];
+  if (sale.paymentMethod === 'cash') facts.push(`Cash received ₱${sale.cashReceived!.toFixed(2)}`, `Change to give ₱${sale.change!.toFixed(2)}`);
+  else facts.push('Payment method: QR Ph');
+  return facts.join('\n');
 }
 
 function qrStatusText(status: QrViewStatus) {
   switch (status) {
-    case 'creating': return 'Creating a Laravel payment…';
+    case 'creating': return 'Creating a QR Ph payment…';
     case 'pending': return 'Payment pending…';
-    case 'paid': return 'Payment confirmed by Laravel. Inventory and history refreshed.';
-    case 'paid_unfulfilled': return 'Payment received but stock could not be fulfilled. Reconcile with the operator; no sale was recorded.';
+    case 'paid': return 'Payment confirmed. Stock and history updated.';
+    case 'unknown': return 'Payment interrupted';
+    case 'paid_unfulfilled': return 'Administrator required';
     case 'failed':
     case 'cancelled':
     case 'expired': return paymentError(status);
-    case 'verification': return 'Payment verification needs attention. No local completion was recorded.';
+    case 'verification': return 'Payment interrupted';
     case 'idle': return '';
   }
 }
 
-function verificationMessage(error: unknown) {
-  const detail = error instanceof ApiClientError ? error.message : 'Laravel could not be reached.';
-  return `Payment status could not be verified. ${detail} Retry verification; do not treat this payment as complete yet.`;
+function describeQrVerification(error: unknown): DescribedFailure {
+  const apiError = error instanceof ApiClientError ? error : undefined;
+  return apiError
+    ? describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'qr-verification' },
+      )
+    : localFailure('We cannot check this payment yet', 'Do not hand over the goods. Check the connection and check again.', { action: 'check-payment', actionLabel: 'Check again' });
+}
+
+/**
+ * A failed QR start either created no attempt, left its outcome unresolved, or
+ * was refused because an earlier cash attempt still is. The refusals created
+ * no QR attempt, so they return the panel to idle instead of inventing a QR
+ * verification state; a transport or server outcome stays unresolved.
+ */
+function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
+  const apiError = error instanceof ApiClientError ? error : undefined;
+  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required') {
+    return {
+      status: 'idle',
+      failure: describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'cash-sale' },
+      ),
+    };
+  }
+  if (apiError && isDefinitiveQrRejection(apiError)) {
+    return {
+      status: 'idle',
+      failure: describeAndRecordFailure(
+        { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
+        { screen: 'qr-payment' },
+      ),
+    };
+  }
+  return { status: 'verification', failure: describeQrVerification(error) };
+}
+
+/** The alert body: the visible copy, plus the support code when one was issued. */
+function alertBody(failure: DescribedFailure): string {
+  return failure.reference ? `${failure.body}\n\nSupport code: ${failure.reference}` : failure.body;
 }
 
 const styles = StyleSheet.create({
@@ -406,6 +642,8 @@ const styles = StyleSheet.create({
   segmentRow: { flexDirection: 'row', gap: spacing.sm },
   segment: { flex: 1, minHeight: 58, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outline, paddingHorizontal: spacing.md, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
   segmentActive: { backgroundColor: colors.primaryWash, borderColor: colors.primary },
+  segmentDisabled: { opacity: 0.5 },
+  tenderLockReason: { color: colors.textMuted, fontSize: typography.label, lineHeight: 20 },
   segmentText: { flex: 1, color: colors.text, fontSize: typography.label, fontWeight: '800' },
   cashPanel: { gap: spacing.md, paddingTop: 2 },
   label: { color: colors.text, fontSize: typography.label, fontWeight: '800' },
@@ -415,13 +653,8 @@ const styles = StyleSheet.create({
   changeBox: { minHeight: 68, borderRadius: radius.md, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   changeLabel: { color: colors.textMuted, fontSize: typography.label, fontWeight: '600' },
   changeValue: { color: colors.primary, fontSize: typography.heading, fontWeight: '900' },
-  cashError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.label, lineHeight: 20, fontWeight: '700' },
   qrPanel: { gap: spacing.md, alignItems: 'center', paddingTop: spacing.sm },
   qrPlaceholder: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
-  qrImage: { width: 184, height: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white },
-  qrPayloadCard: { width: '100%', minHeight: 184, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', padding: spacing.md, gap: spacing.sm },
-  qrPayloadLabel: { color: colors.text, fontSize: typography.caption, fontWeight: '800' },
-  qrPayloadText: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
   qrTitle: { color: colors.text, textAlign: 'center', fontSize: typography.title, fontWeight: '900' },
   qrBody: { color: colors.textMuted, textAlign: 'center', fontSize: typography.label, lineHeight: 20, maxWidth: 390 },
   qrStatus: { textAlign: 'center', fontSize: typography.label, fontWeight: '800', lineHeight: 20 },
@@ -429,8 +662,6 @@ const styles = StyleSheet.create({
   qrStatusReconcile: { color: colors.warning },
   qrStatusError: { color: colors.danger },
   qrStatusVerification: { color: colors.warning },
-  qrError: { color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: spacing.md, fontSize: typography.caption, lineHeight: 18, textAlign: 'center' },
-  qrFailureReason: { color: colors.textMuted, fontSize: typography.caption, textAlign: 'center' },
   qrActions: { alignSelf: 'stretch', gap: spacing.sm },
   fullButton: { alignSelf: 'stretch' },
   secureRow: { minHeight: 30, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },

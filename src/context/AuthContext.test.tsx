@@ -102,7 +102,7 @@ describe('AuthProvider', () => {
     store.get.mockRejectedValue(new Error('secure store locked'));
     const fetchImpl = jest.fn();
     const screen = setup(fetchImpl, store);
-    await waitFor(() => expect(screen.auth().sessionError).toBe('secure store locked'));
+    await waitFor(() => expect(screen.auth().sessionFailure?.body).toBe('secure store locked'));
     expect(screen.auth().status).toBe('signed-out');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -114,7 +114,7 @@ describe('AuthProvider', () => {
     const screen = setup(fetchImpl, store);
     await waitFor(() => expect(screen.auth().status).toBe('signed-in'));
     await act(async () => { await expect(screen.client.me()).rejects.toMatchObject({ status: 401 }); });
-    await waitFor(() => expect(screen.auth().sessionError).toContain('saved session could not be removed'));
+    await waitFor(() => expect(screen.auth().sessionFailure?.body).toContain('saved session could not be removed'));
     expect(screen.auth().status).toBe('signed-out');
   });
 
@@ -132,6 +132,9 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(screen.auth().status).toBe('signed-in'));
     await act(async () => { await expect(screen.client.listSales()).rejects.toMatchObject({ status: 401 }); });
     expect(screen.auth().status).toBe('signed-out');
+    // A mid-sale 401 now explains itself instead of dropping the cashier on the
+    // sign-in screen with no words (defect F6).
+    expect(screen.auth().sessionFailure?.title).toBe('You have been signed out');
     expect(store.remove).toHaveBeenCalled();
   });
 
@@ -140,7 +143,9 @@ describe('AuthProvider', () => {
     const fetchImpl = jest.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(response({ data: { user: cashier } }));
     const screen = setup(fetchImpl, store);
     await waitFor(() => expect(screen.auth().status).toBe('signed-out'));
-    expect(screen.auth().sessionError).toContain('offline');
+    expect(screen.auth().sessionFailure?.title).toBe('We cannot reach the shop server');
+    expect(screen.auth().sessionFailure?.body).not.toContain('offline');
+    expect(screen.auth().sessionFailure?.reference).toMatch(/^PRS-/);
     expect(store.remove).not.toHaveBeenCalled();
     await act(async () => { await screen.auth().retrySession(); });
     expect(screen.auth().status).toBe('signed-in');

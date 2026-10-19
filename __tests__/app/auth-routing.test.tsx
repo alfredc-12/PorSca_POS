@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { Platform, Text } from 'react-native';
 import { act, fireEvent, renderRouter, waitFor } from 'expo-router/testing-library';
 import { ApiClient } from '@/src/api/client';
 import { AuthProvider } from '@/src/context/AuthContext';
@@ -76,6 +76,32 @@ describe('real Expo Router authentication flow', () => {
     const screen = await setup('/users', 'saved-token', 'admin');
     await waitFor(() => expect(screen.getPathname()).toBe('/users'));
     expect(screen.getByText('Admin user management')).toBeTruthy();
+  });
+
+  it.each(['admin', 'cashier'] as const)('keeps a signed-in %s session when switching browser tabs', async (role) => {
+    const screen = await setup('/', null, role);
+    await waitFor(() => expect(screen.getPathname()).toBe('/login'));
+    fireEvent.changeText(screen.getByLabelText('Email'), 'staff@example.test');
+    fireEvent.changeText(screen.getByLabelText('Password'), 'secret');
+    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    await waitFor(() => expect(screen.getPathname()).toBe('/pos'));
+
+    for (const [label, pathname] of [['Inventory', '/inventory'], ['Transactions', '/transactions'], ['POS', '/pos']]) {
+      const press = { button: 0, currentTarget: { target: '' }, preventDefault: jest.fn() };
+      const platform = jest.replaceProperty(Platform, 'OS', 'web');
+      try {
+        fireEvent.press(screen.getByText(label), press);
+        // A browser anchor must not reload the document and lose its memory-only token.
+        expect(press.preventDefault).toHaveBeenCalledTimes(1);
+      } finally {
+        platform.restore();
+      }
+      await waitFor(() => expect(screen.getPathname()).toBe(pathname));
+    }
+    await act(async () => { await screen.client.me(); });
+    expect(screen.fetchImpl).toHaveBeenLastCalledWith(expect.stringContaining('/auth/me'), expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token' }) }));
+    expect(screen.store.set).toHaveBeenCalledTimes(1);
+    expect(screen.store.remove).not.toHaveBeenCalled();
   });
 
   it('signs out through the header after a restored cashier reaches the POS', async () => {

@@ -25,7 +25,7 @@ PorSca POS is the Expo mobile client for a small shop. Cashiers search or scan p
 - Follow the repository map in `AGENTS.md` and the cashier/payment boundaries in `docs/WORKFLOW.md` and `docs/API-CONTRACT.md`.
 - Route all API traffic through `src/api/client.ts`; do not put credentials, access tokens, or payment-provider secrets in Expo public configuration or the app bundle.
 - QR Ph completion and inventory updates require Laravel-confirmed payment. The opt-in demo catalog never records a local sale.
-- The mobile/API contract is `porsca-mobile-api-v2`; coordinate compatible mobile and API releases.
+- The mobile/API contract is `porsca-mobile-api-v3`; coordinate compatible mobile and API releases.
 
 ## Verification
 

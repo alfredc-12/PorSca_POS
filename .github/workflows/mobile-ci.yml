@@ -2,9 +2,9 @@ name: Mobile CI
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [main, staging, development]
   push:
-    branches: [main, staging, 'fm/**']
+    branches: [main, staging, development, 'fm/**']
 
 permissions:
   contents: read
@@ -20,9 +20,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm

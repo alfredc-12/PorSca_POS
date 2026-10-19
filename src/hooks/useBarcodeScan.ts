@@ -10,17 +10,17 @@ import { Product } from '@/src/types';
 /**
  * The scan session: it owns the lock, the cooldown, the input validation, the
  * lookup and the per-status outcome so the camera screen only has to render.
- * The camera binding stays in `app/scanner.tsx`; everything decided here is
- * plain JavaScript and is driven by fixtures in Jest.
+ * The screen delegates scan events here; the decisions are plain JavaScript
+ * and are driven by fixtures in Jest.
  */
 
 /**
- * A code left in frame keeps firing native callbacks. Retail scanner guidance
- * for "same symbol" suppression lands between 500 ms and 1500 ms; 1200 ms is
- * deliberately at the top of that range because the lock and the cooldown are
- * two separate defences (see `handleBarcode`).
+ * A same symbol releases after 700 ms of absence. In the armed successful POS
+ * flow, that release bypasses the 1200 ms cooldown so an intentional repeat is
+ * accepted; other scan flows retain the cooldown.
  */
 export const SAME_BARCODE_COOLDOWN_MS = 1200;
+export const SAME_SYMBOL_RELEASE_MS = 700;
 
 export type BarcodeScanKind =
   | 'found'
@@ -60,6 +60,8 @@ export type UseBarcodeScanOptions = {
   cooldownMs?: number;
   /** Injectable clock so the cooldown is testable. */
   now?: () => number;
+  /** Keep the session armed after successful results. */
+  stayArmedAfterSuccess?: boolean;
 };
 
 export type UseBarcodeScan = {
@@ -80,9 +82,16 @@ export function useBarcodeScan({
   cameraReady = true,
   cooldownMs = SAME_BARCODE_COOLDOWN_MS,
   now = Date.now,
+  stayArmedAfterSuccess = false,
 }: UseBarcodeScanOptions): UseBarcodeScan {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<BarcodeScanOutcome>();
+  const active = useRef(true);
+  const generation = useRef(0);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; generation.current += 1; };
+  }, []);
   /**
    * The lock is a ref, not state. Several native callbacks can arrive in one
    * tick, before React has re-rendered, and a `useState` lock lets them all
@@ -97,6 +106,8 @@ export function useBarcodeScan({
    */
   const lockedRef = useRef(false);
   const lastScanRef = useRef<{ barcode: string; at: number } | undefined>(undefined);
+  const heldRef = useRef<{ barcode: string; lastSeenAt: number } | undefined>(undefined);
+  const inFlightRef = useRef<{ barcode: string; lastSeenAt: number } | undefined>(undefined);
   // Keep the latest resolver without restarting the session on every re-render;
   // the POS resolver changes identity whenever the cart changes.
   const resolveRef = useRef(resolve);
@@ -107,23 +118,66 @@ export function useBarcodeScan({
   useEffect(() => {
     cameraReadyRef.current = cameraReady;
   }, [cameraReady]);
+  const stayArmedAfterSuccessRef = useRef(stayArmedAfterSuccess);
+  useEffect(() => {
+    stayArmedAfterSuccessRef.current = stayArmedAfterSuccess;
+  }, [stayArmedAfterSuccess]);
+  const nowRef = useRef(now);
+  useEffect(() => {
+    nowRef.current = now;
+  }, [now]);
+
+  useEffect(() => {
+    if (outcome?.kind !== 'found' || !outcome.product) return;
+    if (stayArmedAfterSuccess) {
+      if (!heldRef.current) heldRef.current = { barcode: outcome.barcode, lastSeenAt: nowRef.current() };
+      lockedRef.current = false;
+    } else {
+      heldRef.current = undefined;
+      lockedRef.current = true;
+    }
+  }, [outcome, stayArmedAfterSuccess]);
 
   const rearm = useCallback(() => {
+    generation.current += 1;
     lockedRef.current = false;
+    heldRef.current = undefined;
+    inFlightRef.current = undefined;
     setOutcome(undefined);
     setBusy(false);
   }, []);
 
   const handleBarcode = useCallback((data: string) => {
+    if (!active.current) return;
     if (!cameraReadyRef.current) return;
-    if (lockedRef.current) return;
 
     const barcode = data.trim();
+    if (lockedRef.current) {
+      const inFlight = inFlightRef.current;
+      if (stayArmedAfterSuccessRef.current && inFlight?.barcode === barcode) {
+        const seenAt = now();
+        if (seenAt - inFlight.lastSeenAt < SAME_SYMBOL_RELEASE_MS) inFlight.lastSeenAt = seenAt;
+      }
+      return;
+    }
+
+    let releasedHeldSymbol = false;
+    const held = heldRef.current;
+    if (held) {
+      const seenAt = now();
+      if (barcode === held.barcode && seenAt - held.lastSeenAt < SAME_SYMBOL_RELEASE_MS) {
+        held.lastSeenAt = seenAt;
+        return;
+      }
+      releasedHeldSymbol = barcode === held.barcode;
+      heldRef.current = undefined;
+    }
     const last = lastScanRef.current;
-    if (last && last.barcode === barcode && now() - last.at < cooldownMs) return;
+    if (!releasedHeldSymbol && last && last.barcode === barcode && now() - last.at < cooldownMs) return;
 
     lockedRef.current = true;
-    lastScanRef.current = { barcode, at: now() };
+    const scannedAt = now();
+    lastScanRef.current = { barcode, at: scannedAt };
 
     const shape = validateBarcodeShape(barcode);
     if (!shape.ok) {
@@ -133,14 +187,33 @@ export function useBarcodeScan({
       return;
     }
 
+    inFlightRef.current = { barcode, lastSeenAt: scannedAt };
     setBusy(true);
+    const requestGeneration = generation.current;
+    const isCurrent = () => active.current && requestGeneration === generation.current;
     void resolveRef.current(shape.digits)
-      .then((result) => setOutcome(toOutcome(shape, result)))
-      .catch(() => setOutcome(errorOutcome(shape.digits)))
-      .finally(() => setBusy(false));
+      .then((result) => {
+        if (!isCurrent()) return;
+        const inFlight = inFlightRef.current;
+        inFlightRef.current = undefined;
+        const resolved = toOutcome(shape, result);
+        setOutcome(resolved);
+        if (stayArmedAfterSuccessRef.current && result.status === 'found' && result.product) {
+          heldRef.current = { barcode, lastSeenAt: inFlight?.barcode === barcode ? inFlight.lastSeenAt : scannedAt };
+          lockedRef.current = false;
+        }
+      })
+      .catch(() => {
+        if (!isCurrent()) return;
+        inFlightRef.current = undefined;
+        setOutcome(errorOutcome(shape.digits));
+      })
+      .finally(() => { if (isCurrent()) setBusy(false); });
   }, [cooldownMs, now]);
 
-  return { busy, outcome, scanning: cameraReady && !busy && !outcome, handleBarcode, rearm };
+  const successfulAdd = stayArmedAfterSuccess && outcome?.kind === 'found';
+  const scanning = cameraReady && (busy ? stayArmedAfterSuccess : !outcome || successfulAdd);
+  return { busy, outcome, scanning, handleBarcode, rearm };
 }
 
 const INVALID_MESSAGES: Record<Extract<BarcodeShape, { ok: false }>['reason'], string> = {

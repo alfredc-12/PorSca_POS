@@ -24,7 +24,7 @@ Run this before requesting review and in CI:
 npm run verify
 ```
 
-It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
+It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. Mobile CI also runs this gate for pull requests targeting `development` and pushes to `development`; see the [workflow](../.github/workflows/mobile-ci.yml) for its triggers. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
 
 ## Merging while the check runners are down (billing lock)
 
@@ -45,31 +45,43 @@ Quotas reset every month, so this rule is a temporary bridge, not a permanent lo
 Profiles are in [`eas.json`](../eas.json):
 
 - `development`: true dev-client build pinned to the `development` EAS environment. Set the developer LAN API URL in `.env` or the selected EAS environment; no fixed LAN URL is in this profile. A physical phone must never use `localhost`.
-- `preview`: internal staging build pointed at the stable staging API origin. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
+- `preview`: internal staging build pointed at the stable Lightsail staging API origin (`https://staging-api.lumbangan.online/api/v1`). Funnel is retained only as a break-glass fallback. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
 - `production`: reserved for a separately approved production configuration; production hosting and PayMongo are out of scope for this round.
 
 The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Contract v2 adds `expo-secure-store`: existing binaries require a fresh native build (`eas build --profile development --platform android` for daily Android development). OTA updates alone cannot add the native module. Preview rebuilds still require the gate below. Tokens/passwords never belong in EAS public settings; testers sign in with individual API-managed accounts. Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
 
+## Staging deployment handoff
+
+Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The configured origin is not live evidence by itself; the recorded health fields are. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
+
 ## Preview/staging build gate
 
-Run the following gate and record the evidence before any `eas build --profile preview` command:
+Run the following gate and record the evidence before any `eas build --profile preview` command. This relaxed gate exists so a preview APK can be built to test endpoint and database connectivity; it is not a formal SQA candidate until the deferred follow-up below is complete.
+
+Required pre-build checks (all must be green):
 
 1. Mobile CI is green for the exact candidate commit, including `npm run verify`.
 2. API CI is green for the paired Laravel commit.
 3. The stable staging API answers `/health` and its required resource/payment routes.
 4. Laravel migrations have run and staging data has been seeded with the recorded data/seed version.
-5. PayMongo sandbox credentials are configured server-side, sandbox callbacks/webhooks are reachable, and webhook verification is enabled.
-6. API-track backend automation checks (Postman/Newman) are green.
-7. The required mobile smoke flows are green on the Android/Appium staging seam: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
-8. The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context.
+5. The two PayMongo confirms, both server-side: (a) sandbox keys are present on the API server, and (b) the sandbox webhook URL is registered and enabled.
 
-Only after all eight checks are green may the release owner manually build the preview candidate:
+Only after all five checks are green may the release owner manually build the preview candidate:
 
 ```bash
 eas build --profile preview --platform android
 ```
 
-A failed gate blocks the build; do not spend an EAS build to discover a staging/configuration failure.
+A failed gate blocks the build; do not spend an EAS build to discover a staging/configuration failure. Builds stay manual because the Expo build quota is limited.
+
+### Deferred follow-up (before formal SQA, non-blocking for the preview build)
+
+The following do not block a connectivity preview build, but must be complete before formal SQA:
+
+- API-track backend automation checks (Postman/Newman) are green.
+- The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context in the formal QA cycle record (see below).
+
+The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows with the Android/Appium suite against the staging build: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 
 ## Formal QA cycle record
 
@@ -81,8 +93,8 @@ Keep the record with:
 
 - cycle ID and owner;
 - exact mobile commit SHA and exact Laravel API commit SHA;
-- `porsca-mobile-api-v2` contract version;
-- environment/profile and staging API origin;
+- `porsca-mobile-api-v3` contract version;
+- environment/profile, staging API origin, API deployment run/health evidence and EAS build/runtime/update identity (see [Test Plan 2.1 evidence](DEPLOYMENT.md#qa-evidence-test-plan-21));
 - migration and seed/data version;
 - PayMongo sandbox account/context, webhook endpoint reachability, and provider test mode;
 - mobile CI, API CI, Jest/RNTL, Appium, and Postman/Newman evidence links;
@@ -98,7 +110,7 @@ The Defect Summary is derived from GitHub Issues for the cycle/environment: coun
 
 Retain Appium screenshots/video/logs, Postman/Newman reports, Jest/RNTL output, Laravel CI/migration/seed/webhook artifacts, and the cycle record for the agreed project retention period. Large raw logs remain in artifact storage, not committed source.
 
-Final QA approval remains human. Automation supplies evidence and blocking signals; it does not merge, promote, or declare release approval. Funnel wiring, EAS execution, and any production action remain manual.
+Final QA approval remains human. Automation supplies evidence and blocking signals; it does not merge, promote, or declare release approval. Lightsail setup, staging deployment dispatch, break-glass Funnel wiring, EAS execution, and any production action remain manual.
 
 ## Out of scope this round
 

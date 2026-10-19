@@ -22,12 +22,12 @@ export function isDemoCatalogEnabled(
 }
 
 export const OFFLINE_COPY = {
-  catalogUnavailable: 'Laravel API is unavailable. Connect to the API to load the catalog; no demo catalog is in use.',
-  catalogNotConfigured: 'Laravel API is not configured. Set EXPO_PUBLIC_API_URL and connect before searching the catalog.',
-  inventoryUnavailable: 'Laravel API is unavailable. Connect to the API to load authoritative inventory.',
-  inventoryNotConfigured: 'Laravel API is not configured. Set EXPO_PUBLIC_API_URL and connect before managing inventory.',
-  salesNotConfigured: 'Laravel API is not configured. Connect to the API to load transaction history; no local sale was recorded.',
-  barcodeNotConfigured: 'Laravel API is not configured, so barcodes cannot be checked against the catalog. Connect to the API and try again.',
-  checkoutNotConfigured: 'Laravel API is not configured. No sale was recorded and stock was not changed. Connect to the API and try again.',
-  checkoutOffline: 'Connect to the Laravel API to complete a sale. The cart stays editable and nothing is recorded locally.',
+  catalogUnavailable: 'We cannot reach the shop server. Connect to it to load the catalog.',
+  catalogNotConfigured: 'This phone is not connected to the shop server yet. Ask your administrator to finish setup before searching the catalog.',
+  inventoryUnavailable: 'We cannot reach the shop server. Connect to it to load current stock.',
+  inventoryNotConfigured: 'This phone is not connected to the shop server yet. Ask your administrator to finish setup before managing inventory.',
+  salesNotConfigured: 'This phone is not connected to the shop server yet. Connect to load transaction history; no local sale was recorded.',
+  barcodeNotConfigured: 'This phone is not connected to the shop server yet, so barcodes cannot be checked against the catalog. Connect to the server and try again.',
+  checkoutNotConfigured: 'We cannot reach the shop server. No sale was recorded and stock was not changed. Check the connection, then start payment again.',
+  checkoutOffline: 'Connect to the shop server to complete a sale. The cart stays editable and nothing is recorded locally.',
 } as const;

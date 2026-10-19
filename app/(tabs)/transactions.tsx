@@ -1,44 +1,36 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { Screen } from '@/src/components/Screen';
 import { DataState } from '@/src/components/DataState';
 import { usePos } from '@/src/context/PosContext';
 import { PaymentMethod, Sale } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
+import { filterHistory, validHistoryDate } from '@/src/domain/transactionHistory';
 
 type Filter = 'all' | 'today' | PaymentMethod;
 
 export default function TransactionsScreen() {
-  const { sales, salesState, salesError, refreshSales } = usePos();
+  const { sales, salesState, salesError, refreshSales, consumeSalesHandoff } = usePos();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [showFilters, setShowFilters] = useState(true);
+  const [date, setDate] = useState('');
+  const [visibleCount, setVisibleCount] = useState(50);
+  const validDate = validHistoryDate(date);
   const responsive = useResponsive();
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const today = new Date().toDateString();
-    return sales.filter((sale) => {
-      const matchesFilter = filter === 'all'
-        || (filter === 'today' && new Date(sale.createdAt).toDateString() === today)
-        || sale.paymentMethod === filter;
-      const matchesQuery = !q
-        || sale.id.toLowerCase().includes(q)
-        || sale.total.toFixed(2).includes(q)
-        || sale.items.some((item) => item.product.name.toLowerCase().includes(q));
-      return matchesFilter && matchesQuery;
-    });
-  }, [filter, query, sales]);
+  const filtered = useMemo(() => filterHistory(sales, query, filter, date), [sales, query, filter, date]);
 
   const totalSales = sales.reduce((sum, sale) => sum + sale.total, 0);
   const cashCount = sales.filter((sale) => sale.paymentMethod === 'cash').length;
   const qrCount = sales.filter((sale) => sale.paymentMethod === 'qrph').length;
 
   React.useEffect(() => {
-    void refreshSales();
-  }, [refreshSales]);
+    if (!consumeSalesHandoff?.()) void refreshSales();
+  }, [refreshSales, consumeSalesHandoff]);
 
   return (
     <Screen>
@@ -95,14 +87,22 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
+      {showFilters ? <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <TextInput accessibilityLabel="Transaction date YYYY-MM-DD" placeholder="Date: YYYY-MM-DD (local time)" placeholderTextColor={colors.textMuted} value={date} onChangeText={setDate} style={[styles.searchInput, { minHeight: responsive.controlHeight }]} />
+          {date ? <Pressable accessibilityLabel="Clear date filter" onPress={() => setDate('')}><Text>Clear</Text></Pressable> : null}
+        </View>
+      </View> : null}
+      {!validDate ? <Text accessibilityRole="alert">Enter a date as YYYY-MM-DD.</Text> : null}
+
       {salesState === 'loading' ? (
-        <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from Laravel." />
+        <DataState kind="loading" title="Loading transaction history" message="Fetching completed sales from the shop server." />
       ) : null}
       {salesState === 'unavailable' ? (
         <DataState
           kind="unavailable"
-          title="Laravel history unavailable"
-          message={salesError ?? 'The API could not be reached. Showing the last known transaction history.'}
+          title="Shop server unavailable"
+          message={salesError ?? 'We cannot reach the shop server. Showing the last known transaction history.'}
           actionLabel="Retry history"
           onAction={() => void refreshSales()}
         />
@@ -117,7 +117,8 @@ export default function TransactionsScreen() {
             <Text style={[styles.emptyTitle, { fontSize: responsive.font(typography.title) }]}>{sales.length ? 'No matching transactions' : 'No sales yet'}</Text>
             <Text style={[styles.emptyText, { fontSize: responsive.font(typography.label) }]}>{sales.length ? 'Adjust the search or filters to see more receipts.' : 'Complete a checkout and the transaction will appear here automatically.'}</Text>
           </View>
-        ) : filtered.map((sale) => <TransactionRow key={sale.id} sale={sale} />)}
+        ) : filtered.slice(0, visibleCount).map((sale) => <TransactionRow key={sale.id} sale={sale} />)}
+        {filtered.length > visibleCount && salesState !== 'loading' ? <Pressable accessibilityRole="button" onPress={() => setVisibleCount(count => count + 50)} style={styles.chip}><Text style={styles.chipText}>Show more transactions ({visibleCount} of {filtered.length})</Text></Pressable> : null}
       </View>
     </Screen>
   );
@@ -171,7 +172,10 @@ function TransactionRow({ sale }: { sale: Sale }) {
   const methodLabel = sale.paymentMethod === 'cash' ? 'Cash' : 'QR Ph / PayMongo';
 
   return (
-    <View
+    <Pressable
+      onPress={() => router.push({ pathname: '/transaction-detail', params: { id: sale.id } })}
+      accessibilityRole="button"
+      accessibilityHint="View transaction details and receipt"
       testID={`transaction-${sale.id}`}
       accessibilityLabel={`${sale.paymentMethod === 'cash' ? 'Cash' : 'QR Ph'} transaction ${sale.id}, ${sale.status === 'paid' ? 'Completed' : sale.status}, ₱${sale.total.toFixed(2)}`}
       style={[
@@ -211,7 +215,7 @@ function TransactionRow({ sale }: { sale: Sale }) {
         <Text style={[styles.amount, { fontSize: responsive.font(responsive.narrow ? 16 : 18) }]}>₱{sale.total.toFixed(2)}</Text>
       </View>
       <Ionicons name="ellipsis-vertical" size={responsive.s(19)} color={colors.textMuted} />
-    </View>
+    </Pressable>
   );
 }
 

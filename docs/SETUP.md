@@ -7,7 +7,7 @@ Install:
 - Git
 - Node.js 20 LTS or newer
 - npm
-- A newly built PorSca development app on a physical Android/iOS phone
+- A newly built PorSca development app on a physical Android/iOS phone for native testing; browser development does not require a phone
 - An active API-managed admin or cashier account
 - Android Studio if you want an Android emulator
 
@@ -18,7 +18,7 @@ No PayMongo key is needed for local practice or for `npm run verify`.
 From the repository root:
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 npm run start
 ```
@@ -43,6 +43,34 @@ EXPO_PUBLIC_API_URL=http://192.168.1.100:8000/api/v1
 For a physical phone, replace the example address with the computer's LAN IP. Keep both devices on the same network. Never use `localhost` on a phone. Sign in with your own account in the app. The returned 30-day Sanctum token is saved in `expo-secure-store` under `porsca.session.v1`, never in `.env`. Startup validates it with `/auth/me` before showing any signed-in route. Every current-session `401` clears it and returns to login. Use Sign out in the tab header before sharing a device. No password, token, or PayMongo/provider secret belongs in an Expo public variable; those variables are included in the client bundle.
 
 The backend is Laravel from `niks0501/PorSca_POS_API`. Its `/api/v1` paths and the contract version are in [API-CONTRACT.md](API-CONTRACT.md). Laravel is the only backend authority; the former embedded Express scaffold has been removed.
+
+## Browser inventory development
+
+Keep the Laravel backend and Expo frontend running in separate terminals. For an existing configured local database, start Laravel from the sibling `PorSca_POS_API` folder:
+
+```powershell
+php artisan serve --host=127.0.0.1 --port=8000
+```
+
+In `PorSca_POS/.env`, use:
+
+```env
+EXPO_PUBLIC_APP_ENV=development
+EXPO_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1
+```
+
+Then start the frontend from `PorSca_POS`:
+
+```powershell
+npm.cmd ci
+npm.cmd run web -- --localhost --port 8081
+```
+
+Open `http://localhost:8081` and sign in with a local API account. Allow the browser camera when Inventory requests it. Use localhost for development camera access; remote HTTP origins cannot use `getUserMedia` ([browser requirements](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia#privacy_and_security)). Browser sessions keep tokens in memory, so reload requires signing in again. Do not reset or reseed an existing database to run this flow.
+
+Inventory owns its camera overlay and product modal. Admins can scan, add, or edit products; cashiers can scan to inspect stock. Barcode fields start locked and require Edit before entry. Custom category names persist through the existing Laravel product endpoints. Editing sends only changed fields, and stock entry means the resulting total quantity. If a product saves but inventory refresh fails, Retry inventory refresh performs reads only.
+
+Temporary browser camera controls are available in development builds. With the scanner open and focus outside a text field, button, or picker, press Space five times within three seconds. The floating panel selects a connected camera, mirrors horizontally, or flips vertically. Scanning pauses while the panel is open; close it or press Escape to resume. Refresh cameras after connecting a device, or Reset to restore the automatic camera and normal orientation. Settings last only until the scanner closes. No audio or photos are recorded.
 
 ## Offline demo catalog
 
@@ -71,19 +99,19 @@ php artisan migrate:fresh --seed --force
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel development revision and its synthetic seed; do not reset the shared staging database from this procedure. Sign in with the seeded admin account. Staff setup remains API-only: admins create cashier accounts through `/users`, not a phone admin screen. Cashiers see all sales read-only and cannot edit products or stock.
+Point `EXPO_PUBLIC_API_URL` at `http://<computer-LAN-IP>:8000/api/v1` for a physical device. The API checkout uses the Laravel development revision and its synthetic seed; do not reset the shared staging database from this procedure. Sign in with the seeded admin account. Admins can manage cashier accounts from the phone's Users screen; see [API-CONTRACT.md](API-CONTRACT.md#authentication-and-roles) for access rules and supported operations. Cashiers see all sales read-only and cannot edit products or stock.
 
 ## QR Ph local and staging flow
 
-The checkout screen creates QR Ph payments only through Laravel. Laravel returns the transaction-specific QR payload and the mobile app polls the documented payment status endpoint. Pending, failed, cancelled, expired, and verification-uncertain states keep the cart and stock unchanged; only a Laravel-confirmed paid response triggers the inventory/history refresh.
+The checkout screen creates QR Ph attempts only through Laravel. Laravel returns the transaction-specific QR payload; while the attempt is pending, the app periodically asks Laravel to refresh its provider verification through the checkout-attempt endpoint. Pending, failed, cancelled, expired, and verification-uncertain states keep the cart and stock unchanged. A Laravel-confirmed paid result triggers authoritative inventory/history verification; if payment is `paid_unfulfilled`, the cart remains and operator reconciliation is required rather than reporting a completed sale.
 
 A local API without provider credentials can create a synthetic pending payment. Do not add provider credentials to this repository or to any `EXPO_PUBLIC_*` variable. Paid sandbox results and webhook verification belong in the isolated Laravel checkout or the approved staging environment.
 
 ## Build profiles
 
-The EAS profiles in [`eas.json`](../eas.json) are `development`, `preview`, and `production`. The `development` profile is a true dev-client build pinned to the `development` EAS environment and requires `expo-dev-client`. The linked Expo project and matching slug are configured in [`app.json`](../app.json).
+The EAS profiles in [`eas.json`](../eas.json) are `development`, `preview`, and `production`. The `development` profile is a true dev-client build pinned to the `development` EAS environment and requires `expo-dev-client`. The linked Expo project and matching slug are configured in [`app.json`](../app.json). The staging API origin is the Lightsail hostname `https://staging-api.lumbangan.online/api/v1`. Funnel is retained only as a break-glass fallback. The API track owns manual Lightsail deployment; see [DEPLOYMENT.md](DEPLOYMENT.md) for the runbook and exact-commit health evidence. EAS distributes the client, not the API. The phone URL is inlined at build time, so changing it requires a new preview build.
 
-**Native rebuild required for contract v2:** `expo-secure-store` adds a native module/config plugin. Rebuild and install the development app with `eas build --profile development --platform android` (or `eas build --profile development --platform ios` for iOS). An OTA update cannot retrofit this module into an old binary. Preview must likewise be rebuilt with `eas build --profile preview --platform android` only after the preview gate passes. This implementation does not run device builds. See [Environment profiles](WORKFLOW.md#environment-profiles) for staging over-the-air update behavior. Preview is a staging/SQA artifact and may be built only after the [preview gate](WORKFLOW.md#previewstaging-build-gate) is green. Never spend the limited preview quota to test a failed CI, API, migration, seed, or webhook setup.
+**Native rebuild required for contract v2:** `expo-secure-store` adds a native module/config plugin. Rebuild and install the development app with `eas build --profile development --platform android` (or `eas build --profile development --platform ios` for iOS). An OTA update cannot retrofit this module into an old binary. The QR Ph panel draws its scannable code with `react-native-qrcode-svg` on `react-native-svg`, which is also a native module, so a binary built before QR rendering shows no symbol until it is rebuilt the same way. Preview must likewise be rebuilt with `eas build --profile preview --platform android` only after the preview gate passes. This implementation does not run device builds. See [Environment profiles](WORKFLOW.md#environment-profiles) for staging over-the-air update behavior. Preview is a staging/SQA artifact and may be built only after the [preview gate](WORKFLOW.md#previewstaging-build-gate) is green. Never spend the limited preview quota to test a failed CI, API, migration, seed, or webhook setup.
 
 ## Optional Android automation
 
