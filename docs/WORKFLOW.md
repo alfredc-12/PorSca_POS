@@ -45,14 +45,14 @@ Quotas reset every month, so this rule is a temporary bridge, not a permanent lo
 Profiles are in [`eas.json`](../eas.json):
 
 - `development`: true dev-client build pinned to the `development` EAS environment. Set the developer LAN API URL in `.env` or the selected EAS environment; no fixed LAN URL is in this profile. A physical phone must never use `localhost`.
-- `preview`: internal staging build pointed at the stable Lightsail staging API origin (`https://staging-api.<domain>/api/v1`). Funnel is retained only as a break-glass fallback. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
+- `preview`: internal staging build pointed at the stable Lightsail staging API origin (`https://staging-api.lumbangan.online/api/v1`). Funnel is retained only as a break-glass fallback. This is the formal SQA candidate. Compatible over-the-air EAS Updates published to the preview channel use the `fingerprint` runtime version policy and are applied when the app restarts.
 - `production`: reserved for a separately approved production configuration; production hosting and PayMongo are out of scope for this round.
 
 The linked EAS project uses the matching `porsca-app` slug configured in [`app.json`](../app.json). Contract v2 adds `expo-secure-store`: existing binaries require a fresh native build (`eas build --profile development --platform android` for daily Android development). OTA updates alone cannot add the native module. Preview rebuilds still require the gate below. Tokens/passwords never belong in EAS public settings; testers sign in with individual API-managed accounts. Builds and update publication are manual; keep preview builds manual because the Expo build quota is limited.
 
 ## Staging deployment handoff
 
-Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The current `<domain>` URL is a placeholder, not live evidence. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
+Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The configured origin is not live evidence by itself; the recorded health fields are. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
 
 ## Preview/staging build gate
 
