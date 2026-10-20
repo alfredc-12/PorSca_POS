@@ -124,7 +124,7 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
       }
       throw error;
     } finally { this.busy = false; }
@@ -158,6 +158,14 @@ export class DurableCheckout {
     }
   }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
+  basketDivergedFrom(lines: CartLine[]) {
+    if (!this.handle) return false;
+    try {
+      return this.handle.signature !== signatureForItems(checkoutItems(lines));
+    } catch {
+      return true;
+    }
+  }
   confirmEmptyRecoveryDiscovery() { if (this.corruptStorage) this.corruptWithoutChoice = true; }
   private async discoverCheckouts() {
     const checkouts: AuthorityCheckout[] = [];
@@ -228,7 +236,9 @@ export class DurableCheckout {
     const sig = signatureForItems(items);
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The stored checkout identity is unreadable. Discover and explicitly recover a server checkout before starting another purchase.', 409, 'checkout_recovery_required');
-    if (this.handle && this.handle.signature !== sig) throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_recovery_required');
+    if (this.handle && this.handle.signature !== sig) {
+      throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged');
+    }
     if (!this.handle) {
       this.handle = { key: key(), signature: sig };
       await this.persist(); // save before I/O, including a lost creation response

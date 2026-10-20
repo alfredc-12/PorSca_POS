@@ -1,5 +1,6 @@
 /**
- * The one module that owns user-facing failure copy.
+ * The module that assembles user-facing failure copy. Changed-basket
+ * sentences come from `changedBasketCopy.ts` so every surface stays in step.
  *
  * A cashier never sees a database exception, a JavaScript error, or a payment
  * provider's decline code; support still gets a short code that maps back to
@@ -10,6 +11,8 @@
  *
  * Plan: data/porsca-mobile-feedback-plain-20261004/report.md, §6.1.
  */
+
+import { changedBasketCopy } from './changedBasketCopy';
 
 export type Failure = {
   status?: number;
@@ -162,6 +165,9 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
   }
   if (failure.code === 'cash_attempt_unresolved' || failure.code === 'cash_attempt_already_recorded') {
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
+  }
+  if (failure.code === 'checkout_basket_diverged') {
+    return { title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel, action: 'retry' };
   }
   if (failure.code === 'product_missing') {
     return { title: 'Product no longer available', body: 'A product in this cart is no longer in the catalog. Remove that item from the cart and try again. Your cart is still here.', actionLabel: 'Remove the item', action: 'fix-fields' };
