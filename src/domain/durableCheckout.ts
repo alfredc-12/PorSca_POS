@@ -80,10 +80,11 @@ export class DurableCheckout {
     if (!this.active) throw new CheckoutIdentityError('This checkout session is no longer active.', 409, 'checkout_recovery_required');
   }
   /**
-   * Reconciliation is an administrator procedure outside this app. While a
-   * case is open, no local caller may review the quote, abandon, or retire the
-   * purchase; only stored reads and provider verification remain available.
-   * Laravel still enforces the same boundary.
+   * Reconciliation is an administrator procedure outside this app, and its
+   * lock is one-way: case review or closure does not restore service. Once
+   * reconciliation is required, no local caller may review the quote, abandon,
+   * or retire the purchase; only stored reads and provider verification remain
+   * available. Laravel still enforces the same boundary.
    */
   private assertReconciliationUnlocked(action: string) {
     if (this.machine?.reconciliationRequired || this.machine?.state === 'paid-but-unfulfilled') {
