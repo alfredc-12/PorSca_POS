@@ -556,6 +556,27 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.queryByText(/We could not recover this purchase/)).toBeNull();
   });
 
+  it('shows the retained cart and total while the cancelled-purchase notice is up', () => {
+    setContext({
+      checkoutMachine: { ...openCheckout('test-checkout', 9999), state: 'abandoned' },
+      authorityCheckout: {
+        id: 'test-checkout', storeId: '1', state: 'abandoned', revision: 1, amountCentavos: 9999, currency: 'PHP',
+        items: [{ productId: 9, name: 'Cancelled item', quantity: 3, unitPriceCentavos: 3333 }],
+        attempts: [], sale: null, exceptions: [], history: [],
+      },
+      checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' },
+    });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/This purchase was cancelled/);
+    expect(view.getAllByText('₱35.00').length).toBeGreaterThan(0);
+    expect(view.queryByText('₱99.99')).toBeNull();
+    expect(view.getByText('1 item in this sale')).toBeTruthy();
+    expect(view.getByTestId('checkout-order-summary')).toHaveTextContent(/Mineral Water 1L/);
+    expect(view.getByTestId('checkout-order-summary')).not.toHaveTextContent(/Cancelled item/);
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+  });
+
   it('offers only to clear a cancelled purchase, never the changed-basket recovery or cancel controls', async () => {
     const recoverCheckout = jest.fn().mockResolvedValue(undefined);
     setContext({

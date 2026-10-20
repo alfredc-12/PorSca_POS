@@ -84,7 +84,10 @@ export default function CheckoutScreen() {
 
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
 
-  const dueAmountCentavos = authorityCheckout?.amountCentavos ?? Math.round(total * 100);
+  // A cancelled purchase is terminal, so it never offers the changed-basket
+  // recovery or cancellation controls.
+  const purchaseCancelled = checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
+  const dueAmountCentavos = purchaseCancelled ? Math.round(total * 100) : authorityCheckout?.amountCentavos ?? Math.round(total * 100);
   const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
   const cashFeedback = cashResult.kind === 'insufficient'
     ? `Short by ${formatCheckoutMoney(cashResult.shortfallCentavos)}. Add cash before confirming.`
@@ -123,9 +126,6 @@ export default function CheckoutScreen() {
     receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
   const administratorRequired = Boolean(guidance?.admin);
   // A changed basket is not payment uncertainty: no tender was sent for it.
-  // A cancelled purchase is terminal, so it never offers the changed-basket
-  // recovery or cancellation controls.
-  const purchaseCancelled = checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
   const basketDiverged = Boolean(checkoutProgress?.basketDiverged) && !purchaseCancelled;
   const cancellationFailed = Boolean(checkoutProgress?.cancellationFailed) && !purchaseCancelled;
   // A live tender keeps its own warning; the changed-basket reason only shows
@@ -149,7 +149,7 @@ export default function CheckoutScreen() {
       ? changedBasketCopy.tenderLock
       : 'Do not take another payment while this payment is waiting.';
 
-  const checkoutItems = authorityCheckout?.items;
+  const checkoutItems = purchaseCancelled ? undefined : authorityCheckout?.items;
   const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
     product: { id: String(item.productId), name: item.name, price: item.unitPriceCentavos / 100, barcode: '', stock: 0 },
     quantity: item.quantity,
