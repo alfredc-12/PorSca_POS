@@ -12,7 +12,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';

@@ -11,7 +11,7 @@ The draft cart belongs to the cashier. It is cleared by a completed sale or an e
 - **A cancelled purchase can only be cleared.** Recovery of an already-`abandoned` checkout does not apply its dead basket to the cart and does not clear the cart; it retires the device handle and leaves the cart as the cashier left it. A cancelled purchase has no ring-up path. While the cancelled notice is up, the amount due and order summary come from the retained cart, not the cancelled basket.
 - **Explicit recovery of an open purchase replaces the cart** with that purchase's authoritative basket so it can be paid. That is what **Recover the earlier basket** means; the copy states the replacement, and cancelling is the non-destructive alternative offered beside it.
 - **Automatic recovery never replaces a non-empty cart.** It pauses, keeps the listed purchase recoverable, and leaves the cart untouched. Its POS notice states only what was observed (the pause and the kept cart), never an unverified payment outcome.
-- **A live tender outranks divergence.** Pending or unknown money keeps its warning and actions; a terminal cancelled purchase outranks the changed-basket guidance. Only then does **The cart changed** appear, with the single copy source in `src/domain/checkoutDivergenceCopy.ts`.
+- **A live tender outranks divergence.** Pending or unknown money keeps its warning and actions; a terminal cancelled purchase and an unconfirmed cancellation outrank the changed-basket guidance. Only when none of those applies does **The cart changed** appear, with the single copy source in `src/domain/checkoutDivergenceCopy.ts`.
 
 The changed-basket copy therefore says what the app does: no payment was taken for the edited cart, cancelling keeps it, recovering an open purchase replaces the edited cart with the earlier basket, and an already-cancelled purchase cannot be recovered.
 
@@ -32,7 +32,7 @@ The approved everyday wording replaces older shop-server/operator/verification e
 
 Unknown/failed checks now say “Payment interrupted”, not payment failure. Uncertain cash no longer claims that nothing was charged or saved. Guidance replaces duplicate failure cards; support codes remain readable. Technical checkout, attempt, and case IDs are not shown to cashiers. Existing tender accessibility labels and QR start/check/new-attempt/leave identifiers keep their meanings.
 
-Secondary price review, general recovery, and cancellation options are behind the collapsed **Need help with this sale?** section; state-specific next steps remain in checkout guidance. Cancellation asks for an 8–500-character reason, and the normal payment actions remain primary. When recovering a retained purchase, the amount and order summary use its authoritative item snapshot rather than any separately edited POS cart.
+Secondary price review, general recovery, and cancellation options are behind the collapsed **Need help with this sale?** section; state-specific next steps remain in checkout guidance. Cancellation asks for an 8–500-character reason, and the normal payment actions remain primary. Which basket the amount due and order summary show follows [cart retention](#cart-retention-across-cancel-and-recovery).
 
 ## Bounded checks, reads and receipt completion
 
