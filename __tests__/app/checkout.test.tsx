@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -577,6 +577,37 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
     expect(view.queryByText(cancellationFailedCopy.notice)).toBeNull();
+  });
+
+  it('does not offer cancel retry while live payment uncertainty outranks cancellation failure', () => {
+    setContext({
+      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      checkoutProgress: { basketDiverged: true, cancellationFailed: true, uncertainTender: 'cash', cashInput: '100.00' },
+    });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Payment interrupted/);
+    expect(view.queryByText(cancellationFailedCopy.helpHint)).toBeNull();
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    const reason = view.getByLabelText('What happened with this sale');
+    expect(reason).toHaveProp('editable', false);
+    fireEvent.changeText(reason, 'Customer changed their mind');
+    expect(view.getByRole('button', { name: 'Cancel this sale' })).toBeDisabled();
+  });
+
+  it('describes a failed clear of the cancelled purchase without recovery copy', async () => {
+    const recoverCheckout = jest.fn().mockRejectedValue(new ApiClientError('offline', 500));
+    setContext({
+      recoverCheckout,
+      checkoutMachine: { ...openCheckout('test-checkout', 3500), state: 'abandoned' },
+    });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/This purchase was cancelled/);
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: cancelledPurchaseCopy.clear })); });
+
+    expect(view.getByText(cancelledPurchaseCopy.clearNotice)).toBeTruthy();
+    expect(view.queryByText(/We could not recover this purchase/)).toBeNull();
   });
 
   it('shows the retained cart and total while the cancelled-purchase notice is up', () => {

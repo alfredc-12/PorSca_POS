@@ -37,6 +37,7 @@ export const cancelledPurchaseCopy = {
   body: 'The earlier purchase was already cancelled, so nothing is owed for it and it cannot be recovered.',
   safety: 'Your cart is still here. Clear the cancelled purchase, then ring up this cart as a new sale.',
   clear: 'Clear the cancelled purchase',
+  clearNotice: 'We could not clear the cancelled purchase. It is still showing; try clearing it again before ringing up this cart.',
 } as const;
 
 export const cancellationFailedCopy = {

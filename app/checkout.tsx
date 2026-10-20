@@ -12,7 +12,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
@@ -132,7 +132,7 @@ export default function CheckoutScreen() {
   // when the changed guidance itself is the active explanation.
   const changedBasketActive = basketDiverged && guidance?.category === 'changed';
   const cancellationUnconfirmed = cancellationFailed && guidance?.headline === cancellationFailedCopy.headline;
-  const cancelRetryAvailable = changedBasketActive || cancellationFailed;
+  const cancelRetryAvailable = changedBasketActive || cancellationUnconfirmed;
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
   const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
@@ -423,7 +423,7 @@ export default function CheckoutScreen() {
           {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : <AppButton
             testID={guidance.action === 'check' ? qrStatus === 'pending' ? 'refresh-qr-payment' : 'retry-qr-verification' : guidance.action === 'start' ? 'start-qrph-payment' : guidance.action === 'refresh' ? 'retry-qr-verification' : undefined}
             label={guidance.action === 'done' ? 'Finish this sale' : guidance.label} disabled={guidance.action === 'wait' || operationBusy}
-            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover' || guidance.action === 'done') void recoveryAction(() => recoverCheckout()); }} />}
+            onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover' || guidance.action === 'done') void recoveryAction(() => recoverCheckout(), purchaseCancelled ? cancelledPurchaseCopy.clearNotice : undefined); }} />}
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
         {recoveryError && !guidance?.admin ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
@@ -444,7 +444,7 @@ export default function CheckoutScreen() {
           <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
-          {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? changedBasketCopy.helpHint : cancellationFailed ? cancellationFailedCopy.helpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
+          {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? changedBasketCopy.helpHint : cancellationUnconfirmed ? cancellationFailedCopy.helpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
             <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
