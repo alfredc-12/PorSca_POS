@@ -12,7 +12,7 @@ The draft cart belongs to the cashier. It is cleared by a completed sale or an e
 - **Automatic recovery never replaces a non-empty cart.** It pauses, keeps the listed purchase recoverable, and leaves the cart untouched. Its POS notice states only what was observed (the pause and the kept cart), never an unverified payment outcome.
 - **A live tender outranks divergence.** Pending or unknown money keeps its warning and actions; a terminal cancelled purchase outranks the changed-basket guidance. Only then does **The cart changed** appear, with the single copy source in `src/domain/checkoutDivergenceCopy.ts`.
 
-The changed-basket copy therefore says what the app does: no payment was taken for the edited cart, cancelling keeps it, recovering an open purchase replaces it with the earlier basket, and an already-cancelled purchase cannot be recovered.
+The changed-basket copy therefore says what the app does: no payment was taken for the edited cart, cancelling keeps it, recovering an open purchase replaces the edited cart with the earlier basket, and an already-cancelled purchase cannot be recovered.
 
 ## Intentional cashier copy changes
 

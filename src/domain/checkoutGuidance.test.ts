@@ -46,6 +46,7 @@ describe('cashier guidance from trusted truth', () => {
     const text = `${guidance!.body} ${guidance!.safety}`;
     expect(text).toMatch(/No payment was taken/);
     expect(text).toMatch(/Recover the earlier basket/);
+    expect(text).toMatch(/replace this cart and pay for it/);
     expect(text).toMatch(/cancel/);
     expect(text).toMatch(/keep this cart/);
     expect(text).toMatch(/cancelled purchase cannot be recovered/);

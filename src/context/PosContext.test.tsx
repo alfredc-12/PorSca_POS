@@ -92,7 +92,7 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(result.current.refreshQrPhPayment('7')).rejects.toThrow('offline'); });
     expect(renders).toBeGreaterThan(pendingRenders); expect(result.current.checkoutMachine?.attempts[0].payment).toBe('unknown');
   });
-  it('tells the cashier to recover or abandon a changed basket instead of reporting payment uncertainty', async () => {
+  it('replaces the edited cart when explicitly recovering an open changed purchase', async () => {
     const { wrapper, client, store } = fixture();
     // A durable checkout for the Coffee basket was opened before any tender.
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
@@ -105,10 +105,10 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
     expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
 
-    // Recovering explicitly restores the retained basket and clears the refusal.
+    // Explicit recovery is authorized to discard the edits and pay the earlier basket.
     client.recoverCheckout.mockResolvedValue(open);
     await act(async () => { await result.current.recoverCheckout(); });
-    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
     expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
