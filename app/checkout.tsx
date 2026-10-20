@@ -131,6 +131,7 @@ export default function CheckoutScreen() {
   // A live tender keeps its own warning; the changed-basket reason only shows
   // when the changed guidance itself is the active explanation.
   const changedBasketActive = basketDiverged && guidance?.category === 'changed';
+  const cancellationUnconfirmed = cancellationFailed && guidance?.headline === cancellationFailedCopy.headline;
   const cancelRetryAvailable = changedBasketActive || cancellationFailed;
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
@@ -147,7 +148,9 @@ export default function CheckoutScreen() {
     ? 'This purchase is locked. Do not take another payment.'
     : changedBasketActive
       ? changedBasketCopy.tenderLock
-      : 'Do not take another payment while this payment is waiting.';
+      : cancellationUnconfirmed
+        ? cancellationFailedCopy.tenderLock
+        : 'Do not take another payment while this payment is waiting.';
 
   const checkoutItems = purchaseCancelled ? undefined : authorityCheckout?.items;
   const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
@@ -423,7 +426,7 @@ export default function CheckoutScreen() {
             onPress={() => { if (guidance.action === 'check') void checkQrPayment(); else if (guidance.action === 'start') void startQrPayment(false); else if (guidance.action === 'refresh') void retryReceiptRefresh(); else if (guidance.action === 'cash-retry') void finishCash(); else if (guidance.action === 'recover' || guidance.action === 'done') void recoveryAction(() => recoverCheckout()); }} />}
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
-        {recoveryError ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
+        {recoveryError && !guidance?.admin ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>

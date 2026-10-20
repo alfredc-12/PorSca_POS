@@ -93,6 +93,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
   };
   const refreshQrPhPayment = async (...args: unknown[]) => observePayment(await refresh(...args));
   mockUsePos.mockImplementation(() => ({ ...context, startQrPhPayment, refreshQrPhPayment }));
+  return context;
 }
 
 describe('CheckoutScreen cash states', () => {
@@ -532,6 +533,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(guidance).toHaveTextContent(/recover the earlier basket to replace this cart/i);
     expect(guidance).not.toHaveTextContent(/Payment interrupted|could not confirm the payment status|customer may still be charged/);
     expect(view.getByText(/recover the earlier basket and replace this cart/i)).toBeTruthy();
+    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/cancellation is unconfirmed/i);
+    expect(view.getByTestId('checkout-tender-lock-reason')).not.toHaveTextContent(/payment is waiting/i);
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
 
     fireEvent.press(view.getByTestId('sale-help-toggle'));
@@ -554,6 +557,26 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByText(cancellationFailedCopy.notice)).toBeTruthy();
     expect(view.getByText(/try cancelling again to keep this cart/i)).toBeTruthy();
     expect(view.queryByText(/We could not recover this purchase/)).toBeNull();
+  });
+
+  it('hides a failed-cancellation notice when the cancellation requires an administrator', async () => {
+    const context = setContext({
+      abandonCheckout: jest.fn(),
+      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      checkoutProgress: { recoveryFailure: 'interrupted', cancellationFailed: true },
+    }) as unknown as { checkoutProgress?: CheckoutProgress; abandonCheckout: jest.Mock };
+    context.abandonCheckout.mockImplementation(async () => {
+      context.checkoutProgress = { recoveryFailure: 'permission', cancellationFailed: true };
+      throw new ApiClientError('permission denied', 403);
+    });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
+    expect(view.queryByText(cancellationFailedCopy.notice)).toBeNull();
   });
 
   it('shows the retained cart and total while the cancelled-purchase notice is up', () => {

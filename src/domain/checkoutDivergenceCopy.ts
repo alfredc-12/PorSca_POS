@@ -46,4 +46,5 @@ export const cancellationFailedCopy = {
   safety: 'Do not take another payment. Try cancelling again to keep this cart, or recover the earlier basket to replace this cart and pay for it.',
   notice: 'We could not confirm the cancellation. This purchase may still be open; try cancelling again to keep this cart, or recover the earlier basket to replace this cart.',
   helpHint: 'Open help to cancel again and keep this cart, or recover the earlier basket and replace this cart.',
+  tenderLock: 'Do not take another payment while the cancellation is unconfirmed.',
 } as const;
