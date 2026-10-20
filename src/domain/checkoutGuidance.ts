@@ -5,7 +5,7 @@ export type CheckoutProgress = {
   uncertainTender?: 'cash' | 'qrph';
   cashInput?: string;
   recoveryFailure?: 'interrupted' | 'identity' | 'inconsistent' | 'permission';
-  /** The cart diverged from the retained basket; no tender was sent for it. */
+  /** The live cart no longer matches the retained basket. */
   basketDiverged?: boolean;
 };
 export type GuidanceAction = 'check' | 'start' | 'cash-retry' | 'recover' | 'refresh' | 'wait' | 'done' | 'administrator';

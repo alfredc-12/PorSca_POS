@@ -402,7 +402,8 @@ describe('durable authority workflow and machine integration', () => {
     // any tender exists. The refusal must not read as "money may be recorded".
     await expect(authority.exclusive(() => authority.tender([{ ...lines[0], quantity: 2 }], 'cash', '100.00')))
       .rejects.toMatchObject({ status: 409, code: 'checkout_basket_diverged' });
-    expect(authority.progress).toMatchObject({ basketDiverged: true });
+    expect(authority.basketDivergedFrom([{ ...lines[0], quantity: 2 }])).toBe(true);
+    expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(authority.progress.recoveryFailure).toBeUndefined();
     expect(authority.progress.uncertainTender).toBeUndefined();
     expect(client.checkoutCash).not.toHaveBeenCalled();
@@ -410,7 +411,7 @@ describe('durable authority workflow and machine integration', () => {
     // The retained basket is still the one the purchase was opened for, and it
     // stays recoverable: going back to the original basket clears the refusal.
     await authority.prepare(lines);
-    expect(authority.progress).not.toMatchObject({ basketDiverged: true });
+    expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
   });
   it('does not clear a QR key when a verification result is abandoned', async () => {

@@ -142,7 +142,7 @@ export function PosProvider({
   const readCatalog = useCallback((generation: number) => reads.run('catalog', generation, () => client.listProducts()), [reads, client]);
   const consumeSalesHandoff = useCallback(() => reads.consumeHistoryHandoff(), [reads]);
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
-  const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
+  const [storedCheckoutProgress, setStoredCheckoutProgress] = useState<CheckoutProgress>({});
   const [checkoutCompletion, setCheckoutCompletion] = useState<PosContextValue['checkoutCompletion']>();
   const acknowledgeCheckout = useCallback(() => setCheckoutCompletion(undefined), []);
   const completionAlerts = useRef(new Set<string>());
@@ -157,7 +157,7 @@ export function PosProvider({
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }
-    finally { setAuthorityCheckout(authority.current); setCheckoutProgress(authority.progress); }
+    finally { setAuthorityCheckout(authority.current); setStoredCheckoutProgress(authority.progress); }
   }, [authority]);
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
   const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
@@ -641,7 +641,7 @@ export function PosProvider({
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
       await recoverCheckoutInternal(undefined, automatic);
     } catch {
-      setCheckoutProgress(authority.progress);
+      setStoredCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
       setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
@@ -796,6 +796,11 @@ export function PosProvider({
   ), [client, saveRemoteProduct]);
 
   const checkoutMachine = authority.machine;
+  const checkoutProgress = useMemo<CheckoutProgress>(() => (
+    authority.basketDivergedFrom(cart)
+      ? { ...storedCheckoutProgress, basketDiverged: true }
+      : storedCheckoutProgress
+  ), [authority, cart, storedCheckoutProgress]);
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
     total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
   }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);

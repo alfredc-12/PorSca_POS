@@ -111,6 +111,34 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
+  it('clears the changed-cart notice as soon as the live cart matches the retained basket', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toMatchObject({ code: 'checkout_basket_diverged' }); });
+    expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
+
+    await act(async () => { result.current.decrementProduct('2'); });
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('keeps the changed-cart notice when a payment check succeeds without reconciling the cart', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
+    await act(async () => { await expect(result.current.startQrPhPayment()).rejects.toMatchObject({ code: 'checkout_basket_diverged' }); });
+    expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
+
+    client.refreshCheckoutAttempt.mockResolvedValue(readyForQrRetry);
+    await act(async () => { await result.current.refreshQrPhPayment('7'); });
+    expect(result.current.checkoutMachine?.attempts[0].payment).toBe('non-payable');
+    expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
   it('stops automatic recovery on a non-empty cart with neutral copy and keeps the cart', async () => {
     const { wrapper, store } = fixture();
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
