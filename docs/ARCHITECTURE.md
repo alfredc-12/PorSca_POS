@@ -94,7 +94,7 @@ Saved SecureStore token -> /auth/me restore -> signed-in route guard
   -> transaction history
 ```
 
-Unpaid, failed, cancelled, expired, or pending payments do not create a sale or change stock. A `paid_unfulfilled` payment took money without recording a sale: inventory and history are refreshed but the cart is kept and no new payment is offered until the operator reconciles. Repeating a paid request with the same idempotency key returns the original result and does not deduct inventory again.
+Unpaid, failed, cancelled, expired, or pending payments do not create a sale or change stock. A `paid_unfulfilled` payment took money without recording a sale: inventory and history are refreshed but the cart is kept and no new payment is offered until the operator reconciles through the Laravel admin exception procedure in [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md). Repeating a paid request with the same idempotency key returns the original result and does not deduct inventory again.
 
 ## API resources
 

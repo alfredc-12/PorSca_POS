@@ -218,6 +218,22 @@ describe('checkout section 7 transition machine', () => {
     rejected(oldConflict, secure);
   });
 
+  it('never clears a reconciliation lock, sale, or attempt ledger from an observation', () => {
+    const completed = fixtures().completed;
+    const contradicted = step(completed, nonPayable);
+    rejected(contradicted, { type: 'authority-observed', checkout: { ...contradicted, reconciliationRequired: false } });
+    rejected(contradicted, { type: 'authority-observed', checkout: { ...contradicted, state: 'ready-for-new-attempt', reconciliationRequired: false } });
+    rejected(completed, { type: 'authority-observed', checkout: { ...completed, state: 'open' } });
+
+    const paidButUnfulfilled = fixtures()['paid-but-unfulfilled'];
+    rejected(paidButUnfulfilled, { type: 'authority-observed', checkout: { ...paidButUnfulfilled, state: 'ready-for-new-attempt', reconciliationRequired: false } });
+    rejected(paidButUnfulfilled, { type: 'authority-observed', checkout: { ...paidButUnfulfilled, attempts: [] } });
+
+    const unresolved = fixtures()['payment-unresolved'];
+    rejected(unresolved, { type: 'authority-observed', checkout: { ...unresolved, attempts: [{ ...unresolved.attempts[0], amountCentavos: 200 }] } });
+    rejected(unresolved, { type: 'authority-observed', checkout: { ...unresolved, attempts: [{ ...unresolved.attempts[0], method: 'cash' }] } });
+  });
+
   it('ignores duplicate final observations without duplicating sale or effects', () => {
     const completed = fixtures().completed;
     expect(step(completed, paid)).toBe(completed);
