@@ -163,7 +163,7 @@ export class DurableCheckout {
     try {
       return this.handle.signature !== signatureForItems(checkoutItems(lines));
     } catch {
-      return false;
+      return true;
     }
   }
   confirmEmptyRecoveryDiscovery() { if (this.corruptStorage) this.corruptWithoutChoice = true; }

@@ -139,14 +139,16 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
-  it('renders a cart that cannot be validated against the retained basket without failing', async () => {
-    const { wrapper, store } = fixture();
+  it('reports a changed basket that cannot be validated against the retained basket', async () => {
+    const { wrapper, client, store } = fixture();
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    client.recoverCheckout.mockResolvedValue(open);
     const { result } = renderHook(() => usePos(), { wrapper });
     await act(async () => { await result.current.recoverCheckout(); });
     await act(async () => { result.current.addProductChecked({ id: 'prd-001', name: 'Demo item', barcode: '', price: 25, stock: 10 }); });
     expect(result.current.cart.map(line => line.product.id)).toEqual(['1', 'prd-001']);
-    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+    expect(result.current.checkoutMachine?.attempts).toHaveLength(0);
+    expect(result.current.checkoutProgress?.basketDiverged).toBe(true);
   });
   it('stops automatic recovery on a non-empty cart with neutral copy and keeps the cart', async () => {
     const { wrapper, store } = fixture();
