@@ -4,7 +4,7 @@ import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
-import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
+import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
@@ -92,7 +92,7 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(result.current.refreshQrPhPayment('7')).rejects.toThrow('offline'); });
     expect(renders).toBeGreaterThan(pendingRenders); expect(result.current.checkoutMachine?.attempts[0].payment).toBe('unknown');
   });
-  it('tells the cashier to recover or abandon a changed basket instead of reporting payment uncertainty', async () => {
+  it('replaces the edited cart when explicitly recovering an open changed purchase', async () => {
     const { wrapper, client, store } = fixture();
     // A durable checkout for the Coffee basket was opened before any tender.
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
@@ -105,10 +105,10 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
     expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
 
-    // Recovering explicitly restores the retained basket and clears the refusal.
+    // Explicit recovery is authorized to discard the edits and pay the earlier basket.
     client.recoverCheckout.mockResolvedValue(open);
     await act(async () => { await result.current.recoverCheckout(); });
-    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
     expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
@@ -173,6 +173,96 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutRecoveryError).not.toMatch(/listed below|Resume the listed|No payment was taken|Nothing is paid|Retry/i);
     expect(result.current.recoverableCheckouts).toHaveLength(0);
     expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+  });
+  it('keeps the edited cart when the cashier cancels a diverged retained purchase', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toMatchObject({ code: 'checkout_basket_diverged' }); });
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2']);
+
+    // Cancelling ends the retained purchase, not the edited basket.
+    client.recoverCheckout.mockResolvedValue(open);
+    await act(async () => { await result.current.abandonCheckout('Customer decided not to buy the earlier basket'); });
+
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1], ['2', 1]]);
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+    expect(result.current.authorityCheckout).toBeUndefined();
+    expect(handle()).toBeNull();
+    expect(client.abandonCheckout).toHaveBeenCalledWith('durable-uuid', 'Customer decided not to buy the earlier basket');
+  });
+  it('keeps a matching cart when the cashier cancels the retained purchase', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+
+    await act(async () => { await result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+    expect(handle()).toBeNull();
+  });
+  it('marks a failed cancellation as unconfirmed and clears it on retry', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+
+    client.abandonCheckout.mockRejectedValueOnce(new ApiClientError('network down', 500));
+    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toThrow('network down'); });
+    expect(result.current.checkoutProgress).toMatchObject({ cancellationFailed: true, recoveryFailure: 'interrupted' });
+    expect(result.current.authorityCheckout?.state).toBe('open');
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(handle()).not.toBeNull();
+
+    client.abandonCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    await act(async () => { await result.current.abandonCheckout('Customer changed their mind'); });
+    expect(result.current.checkoutProgress?.cancellationFailed).toBeFalsy();
+    expect(result.current.authorityCheckout).toBeUndefined();
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(handle()).toBeNull();
+  });
+  it('keeps the edited cart when recovering an already-cancelled purchase', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    client.getProduct.mockClear();
+
+    // The retained purchase was abandoned server-side; its basket can never be
+    // paid, so recovery retires the dead handle without touching the cart.
+    client.recoverCheckout.mockResolvedValue({
+      ...open, state: 'abandoned',
+      items: [{ productId: 7, name: 'Cancelled item', quantity: 2, unitPriceCentavos: 500 }],
+    });
+    await act(async () => { await result.current.recoverCheckout(); });
+
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1], ['2', 1]]);
+    expect(client.getProduct).not.toHaveBeenCalledWith('7');
+    expect(result.current.authorityCheckout).toBeUndefined();
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+    expect(handle()).toBeNull();
+  });
+  it('keeps the edited cart and reports a server-cancelled purchase when payment is refused', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1],[2,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+
+    client.getCheckout.mockResolvedValue({
+      ...open, state: 'abandoned',
+      items: [...open.items, { productId: 2, name: 'Tea', quantity: 1, unitPriceCentavos: 800 }],
+    });
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toMatchObject({ code: 'checkout_purchase_cancelled' }); });
+
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1], ['2', 1]]);
+    expect(result.current.authorityCheckout?.state).toBe('abandoned');
+    expect(result.current.checkoutMachine?.state).toBe('abandoned');
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
   });
   it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
     const { wrapper, client } = fixture();
@@ -499,7 +589,12 @@ describe('POS durable checkout integration', () => {
       if (value === null) await new Promise<void>(resolve => { finishRetire = resolve; });
       await persist(value, expectedKey);
     });
-    client.recoverCheckout.mockResolvedValue({ ...readyForQrRetry, state: 'abandoned' });
+    // The cancelled purchase's basket is dead: it must never be injected into
+    // the cart the cashier is editing while retirement runs.
+    client.recoverCheckout.mockResolvedValue({
+      ...readyForQrRetry, state: 'abandoned',
+      items: [{ productId: 2, name: 'Tea', quantity: 1, unitPriceCentavos: 800 }],
+    });
     const second = renderHook(() => usePos(), { wrapper });
     let recovery!: Promise<void>;
     act(() => { recovery = second.result.current.openPosCheckouts(); });
@@ -510,7 +605,7 @@ describe('POS durable checkout integration', () => {
       finishRetire();
       await recovery;
     });
-    expect(second.result.current.cart[0].quantity).toBe(3);
+    expect(second.result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 2]]);
     expect(handle()).toBeNull();
   });
   it('recovers the committed receipt when cash is retried after a cart price change', async () => {

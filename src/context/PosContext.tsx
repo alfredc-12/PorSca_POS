@@ -4,6 +4,7 @@ import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { isDemoCatalogEnabled, OFFLINE_COPY } from '@/src/config/offline';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
+import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CheckoutStorage, DurableCheckout, checkoutSale } from '@/src/domain/durableCheckout';
@@ -11,7 +12,6 @@ import { checkoutStorage } from '@/src/api/checkoutStorage';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from '@/src/domain/checkoutMachine';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
 import { CheckoutReads } from '@/src/domain/checkoutReads';
 import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
@@ -578,14 +578,16 @@ export function PosProvider({
     if (!checkout) return;
     if (checkout.sale) reads.observeSale(String(checkout.sale.id));
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
-    await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     if (checkout.state === 'abandoned') {
-      const restoredRevision = cartRevision.current;
+      // A cancelled purchase is terminal and its basket can never be paid. Do
+      // not copy that dead basket over the cart the cashier is editing, and do
+      // not clear it either: retire the useless device identity and keep the
+      // cart exactly as the cashier left it. An empty cart stays empty.
       await authority.retire();
       setAuthorityCheckout(undefined);
-      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
       return;
     }
+    await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     // A lost cash response may already have committed a receipt. Resolve that
     // identity instead of stranding the device on a completed, untenderable cart.
     if (checkout.state === 'completed' && checkout.sale?.method === 'cash' && !authority.machine?.reconciliationRequired) {
@@ -666,11 +668,21 @@ export function PosProvider({
     await applyCheckout(await authority.revalidate());
   }), [exclusive, authority, applyCheckout]);
 
-  const abandonCheckout = useCallback(async (reason: string) => exclusive(async () => {
-    await authority.abandon(reason);
-    setAuthorityCheckout(undefined);
-    commitCart({ type: 'reset' });
-  }), [exclusive, authority, commitCart]);
+  const abandonCheckout = useCallback(async (reason: string) => {
+    try {
+      await exclusive(async () => {
+        // Cancelling ends the retained purchase, not the cashier's basket. Retire
+        // the device handle and drop the retained display state, but leave the
+        // draft cart (and any Clear All undo) untouched so it can be rung up as a
+        // new sale. Only a completed sale clears the cart.
+        await authority.abandon(reason);
+        setAuthorityCheckout(undefined);
+      });
+    } catch (error) {
+      setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
+      throw error;
+    }
+  }, [exclusive, authority]);
 
   const completeCashSale = useCallback(async (cashReceived: number | string) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });

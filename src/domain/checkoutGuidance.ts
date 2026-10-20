@@ -1,6 +1,6 @@
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from './checkoutMachine';
-import { changedBasketCopy } from './changedBasketCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
 
 export type CheckoutProgress = {
   uncertainTender?: 'cash' | 'qrph';
@@ -8,6 +8,8 @@ export type CheckoutProgress = {
   recoveryFailure?: 'interrupted' | 'identity' | 'inconsistent' | 'permission';
   /** The live cart no longer matches the retained basket. */
   basketDiverged?: boolean;
+  /** The last cancellation attempt failed; the purchase may still be open. */
+  cancellationFailed?: boolean;
 };
 export type GuidanceAction = 'check' | 'start' | 'cash-retry' | 'recover' | 'refresh' | 'wait' | 'done' | 'administrator';
 export type CheckoutGuidance = {
@@ -24,8 +26,8 @@ export function checkoutGuidance(input: {
   const { authority, machine, progress = {}, operation, receipt } = input;
   const active = machine?.attempts[machine.attempts.length - 1];
   const qr = progress.uncertainTender ? progress.uncertainTender === 'qrph' : active ? active.method === 'qr' : input.method === 'qrph';
-  const make = (category: CheckoutGuidance['category'], body: string, safety: string, action: GuidanceAction, label: string): CheckoutGuidance => ({
-    category, headline: category === 'administrator' ? 'Administrator required' : category === 'changed' ? changedBasketCopy.headline : `Payment ${category}`,
+  const make = (category: CheckoutGuidance['category'], body: string, safety: string, action: GuidanceAction, label: string, headline?: string): CheckoutGuidance => ({
+    category, headline: headline ?? (category === 'administrator' ? 'Administrator required' : category === 'changed' ? changedBasketCopy.headline : `Payment ${category}`),
     body, safety, action, label, locked: true, admin: category === 'administrator',
   });
   const admin = (body: string, setup = false) => make('administrator', body,
@@ -47,7 +49,10 @@ export function checkoutGuidance(input: {
   const safety = 'Do not take another payment or hand over the goods yet.';
   if (operation === 'cash' || operation === 'qr-create') return make('pending', 'Recording this payment. Please wait.', 'Do not submit another payment.', 'wait', operation === 'cash' ? 'Recording Cash Payment…' : 'Creating QR Ph Payment…');
   if (active?.finalEvidence?.outcome === 'paid') return make('pending', 'Payment is received. Still recording the sale.', safety, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
-  if (progress.recoveryFailure === 'interrupted' || input.verificationFailed || active?.payment === 'unknown' || progress.uncertainTender) {
+  const abandoned = machine?.state === 'abandoned' || authority?.state === 'abandoned';
+  const cancellationFailed = Boolean(progress.cancellationFailed) && !abandoned;
+  const tenderUncertain = input.verificationFailed || active?.payment === 'unknown' || progress.uncertainTender;
+  if (tenderUncertain || (progress.recoveryFailure === 'interrupted' && !abandoned && !progress.basketDiverged && !cancellationFailed)) {
     if (!active && !progress.uncertainTender && !input.verificationFailed) return make('interrupted', 'We could not confirm this purchase. Keep it open and try recovery again.', 'Do not take another payment or hand over the goods.', 'recover', 'Recover device purchase');
     if (!qr) {
       const retryCash = progress.cashInput && !machine?.attempts.some(attempt => attempt.method === 'cash');
@@ -55,10 +60,19 @@ export function checkoutGuidance(input: {
     }
     return make('interrupted', 'We could not confirm the payment status. The customer may still be charged.', 'Do not take another payment or hand over the goods.', active ? 'check' : 'start', active ? 'Check Payment Status' : 'Retry QR Ph Payment');
   }
+  // A live tender always outranks a changed basket, so the cashier keeps their
+  // guard against lost money while the provider may still collect.
   if (active?.payment === 'pending') return make('pending', qr ? 'We are still waiting for the payment.' : 'We are still waiting for this cash sale.', qr ? safety : `Keep the cash received. ${safety}`, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
+  // A cancelled purchase is terminal: there is no basket left to recover and
+  // no payment to take, so it outranks a changed cart. The action retires the
+  // dead device identity and leaves the cashier's cart untouched.
+  if (abandoned) return make('changed', cancelledPurchaseCopy.body, cancelledPurchaseCopy.safety, 'recover', cancelledPurchaseCopy.clear, cancelledPurchaseCopy.headline);
+  if (cancellationFailed) return make('interrupted', cancellationFailedCopy.body, cancellationFailedCopy.safety, 'recover', 'Recover device purchase', cancellationFailedCopy.headline);
   // A basket that no longer matches the retained purchase is not payment
-  // uncertainty: no tender is unresolved, so the cashier is asked to recover
-  // or abandon the retained basket rather than to guard against lost money.
-  if (progress.basketDiverged) return make('changed', changedBasketCopy.body, changedBasketCopy.safety, 'recover', changedBasketCopy.actionLabel);
+  // uncertainty: nothing was tendered for it, so the cashier is asked to
+  // recover or cancel the retained purchase rather than to guard against lost
+  // money. Cancelling keeps this cart; recovering an open purchase replaces it
+  // with the earlier basket, which the copy states explicitly.
+  if (progress.basketDiverged) return make('changed', changedBasketCopy.body, changedBasketCopy.safety, 'recover', changedBasketCopy.recover);
   return undefined;
 }
