@@ -45,6 +45,15 @@ describe('describeFailure', () => {
     expect(described('cash-sale', { status: 500 })).toMatchObject({ title: 'Payment interrupted', action: 'retry' });
   });
 
+  it('describes a changed basket without claiming money may already be recorded', () => {
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' });
+    expect(failure).toMatchObject({ title: 'The cart changed after checkout started', actionLabel: 'Recover the open purchase' });
+    expect(failure.body).toMatch(/No payment was taken/);
+    expect(failure.body).toMatch(/Recover the open purchase/);
+    expect(failure.body).toMatch(/cancel/);
+    expect(`${failure.title} ${failure.body}`).not.toMatch(/already being saved|may already be recorded|could not confirm|Check Transactions/i);
+  });
+
   it('keeps a QR Ph decline and a reconciliation apart', () => {
     expect(described('qr-payment', { code: 'failed' })).toMatchObject({ title: "The customer's payment did not go through", action: 'new-payment' });
     expect(described('qr-payment', { code: 'paid_unfulfilled' })).toMatchObject({ title: 'Administrator required', action: 'contact-operator' });

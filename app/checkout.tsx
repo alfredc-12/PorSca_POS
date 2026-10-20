@@ -121,6 +121,8 @@ export default function CheckoutScreen() {
     operation: cashSubmitting ? 'cash' : qrStatus === 'creating' ? 'qr-create' : recoveryBusy ? 'recover' : qrBusy ? 'check' : undefined,
     receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
   const administratorRequired = Boolean(guidance?.admin);
+  // A changed basket is not payment uncertainty: no tender was sent for it.
+  const basketDiverged = guidance?.category === 'changed';
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
   const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
@@ -134,7 +136,9 @@ export default function CheckoutScreen() {
     || checkoutMachine?.state === 'paid-but-unfulfilled';
   const tenderLockReason = terminalLocked
     ? 'This purchase is locked. Do not take another payment.'
-    : 'Do not take another payment while this payment is waiting.';
+    : basketDiverged
+      ? 'No payment was taken for this cart. Recover the earlier basket, or cancel that purchase, before taking payment.'
+      : 'Do not take another payment while this payment is waiting.';
 
   const checkoutItems = authorityCheckout?.items;
   const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
@@ -197,7 +201,7 @@ export default function CheckoutScreen() {
     } catch (error) {
       surfaceRetainedQrAttempt(error);
       const apiError = error instanceof ApiClientError ? error : undefined;
-      if (apiError?.code === 'revalidation_required') setShowSaleHelp(true);
+      if (apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged') setShowSaleHelp(true);
       const failure = saleFailureCopy({
         status: apiError?.status,
         code: apiError?.code,
@@ -298,7 +302,7 @@ export default function CheckoutScreen() {
       await showQrPayment(payment);
     } catch (error) {
       if (surfaceRetainedQrAttempt(error)) return;
-      if (error instanceof ApiClientError && error.code === 'revalidation_required') setShowSaleHelp(true);
+      if (error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged')) setShowSaleHelp(true);
       const startFailure = qrStartFailure(error);
       setQrStatus(startFailure.status);
       setQrError(startFailure.failure);
@@ -401,7 +405,7 @@ export default function CheckoutScreen() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
         {guidance ? <View testID="checkout-guidance" style={styles.paymentCard} accessibilityLiveRegion="polite">
-          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
+          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : guidance.category === 'changed' ? 'cart-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
           <Text>{guidance.body}</Text>
           <Text>{guidance.safety}</Text>
           {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : <AppButton
@@ -424,19 +428,19 @@ export default function CheckoutScreen() {
           <CheckoutOrderSummary cart={displayedCart} />
         </View>
 
-        {guidance?.category === 'interrupted' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
+        {guidance?.category === 'interrupted' || guidance?.category === 'changed' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
           <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
-          {!showSaleHelp ? <Text style={styles.helper}>This sale needs attention. Open help only if the payment was interrupted.</Text> : null}
+          {!showSaleHelp ? <Text style={styles.helper}>{basketDiverged ? 'Open help to recover the earlier basket or to cancel that purchase.' : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
             <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
             <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
             <Text style={styles.label}>Cancel this sale</Text>
             <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
-            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked} />
-            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={tenderLocked || abandonReason.trim().length < 8} variant="secondary" />
+            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked || basketDiverged} />
+            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={(tenderLocked && !basketDiverged) || abandonReason.trim().length < 8} variant="secondary" />
           </> : null}
         </View> : null}
 
@@ -594,7 +598,7 @@ function describeQrVerification(error: unknown): DescribedFailure {
  */
 function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
-  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required') {
+  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged') {
     return {
       status: 'idle',
       failure: describeAndRecordFailure(

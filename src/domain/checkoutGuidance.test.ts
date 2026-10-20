@@ -30,6 +30,20 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ machine: { ...completed, state: 'paid-but-unfulfilled', reconciliationRequired: true }, receipt: 'failed' })).toMatchObject({ category: 'administrator', body: 'Payment was received, but the sale could not be completed.' });
     expect(checkoutGuidance({ machine: { ...completed, reconciliationRequired: true }, authority, receipt: 'failed' })).toMatchObject({ category: 'administrator', body: 'Conflicting payment records found. This purchase is locked.' });
   });
+  it('offers recovery for a changed basket without implying a payment is unconfirmed', () => {
+    const guidance = checkoutGuidance({ machine: base, progress: { basketDiverged: true } });
+    expect(guidance).toMatchObject({ category: 'changed', headline: 'The cart changed', action: 'recover', label: 'Recover the earlier basket', locked: true, admin: false });
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/No payment was taken/);
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Recover the open purchase/);
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/cancel/);
+    expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/could not confirm|may already be recorded|may still be charged|Do not take another payment/);
+  });
+  it('keeps unconfirmed money ahead of a changed basket', () => {
+    expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { basketDiverged: true } })).toMatchObject({ category: 'interrupted' });
+    expect(checkoutGuidance({ machine: completed, authority, receipt: 'ready', progress: { basketDiverged: true } })).toMatchObject({ category: 'completed' });
+    expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] }, progress: { basketDiverged: true, uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ category: 'interrupted', action: 'recover' });
+  });
+
   it('offers exact cash replay only without a known attempt', () => {
     expect(checkoutGuidance({ machine: base, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ action: 'cash-retry', locked: true });
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] }, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ action: 'recover' });

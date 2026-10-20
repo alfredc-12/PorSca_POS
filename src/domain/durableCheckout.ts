@@ -60,10 +60,13 @@ export class DurableCheckout {
   private busy = false;
   private active = true;
   private recoveryFailure?: CheckoutProgress['recoveryFailure'];
+  /** The cart no longer matches the retained basket; no tender was sent. */
+  private basketDiverged = false;
   private unresolvedCashRefusal = false;
   get progress(): CheckoutProgress {
-    if (this.corruptStorage && this.corruptWithoutChoice) return { recoveryFailure: 'identity' };
-    const result: CheckoutProgress = { recoveryFailure: this.recoveryFailure };
+    const diverged: CheckoutProgress = this.basketDiverged ? { basketDiverged: true } : {};
+    if (this.corruptStorage && this.corruptWithoutChoice) return { recoveryFailure: 'identity', ...diverged };
+    const result: CheckoutProgress = { recoveryFailure: this.recoveryFailure, ...diverged };
     if (this.unresolvedCashRefusal && !this.current?.sale && !this.current?.attempts.some(a => a.method === 'cash')) return { ...result, uncertainTender: 'cash' };
     if (!this.handle?.tender) return result;
     try {
@@ -120,11 +123,18 @@ export class DurableCheckout {
     try {
       const result = await operation();
       if (this.recoveryFailure !== 'inconsistent') this.recoveryFailure = undefined;
+      // A completed operation re-read the basket or resolved it through recovery.
+      this.basketDiverged = false;
       return result;
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        // A changed basket is refused before any tender, so it is not payment
+        // uncertainty: it gets its own state instead of 'interrupted'.
+        if (error instanceof ApiClientError && error.code === 'checkout_basket_diverged') {
+          this.basketDiverged = true;
+          this.recoveryFailure = undefined;
+        } else this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
       }
       throw error;
     } finally { this.busy = false; }
@@ -228,7 +238,11 @@ export class DurableCheckout {
     const sig = signatureForItems(items);
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The stored checkout identity is unreadable. Discover and explicitly recover a server checkout before starting another purchase.', 409, 'checkout_recovery_required');
-    if (this.handle && this.handle.signature !== sig) throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_recovery_required');
+    if (this.handle && this.handle.signature !== sig) {
+      this.basketDiverged = true;
+      throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged');
+    }
+    this.basketDiverged = false;
     if (!this.handle) {
       this.handle = { key: key(), signature: sig };
       await this.persist(); // save before I/O, including a lost creation response

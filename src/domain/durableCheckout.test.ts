@@ -394,6 +394,25 @@ describe('durable authority workflow and machine integration', () => {
     expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
   });
+  it('refuses a basket changed after checkout opened with its own code instead of payment uncertainty', async () => {
+    const { authority, client } = fixture();
+    await authority.prepare(lines);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    // The cashier edits the cart after the durable checkout was opened, before
+    // any tender exists. The refusal must not read as "money may be recorded".
+    await expect(authority.exclusive(() => authority.tender([{ ...lines[0], quantity: 2 }], 'cash', '100.00')))
+      .rejects.toMatchObject({ status: 409, code: 'checkout_basket_diverged' });
+    expect(authority.progress).toMatchObject({ basketDiverged: true });
+    expect(authority.progress.recoveryFailure).toBeUndefined();
+    expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+    // The retained basket is still the one the purchase was opened for, and it
+    // stays recoverable: going back to the original basket clears the refusal.
+    await authority.prepare(lines);
+    expect(authority.progress).not.toMatchObject({ basketDiverged: true });
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+  });
   it('does not clear a QR key when a verification result is abandoned', async () => {
     const { authority, client, saved } = fixture();
     await authority.tender(lines, 'qrph');

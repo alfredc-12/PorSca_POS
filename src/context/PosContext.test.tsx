@@ -91,6 +91,39 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(result.current.refreshQrPhPayment('7')).rejects.toThrow('offline'); });
     expect(renders).toBeGreaterThan(pendingRenders); expect(result.current.checkoutMachine?.attempts[0].payment).toBe('unknown');
   });
+  it('tells the cashier to recover or abandon a changed basket instead of reporting payment uncertainty', async () => {
+    const { wrapper, client, store } = fixture();
+    // A durable checkout for the Coffee basket was opened before any tender.
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toMatchObject({ code: 'checkout_basket_diverged' }); });
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(result.current.checkoutProgress).toMatchObject({ basketDiverged: true });
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
+
+    // Recovering explicitly restores the retained basket and clears the refusal.
+    client.recoverCheckout.mockResolvedValue(open);
+    await act(async () => { await result.current.recoverCheckout(); });
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('stops automatic recovery on a non-empty cart with honest copy and keeps the cart', async () => {
+    const { wrapper, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.openPosCheckouts(); });
+    expect(result.current.checkoutRecoveryError).toMatch(/No payment was taken here/);
+    expect(result.current.checkoutRecoveryError).not.toMatch(/could not confirm|may already/i);
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    // The cart the cashier is building is never replaced silently, and the
+    // retained purchase stays listed for explicit recovery.
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(result.current.recoverableCheckouts?.map(checkout => checkout.id)).toEqual(['durable-uuid']);
+  });
   it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
     const { wrapper, client } = fixture();
     let products!: (value: typeof product[]) => void;

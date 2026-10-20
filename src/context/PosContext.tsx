@@ -565,18 +565,18 @@ export function PosProvider({
       product: { ...await client.getProduct(String(item.productId)).catch(() => ({ id: String(item.productId), name: item.name, barcode: '', price: item.unitPriceCentavos / 100, stock: 0 })), name: item.name, price: item.unitPriceCentavos / 100 },
       quantity: item.quantity,
     })));
-    if (canReplace && !canReplace()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    if (canReplace && !canReplace()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     commitCart({ type: 'replace-lines', lines });
     setAuthorityCheckout(checkout);
   }, [client, commitCart]);
 
   const recoverCheckoutInternal = useCallback(async (id?: string, automatic?: { revision: number; signature: string }) => exclusive(async () => {
     const cartUnchanged = () => automatic !== undefined && cartRevision.current === automatic.revision && cartSignature(cartRef.current.lines) === automatic.signature;
-    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     const checkout = await authority.recover(id);
     if (!checkout) return;
     if (checkout.sale) reads.observeSale(String(checkout.sale.id));
-    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     if (checkout.state === 'abandoned') {
       const restoredRevision = cartRevision.current;
@@ -638,12 +638,14 @@ export function PosProvider({
         authority.confirmEmptyRecoveryDiscovery();
         setCanDiscardCorruptCheckout(corruptLocalStorage);
       }
-      if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+      if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
       await recoverCheckoutInternal(undefined, automatic);
-    } catch {
+    } catch (error) {
       setCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
-      setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
+      setCheckoutRecoveryError(error instanceof ApiClientError && error.code === 'checkout_basket_diverged'
+        ? 'Automatic checkout recovery stopped because this cart already has items. No payment was taken here. Recover the listed purchase, or cancel it, before taking payment.'
+        : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
