@@ -668,14 +668,21 @@ export function PosProvider({
     await applyCheckout(await authority.revalidate());
   }), [exclusive, authority, applyCheckout]);
 
-  const abandonCheckout = useCallback(async (reason: string) => exclusive(async () => {
-    // Cancelling ends the retained purchase, not the cashier's basket. Retire
-    // the device handle and drop the retained display state, but leave the
-    // draft cart (and any Clear All undo) untouched so it can be rung up as a
-    // new sale. Only a completed sale clears the cart.
-    await authority.abandon(reason);
-    setAuthorityCheckout(undefined);
-  }), [exclusive, authority]);
+  const abandonCheckout = useCallback(async (reason: string) => {
+    try {
+      await exclusive(async () => {
+        // Cancelling ends the retained purchase, not the cashier's basket. Retire
+        // the device handle and drop the retained display state, but leave the
+        // draft cart (and any Clear All undo) untouched so it can be rung up as a
+        // new sale. Only a completed sale clears the cart.
+        await authority.abandon(reason);
+        setAuthorityCheckout(undefined);
+      });
+    } catch (error) {
+      setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
+      throw error;
+    }
+  }, [exclusive, authority]);
 
   const completeCashSale = useCallback(async (cashReceived: number | string) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });

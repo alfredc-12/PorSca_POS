@@ -203,6 +203,26 @@ describe('POS durable checkout integration', () => {
     expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
     expect(handle()).toBeNull();
   });
+  it('marks a failed cancellation as unconfirmed and clears it on retry', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+
+    client.abandonCheckout.mockRejectedValueOnce(new ApiClientError('network down', 500));
+    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toThrow('network down'); });
+    expect(result.current.checkoutProgress).toMatchObject({ cancellationFailed: true, recoveryFailure: 'interrupted' });
+    expect(result.current.authorityCheckout?.state).toBe('open');
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(handle()).not.toBeNull();
+
+    client.abandonCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    await act(async () => { await result.current.abandonCheckout('Customer changed their mind'); });
+    expect(result.current.checkoutProgress?.cancellationFailed).toBeFalsy();
+    expect(result.current.authorityCheckout).toBeUndefined();
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
+    expect(handle()).toBeNull();
+  });
   it('keeps the edited cart when recovering an already-cancelled purchase', async () => {
     const { wrapper, client, store, handle } = fixture();
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });

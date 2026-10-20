@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -514,6 +514,42 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.changeText(reason, 'Cashier added an item');
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
     expect(abandonCheckout).toHaveBeenCalledWith('Cashier added an item');
+  });
+
+  it('reports an unconfirmed cancellation and allows trying to cancel again', async () => {
+    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
+    setContext({
+      abandonCheckout,
+      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      checkoutProgress: { recoveryFailure: 'interrupted', cancellationFailed: true },
+    });
+    const view = render(<CheckoutScreen />);
+
+    const guidance = view.getByTestId('checkout-guidance');
+    expect(guidance).toHaveTextContent(/Cancellation not confirmed/);
+    expect(guidance).toHaveTextContent(/may still be open/);
+    expect(guidance).not.toHaveTextContent(/Payment interrupted|could not confirm the payment status|customer may still be charged/);
+    expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    const reason = view.getByLabelText('What happened with this sale');
+    expect(reason).toHaveProp('editable', true);
+    fireEvent.changeText(reason, 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+    expect(abandonCheckout).toHaveBeenCalledWith('Customer changed their mind');
+  });
+
+  it('describes a failed cancellation as unconfirmed instead of a failed recovery', async () => {
+    const abandonCheckout = jest.fn().mockRejectedValue(new ApiClientError('network down', 500));
+    setContext({ abandonCheckout, authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] } });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+
+    expect(view.getByText(cancellationFailedCopy.notice)).toBeTruthy();
+    expect(view.queryByText(/We could not recover this purchase/)).toBeNull();
   });
 
   it('offers only to clear a cancelled purchase, never the changed-basket recovery or cancel controls', async () => {

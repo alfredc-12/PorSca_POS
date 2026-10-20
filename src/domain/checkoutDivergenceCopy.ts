@@ -38,3 +38,12 @@ export const cancelledPurchaseCopy = {
   safety: 'Your cart is still here. Clear the cancelled purchase, then ring up this cart as a new sale.',
   clear: 'Clear the cancelled purchase',
 } as const;
+
+
+export const cancellationFailedCopy = {
+  headline: 'Cancellation not confirmed',
+  body: 'We could not confirm that this purchase was cancelled. It may still be open.',
+  safety: 'Do not take another payment. Try cancelling again, or recover the purchase before ringing up this cart.',
+  notice: 'We could not confirm the cancellation. This purchase may still be open; try cancelling again or recover it before taking payment.',
+  helpHint: 'Open help to try cancelling this purchase again, or to recover it.',
+} as const;

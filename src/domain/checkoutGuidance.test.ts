@@ -1,5 +1,5 @@
 import { checkoutGuidance } from './checkoutGuidance';
-import { cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
 import { CheckoutMachine, openCheckout } from './checkoutMachine';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 const base = openCheckout('c', 2500);
@@ -66,6 +66,17 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ authority: { ...authority, state: 'abandoned', sale: null }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
     expect(checkoutGuidance({ machine: base, progress: { basketDiverged: true, recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, label: changedBasketCopy.recover });
     expect(checkoutGuidance({ machine: { ...pending, state: 'abandoned' }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'pending', action: 'check' });
+  });
+  it('reports an unconfirmed cancellation without claiming payment uncertainty', () => {
+    const guidance = checkoutGuidance({ machine: base, progress: { recoveryFailure: 'interrupted', cancellationFailed: true } });
+    expect(guidance).toMatchObject({ category: 'interrupted', headline: cancellationFailedCopy.headline, action: 'recover', locked: true, admin: false });
+    const text = `${guidance!.body} ${guidance!.safety}`;
+    expect(text).toMatch(/could not confirm that this purchase was cancelled/);
+    expect(text).toMatch(/may still be open/);
+    expect(text).not.toMatch(/Payment interrupted|could not confirm the payment|customer may still be charged|cash sale may already be recorded/);
+    expect(checkoutGuidance({ machine: pending, progress: { cancellationFailed: true } })).toMatchObject({ category: 'pending', action: 'check' });
+    expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { cancellationFailed: true } })).toMatchObject({ category: 'interrupted' });
+    expect(checkoutGuidance({ machine: { ...base, state: 'abandoned' }, progress: { cancellationFailed: true } })).toMatchObject({ headline: cancelledPurchaseCopy.headline });
   });
 
   it('offers exact cash replay only without a known attempt', () => {
