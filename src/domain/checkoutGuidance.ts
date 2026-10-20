@@ -57,8 +57,8 @@ export function checkoutGuidance(input: {
   }
   if (active?.payment === 'pending') return make('pending', qr ? 'We are still waiting for the payment.' : 'We are still waiting for this cash sale.', qr ? safety : `Keep the cash received. ${safety}`, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
   // A basket that no longer matches the retained purchase is not payment
-  // uncertainty: nothing was tendered, so the cashier is asked to recover or
-  // abandon the retained basket rather than to guard against lost money.
+  // uncertainty: no tender is unresolved, so the cashier is asked to recover
+  // or abandon the retained basket rather than to guard against lost money.
   if (progress.basketDiverged) return make('changed', changedBasketCopy.body, changedBasketCopy.safety, 'recover', changedBasketCopy.actionLabel);
   return undefined;
 }

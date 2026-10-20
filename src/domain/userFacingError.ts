@@ -1,5 +1,6 @@
 /**
- * The one module that owns user-facing failure copy.
+ * The module that assembles user-facing failure copy. Changed-basket
+ * sentences come from `changedBasketCopy.ts` so every surface stays in step.
  *
  * A cashier never sees a database exception, a JavaScript error, or a payment
  * provider's decline code; support still gets a short code that maps back to
