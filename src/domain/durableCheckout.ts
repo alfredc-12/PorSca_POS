@@ -159,7 +159,12 @@ export class DurableCheckout {
   }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
   basketDivergedFrom(lines: CartLine[]) {
-    return Boolean(this.handle && this.handle.signature !== signatureForItems(checkoutItems(lines)));
+    if (!this.handle) return false;
+    try {
+      return this.handle.signature !== signatureForItems(checkoutItems(lines));
+    } catch {
+      return false;
+    }
   }
   confirmEmptyRecoveryDiscovery() { if (this.corruptStorage) this.corruptWithoutChoice = true; }
   private async discoverCheckouts() {

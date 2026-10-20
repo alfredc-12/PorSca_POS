@@ -414,6 +414,12 @@ describe('durable authority workflow and machine integration', () => {
     expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
   });
+  it('does not throw from the render-facing divergence check for a cart that cannot be validated', async () => {
+    const { authority } = fixture();
+    await authority.prepare(lines);
+    const malformed = [{ ...lines[0], product: { ...lines[0].product, id: 'prd-001' } }];
+    expect(authority.basketDivergedFrom(malformed)).toBe(false);
+  });
   it('does not clear a QR key when a verification result is abandoned', async () => {
     const { authority, client, saved } = fixture();
     await authority.tender(lines, 'qrph');
