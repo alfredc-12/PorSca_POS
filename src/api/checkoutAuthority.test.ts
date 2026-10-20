@@ -35,6 +35,19 @@ describe('v3 authority client surface', () => {
     await expect(client.checkoutSimulationCapability('uuid', 7)).rejects.toMatchObject({ status: 403 });
     expect(fetchImpl.mock.calls.every(call => call[0].endsWith('/checkout-session'))).toBe(true);
   });
+  it('keeps reconciliation read-only from the mobile client', async () => {
+    const { client, fetchImpl } = fixture('admin', true);
+    await client.listReconciliationCases();
+    await client.getReconciliationCase(7);
+
+    const reconciliationCalls = (fetchImpl as jest.Mock).mock.calls
+      .filter(([url]) => String(url).includes('/reconciliation-cases'))
+      .map(([url, init]) => [url, init?.method ?? 'GET']);
+    expect(reconciliationCalls).toEqual([
+      ['https://shop.test/api/v1/reconciliation-cases?per_page=100&page=1', 'GET'],
+      ['https://shop.test/api/v1/reconciliation-cases/7', 'GET'],
+    ]);
+  });
   it('exposes only authorized read/capability routes, never client settlement', async () => {
     const { client, fetchImpl } = fixture('admin', true);
     await client.listReconciliationCases(2); await client.getReconciliationCase(7); await client.checkoutSimulationCapability('uuid', 7);

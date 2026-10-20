@@ -79,6 +79,18 @@ export class DurableCheckout {
   private assertActive() {
     if (!this.active) throw new CheckoutIdentityError('This checkout session is no longer active.', 409, 'checkout_recovery_required');
   }
+  /**
+   * Reconciliation is an administrator procedure outside this app, and its
+   * lock is one-way: case review or closure does not restore service. Once
+   * reconciliation is required, no local caller may review the quote, abandon,
+   * or retire the purchase; only stored reads and provider verification remain
+   * available. Laravel still enforces the same boundary.
+   */
+  private assertReconciliationUnlocked(action: string) {
+    if (this.machine?.reconciliationRequired || this.machine?.state === 'paid-but-unfulfilled') {
+      throw new ApiClientError(`This purchase requires administrator reconciliation; ${action} is locked.`, 409, 'checkout_reconciliation_required');
+    }
+  }
 
   private submittedQrAttempt() {
     return this.current?.attempts.find(attempt => attempt.method === 'qrph' && attempt.id === this.handle?.tender?.attemptId);
@@ -303,6 +315,7 @@ export class DurableCheckout {
   }
   async revalidate() {
     await this.recover();
+    this.assertReconciliationUnlocked('quote review');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before reviewing the quote.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to revalidate.');
     this.current = await this.client.revalidateCheckout(this.current.id);
@@ -311,6 +324,7 @@ export class DurableCheckout {
   }
   async abandon(reason: string) {
     await this.recover();
+    this.assertReconciliationUnlocked('abandonment');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before abandoning the purchase.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to abandon.');
     this.current = await this.client.abandonCheckout(this.current.id, reason);
@@ -320,6 +334,7 @@ export class DurableCheckout {
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
     this.assertActive();
+    this.assertReconciliationUnlocked('device identity retirement');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the submitted payment before retiring this purchase.', 409, 'checkout_recovery_required');
     if (!this.handle) return;
     await this.storage.save(null, this.handle.key);

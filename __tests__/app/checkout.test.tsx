@@ -411,6 +411,9 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     // A new payment could double-charge money already received.
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
     expect(view.queryByTestId('refresh-qr-payment')).toBeNull();
+    // Reconciliation has no cashier override: no quote review, abandonment, or stock action.
+    expect(view.queryByText('Need help with this sale?')).toBeNull();
+    expect(view.queryByText('Cancel this sale')).toBeNull();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
     expect(alertSpy).toHaveBeenCalledWith('Administrator required', expect.stringContaining('Call the shop administrator now.'));
   });

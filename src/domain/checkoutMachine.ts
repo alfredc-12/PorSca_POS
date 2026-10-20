@@ -97,16 +97,33 @@ export function transitionCheckout(checkout: CheckoutMachine, event: CheckoutEve
 
   switch (event.type) {
     case 'authority-observed': {
-      if (event.checkout.id !== checkout.id) return reject('Authority identity mismatch.');
-      assertCentavos(event.checkout.amountCentavos);
-      if (checkout.state === 'abandoned' && event.checkout.state !== 'abandoned') return reject('Abandonment is terminal.');
-      if (checkout.saleId && event.checkout.saleId !== checkout.saleId) return reject('A durable sale cannot be replaced or erased.');
+      const observed = event.checkout;
+      if (observed.id !== checkout.id) return reject('Authority identity mismatch.');
+      assertCentavos(observed.amountCentavos);
+      if (checkout.state === 'abandoned' && observed.state !== 'abandoned') return reject('Abandonment is terminal.');
+      if (checkout.saleId && observed.saleId !== checkout.saleId) return reject('A durable sale cannot be replaced or erased.');
+      // Reconciliation is server-owned and monotonic. A case review/close is
+      // evidence handling, never a mobile override, so a stored observation
+      // cannot clear the lock or turn a completed/paid-but-unfulfilled purchase
+      // back into a payable one.
+      if ((checkout.reconciliationRequired || checkout.state === 'paid-but-unfulfilled') && !observed.reconciliationRequired) return reject('A reconciliation lock cannot be cleared by a stored observation.');
+      if (checkout.saleId && observed.state !== 'completed' && !observed.reconciliationRequired) return reject('A completed sale cannot be replaced by a payable checkout.');
+      if ((observed.state === 'paid-but-unfulfilled' || observed.attempts.some(attempt => attempt.contradictions.length)) && !observed.reconciliationRequired) return reject('Received money or contradictions require a reconciliation lock.');
       for (const previous of checkout.attempts) {
-        const observed = event.checkout.attempts.find(attempt => attempt.id === previous.id);
-        if (previous.finalEvidence && observed?.finalEvidence?.outcome !== previous.finalEvidence.outcome) return reject('The first verified financial outcome must stand.');
-        if (previous.contradictions.length && (!observed?.contradictions.length || !event.checkout.reconciliationRequired)) return reject('Contradictions must remain preserved and locked.');
+        const observedAttempt = observed.attempts.find(attempt => attempt.id === previous.id);
+        // A stored attempt may be absent while a create/recovery response is
+        // still converging; the device tender handle keeps that replay exact.
+        // A sale or reconciliation lock must never lose its payment ledger.
+        if (!observedAttempt) {
+          if (previous.finalEvidence || previous.contradictions.length) return reject('A verified outcome cannot disappear from an authority observation.');
+          if (checkout.reconciliationRequired || checkout.state === 'paid-but-unfulfilled' || checkout.saleId) return reject('Stored attempts cannot disappear from a locked authority observation.');
+          continue;
+        }
+        if (observedAttempt.method !== previous.method || observedAttempt.amountCentavos !== previous.amountCentavos) return reject('A stored attempt cannot change method or amount.');
+        if (previous.finalEvidence && observedAttempt.finalEvidence?.outcome !== previous.finalEvidence.outcome) return reject('The first verified financial outcome must stand.');
+        if (previous.contradictions.length && (!observedAttempt.contradictions.length || !observed.reconciliationRequired)) return reject('Contradictions must remain preserved and locked.');
       }
-      return accept(event.checkout);
+      return accept(observed);
     }
     case 'begin-attempt': {
       if (!canAcceptCheckoutTender(checkout)) {
@@ -199,7 +216,8 @@ export function transitionCheckout(checkout: CheckoutMachine, event: CheckoutEve
       }
       return accept({ ...checkout, state: 'abandoned' });
     case 'reconciliation-closed':
-      // Administrative remedies never create a sale, refund, or new tender.
+      // Administrative remedies never create a sale, refund, new tender, or
+      // stock adjustment, and they never unlock this machine.
       return reject('Reconciliation is independent of the checkout machine.');
   }
 }

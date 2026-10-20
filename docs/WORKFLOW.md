@@ -81,7 +81,7 @@ The following do not block a connectivity preview build, but must be complete be
 - API-track backend automation checks (Postman/Newman) are green.
 - The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context in the formal QA cycle record (see below).
 
-The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows with the Android/Appium suite against the staging build: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
+The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows with the Android/Appium suite against the staging build: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment (server-side exception procedure: [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md)), history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 
 ## Formal QA cycle record
 

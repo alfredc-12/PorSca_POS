@@ -4,6 +4,7 @@ import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
+import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
 const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
@@ -17,8 +18,10 @@ function fixture() {
   const client = {
     isConfigured: true, baseUrl: 'https://shop.test/api/v1',
     listProducts: jest.fn().mockResolvedValue([product]), listInventory: jest.fn().mockResolvedValue([]), listSales: jest.fn().mockResolvedValue([]), getProduct: jest.fn().mockResolvedValue(product),
+    updateInventory: jest.fn(), updateProduct: jest.fn(),
     createCheckout: jest.fn().mockResolvedValue(open), getCheckout: jest.fn().mockResolvedValue(pending), recoverCheckout: jest.fn().mockResolvedValue(pending),
     createCheckoutAttempt: jest.fn().mockResolvedValue(pending), refreshCheckoutAttempt: jest.fn().mockResolvedValue(pending),
+    revalidateCheckout: jest.fn().mockResolvedValue(pending), abandonCheckout: jest.fn().mockResolvedValue({ ...open, state: 'abandoned' }),
     listCheckouts: jest.fn().mockResolvedValue({ items: [pending], pagination: { current_page: 1, last_page: 1, total: 1 } }),
     checkoutCash: jest.fn().mockResolvedValue({ ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } }),
     createSale: jest.fn(), createQrPhPayment: jest.fn(), refreshPayment: jest.fn(),
@@ -239,6 +242,39 @@ describe('POS durable checkout integration', () => {
     expect(result.current.recoverableCheckouts).toHaveLength(2);
     await act(async () => { await result.current.recoverCheckout('durable-uuid'); });
     expect(result.current.unresolvedQrPayment()?.id).toBe('7');
+  });
+  it('keeps paid-but-unfulfilled reconciliation read-only and never adjusts stock or a sale', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.startQrPhPayment(); });
+    client.recoverCheckout.mockResolvedValue(paidUnfulfilled);
+    await act(async () => {
+      await result.current.confirmQrPhPayment({ id: '7', amount: 25, status: 'paid_unfulfilled' });
+    });
+
+    expect(result.current.checkoutMachine?.state).toBe('paid-but-unfulfilled');
+    expect(result.current.checkoutMachine?.reconciliationRequired).toBe(true);
+    expect(canAcceptCheckoutTender(result.current.checkoutMachine)).toBe(false);
+    expect(result.current.cart).toHaveLength(1);
+    expect(handle()?.id).toBe('durable-uuid');
+    expect(client.listInventory).toHaveBeenCalled();
+    expect(client.listSales).toHaveBeenCalled();
+    expect(client.updateInventory).not.toHaveBeenCalled();
+    expect(client.updateProduct).not.toHaveBeenCalled();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await expect(result.current.revalidateCheckout()).rejects.toThrow(/administrator reconciliation/);
+    });
+    expect(client.revalidateCheckout).not.toHaveBeenCalled();
+    await act(async () => {
+      await expect(result.current.abandonCheckout('Administrator reviewed externally')).rejects.toThrow(/administrator reconciliation/);
+    });
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+    expect(client.updateInventory).not.toHaveBeenCalled();
+    expect(client.updateProduct).not.toHaveBeenCalled();
   });
   it.each(['inventory', 'history'])('keeps paid-but-unfulfilled QR unresolved when %s verification fails', async failedRead => {
     const { wrapper, client, handle } = fixture();
