@@ -54,10 +54,10 @@ export function checkoutGuidance(input: {
     }
     return make('interrupted', 'We could not confirm the payment status. The customer may still be charged.', 'Do not take another payment or hand over the goods.', active ? 'check' : 'start', active ? 'Check Payment Status' : 'Retry QR Ph Payment');
   }
+  if (active?.payment === 'pending') return make('pending', qr ? 'We are still waiting for the payment.' : 'We are still waiting for this cash sale.', qr ? safety : `Keep the cash received. ${safety}`, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
   // A basket that no longer matches the retained purchase is not payment
   // uncertainty: nothing was tendered, so the cashier is asked to recover or
   // abandon the retained basket rather than to guard against lost money.
   if (progress.basketDiverged) return make('changed', 'The cart changed after this purchase was opened, so the earlier basket was kept. No payment was taken for this cart.', 'Recover the open purchase to ring up the earlier basket, or cancel that purchase before ringing up this cart.', 'recover', 'Recover the earlier basket');
-  if (active?.payment === 'pending') return make('pending', qr ? 'We are still waiting for the payment.' : 'We are still waiting for this cash sale.', qr ? safety : `Keep the cash received. ${safety}`, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
   return undefined;
 }

@@ -111,13 +111,13 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
-  it('stops automatic recovery on a non-empty cart with honest copy and keeps the cart', async () => {
+  it('stops automatic recovery on a non-empty cart with neutral copy and keeps the cart', async () => {
     const { wrapper, store } = fixture();
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     await act(async () => { await result.current.openPosCheckouts(); });
-    expect(result.current.checkoutRecoveryError).toMatch(/No payment was taken here/);
-    expect(result.current.checkoutRecoveryError).not.toMatch(/could not confirm|may already/i);
+    expect(result.current.checkoutRecoveryError).toMatch(/Nothing is paid locally. Retry recovery before taking payment./);
+    expect(result.current.checkoutRecoveryError).not.toMatch(/No payment was taken here|could not confirm|may already/i);
     expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
     // The cart the cashier is building is never replaced silently, and the
     // retained purchase stays listed for explicit recovery.

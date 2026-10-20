@@ -39,6 +39,8 @@ describe('cashier guidance from trusted truth', () => {
     expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/could not confirm|may already be recorded|may still be charged|Do not take another payment/);
   });
   it('keeps unconfirmed money ahead of a changed basket', () => {
+    expect(checkoutGuidance({ machine: pending, progress: { basketDiverged: true } })).toMatchObject({ category: 'pending', body: 'We are still waiting for the payment.', action: 'check', locked: true });
+    expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] }, progress: { basketDiverged: true } })).toMatchObject({ category: 'pending', body: 'We are still waiting for this cash sale.', action: 'recover' });
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { basketDiverged: true } })).toMatchObject({ category: 'interrupted' });
     expect(checkoutGuidance({ machine: completed, authority, receipt: 'ready', progress: { basketDiverged: true } })).toMatchObject({ category: 'completed' });
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], method: 'cash' }] }, progress: { basketDiverged: true, uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ category: 'interrupted', action: 'recover' });
