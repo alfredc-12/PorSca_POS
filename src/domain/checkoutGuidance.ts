@@ -47,7 +47,9 @@ export function checkoutGuidance(input: {
   const safety = 'Do not take another payment or hand over the goods yet.';
   if (operation === 'cash' || operation === 'qr-create') return make('pending', 'Recording this payment. Please wait.', 'Do not submit another payment.', 'wait', operation === 'cash' ? 'Recording Cash Payment…' : 'Creating QR Ph Payment…');
   if (active?.finalEvidence?.outcome === 'paid') return make('pending', 'Payment is received. Still recording the sale.', safety, qr ? 'check' : 'recover', qr ? 'Check Payment Status' : 'Recover device purchase');
-  if (progress.recoveryFailure === 'interrupted' || input.verificationFailed || active?.payment === 'unknown' || progress.uncertainTender) {
+  const abandoned = machine?.state === 'abandoned' || authority?.state === 'abandoned';
+  const tenderUncertain = input.verificationFailed || active?.payment === 'unknown' || progress.uncertainTender;
+  if (tenderUncertain || (progress.recoveryFailure === 'interrupted' && !abandoned && !progress.basketDiverged)) {
     if (!active && !progress.uncertainTender && !input.verificationFailed) return make('interrupted', 'We could not confirm this purchase. Keep it open and try recovery again.', 'Do not take another payment or hand over the goods.', 'recover', 'Recover device purchase');
     if (!qr) {
       const retryCash = progress.cashInput && !machine?.attempts.some(attempt => attempt.method === 'cash');
@@ -61,7 +63,7 @@ export function checkoutGuidance(input: {
   // A cancelled purchase is terminal: there is no basket left to recover and
   // no payment to take, so it outranks a changed cart. The action retires the
   // dead device identity and leaves the cashier's cart untouched.
-  if (machine?.state === 'abandoned' || authority?.state === 'abandoned') return make('changed', cancelledPurchaseCopy.body, cancelledPurchaseCopy.safety, 'recover', cancelledPurchaseCopy.clear, cancelledPurchaseCopy.headline);
+  if (abandoned) return make('changed', cancelledPurchaseCopy.body, cancelledPurchaseCopy.safety, 'recover', cancelledPurchaseCopy.clear, cancelledPurchaseCopy.headline);
   // A basket that no longer matches the retained purchase is not payment
   // uncertainty: nothing was tendered for it, so the cashier is asked to
   // recover or cancel the retained purchase rather than to guard against lost

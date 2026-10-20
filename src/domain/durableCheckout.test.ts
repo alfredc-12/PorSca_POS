@@ -420,6 +420,19 @@ describe('durable authority workflow and machine integration', () => {
     const malformed = [{ ...lines[0], product: { ...lines[0].product, id: 'prd-001' } }];
     expect(authority.basketDivergedFrom(malformed)).toBe(true);
   });
+  it.each(['cash', 'qrph'] as const)('refuses %s on a server-cancelled purchase without reporting payment uncertainty', async method => {
+    const { authority, client } = fixture();
+    await authority.prepare(lines);
+    client.getCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    await expect(authority.exclusive(() => authority.tender(lines, method, method === 'cash' ? '20.00' : undefined)))
+      .rejects.toMatchObject({ status: 409, code: 'checkout_purchase_cancelled' });
+    expect(authority.machine?.state).toBe('abandoned');
+    expect(authority.progress.recoveryFailure).toBeUndefined();
+    expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(authority.progress.basketDiverged).toBeFalsy();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+  });
   it('does not clear a QR key when a verification result is abandoned', async () => {
     const { authority, client, saved } = fixture();
     await authority.tender(lines, 'qrph');

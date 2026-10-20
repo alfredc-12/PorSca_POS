@@ -60,6 +60,12 @@ describe('cashier guidance from trusted truth', () => {
   it('puts a cancelled purchase ahead of a changed basket', () => {
     expect(checkoutGuidance({ machine: { ...base, state: 'abandoned' }, progress: { basketDiverged: true } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
   });
+  it('keeps cancelled and changed guidance when a recovery failure has no live tender', () => {
+    expect(checkoutGuidance({ machine: { ...base, state: 'abandoned' }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
+    expect(checkoutGuidance({ authority: { ...authority, state: 'abandoned', sale: null }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
+    expect(checkoutGuidance({ machine: base, progress: { basketDiverged: true, recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, label: changedBasketCopy.recover });
+    expect(checkoutGuidance({ machine: { ...pending, state: 'abandoned' }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'pending', action: 'check' });
+  });
 
   it('offers exact cash replay only without a known attempt', () => {
     expect(checkoutGuidance({ machine: base, progress: { uncertainTender: 'cash', cashInput: '100.00' } })).toMatchObject({ action: 'cash-retry', locked: true });

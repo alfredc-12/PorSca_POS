@@ -224,6 +224,26 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
     expect(handle()).toBeNull();
   });
+  it('keeps the edited cart and reports a server-cancelled purchase when payment is refused', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1],[2,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+
+    client.getCheckout.mockResolvedValue({
+      ...open, state: 'abandoned',
+      items: [...open.items, { productId: 2, name: 'Tea', quantity: 1, unitPriceCentavos: 800 }],
+    });
+    await act(async () => { await expect(result.current.completeCashSale('100')).rejects.toMatchObject({ code: 'checkout_purchase_cancelled' }); });
+
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1], ['2', 1]]);
+    expect(result.current.authorityCheckout?.state).toBe('abandoned');
+    expect(result.current.checkoutMachine?.state).toBe('abandoned');
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.checkoutProgress?.basketDiverged).toBeFalsy();
+  });
   it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
     const { wrapper, client } = fixture();
     let products!: (value: typeof product[]) => void;

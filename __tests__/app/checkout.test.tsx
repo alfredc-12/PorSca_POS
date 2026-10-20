@@ -488,7 +488,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const completeCashSale = jest.fn();
     const recoverCheckout = jest.fn().mockResolvedValue(undefined);
     const abandonCheckout = jest.fn().mockResolvedValue(undefined);
-    setContext({ completeCashSale, recoverCheckout, abandonCheckout, checkoutProgress: { basketDiverged: true } });
+    setContext({ completeCashSale, recoverCheckout, abandonCheckout, checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' } });
     const view = render(<CheckoutScreen />);
 
     const guidance = view.getByTestId('checkout-guidance');
@@ -520,7 +520,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const recoverCheckout = jest.fn().mockResolvedValue(undefined);
     setContext({
       recoverCheckout,
-      checkoutProgress: { basketDiverged: true },
+      checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' },
       checkoutMachine: { ...openCheckout('test-checkout', 3500), state: 'abandoned' },
     });
     const view = render(<CheckoutScreen />);

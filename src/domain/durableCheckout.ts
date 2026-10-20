@@ -124,7 +124,7 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
       }
       throw error;
     } finally { this.busy = false; }
@@ -265,6 +265,10 @@ export class DurableCheckout {
     const replaying = uncertainTender === method;
     if (!canAcceptCheckoutTender(this.machine) && (!replaying || this.machine?.reconciliationRequired || this.machine?.state === 'abandoned')) {
       if (method === 'qrph' && this.retainedPayment()) return checkout;
+      if (this.machine?.state === 'abandoned' && !this.progress.uncertainTender
+        && !this.machine.attempts.some(attempt => attempt.payment === 'pending' || attempt.payment === 'unknown')) {
+        throw new ApiClientError('This purchase was cancelled. Clear it before recording another payment.', 409, 'checkout_purchase_cancelled');
+      }
       throw new ApiClientError('QR Ph payment is unresolved or checkout is locked. Recover it before recording cash.', 409, 'qr_payment_unresolved');
     }
     const localAmount = lines.reduce((sum, l) => sum + Math.round(l.product.price * 100) * l.quantity, 0);

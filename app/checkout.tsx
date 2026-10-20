@@ -605,7 +605,7 @@ function describeQrVerification(error: unknown): DescribedFailure {
  */
 function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
-  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged') {
+  if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged' || apiError?.code === 'checkout_purchase_cancelled') {
     return {
       status: 'idle',
       failure: describeAndRecordFailure(
