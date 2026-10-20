@@ -2,6 +2,18 @@
 
 Checkout remains one existing payment step. Financial results still come only from Laravel v3; the five guidance categories are presentation, not new payment outcomes. Interrupted payments retain their purchase and exact retry keys. Administrator guidance overrides receipt refresh and hides payable QR codes. Back/Leave does not cancel a payment.
 
+## Cart retention across cancel and recovery
+
+The draft cart belongs to the cashier. It is cleared by a completed sale or an explicit Clear All, never as a side effect of ending a retained purchase.
+
+- **Cancel keeps the cart.** `abandonCheckout` abandons the retained purchase and retires its device handle, but leaves every edited cart line (and any Clear All undo) in place. The checkout then shows that cart ready to ring up as a new sale.
+- **A cancelled purchase can only be cleared.** Recovery of an already-`abandoned` checkout does not apply its dead basket to the cart and does not clear the cart; it retires the device handle and leaves the cart as the cashier left it. A cancelled purchase has no ring-up path.
+- **Explicit recovery of an open purchase replaces the cart** with that purchase's authoritative basket so it can be paid. That is what **Recover the earlier basket** means; the copy states the replacement, and cancelling is the non-destructive alternative offered beside it.
+- **Automatic recovery never replaces a non-empty cart.** It pauses, keeps the listed purchase recoverable, and leaves the cart untouched. Its POS notice states only what was observed (the pause and the kept cart), never an unverified payment outcome.
+- **A live tender outranks divergence.** Pending or unknown money keeps its warning and actions; a terminal cancelled purchase outranks the changed-basket guidance. Only then does **The cart changed** appear, with the single copy source in `src/domain/checkoutDivergenceCopy.ts`.
+
+The changed-basket copy therefore says what the app does: no payment was taken for the edited cart, cancelling keeps it, recovering an open purchase replaces it with the earlier basket, and an already-cancelled purchase cannot be recovered.
+
 ## Intentional cashier copy changes
 
 The approved everyday wording replaces older shop-server/operator/verification explanations:
@@ -14,6 +26,7 @@ The approved everyday wording replaces older shop-server/operator/verification e
 - QR completion: “Payment confirmed. Stock and history updated.” This intentionally replaces the old technical success sentence in the manual oracle.
 - Conflict: “Conflicting payment records found. This purchase is locked.”
 - Administrator instruction: “Call the shop administrator now.” Administrator cases hide every payment and cancellation action; the phone only shows the instruction, safety line, and support code. The server-side exception procedure is in [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md); the app offers no local override or stock adjustment.
+- Changed basket: “The cart changed after this purchase was opened.” A cart edit after a durable purchase is refused with `checkout_basket_diverged`, not payment uncertainty; a live pending or unknown tender keeps its own warning first. Guidance, sale help, tender lock, failure card and automatic-recovery wording all come from `src/domain/checkoutDivergenceCopy.ts`; cancelling keeps this cart, recovering an open purchase replaces it with the earlier basket, and an already-cancelled purchase cannot be recovered.
 - Changed basket: “The cart changed after this purchase was opened, so the earlier basket was kept.” A cart edit after a durable purchase is refused with `checkout_basket_diverged`, not payment uncertainty; a live pending or unknown tender keeps its own warning first. Guidance, sale help, tender lock, failure card and automatic-recovery wording all come from `src/domain/changedBasketCopy.ts`; recovering an open purchase replaces this cart with the earlier basket, and an already-cancelled purchase cannot be recovered.
 
 Unknown/failed checks now say “Payment interrupted”, not payment failure. Uncertain cash no longer claims that nothing was charged or saved. Guidance replaces duplicate failure cards; support codes remain readable. Technical checkout, attempt, and case IDs are not shown to cashiers. Existing tender accessibility labels and QR start/check/new-attempt/leave identifiers keep their meanings.

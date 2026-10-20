@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
+import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -497,9 +497,9 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByText(changedBasketCopy.safety)).toBeTruthy();
     expect(guidance).not.toHaveTextContent(/ring up|still here|clears this cart/);
     expect(guidance).not.toHaveTextContent(/could not confirm|may already be recorded/);
-    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(changedBasketCopy.tenderLockReason);
+    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(changedBasketCopy.tenderLock);
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
-    expect(view.getByText(changedBasketCopy.saleHelpHint)).toBeTruthy();
+    expect(view.getByText(changedBasketCopy.helpHint)).toBeTruthy();
 
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Recover the earlier basket' })); });
     expect(recoverCheckout).toHaveBeenCalledTimes(1);
@@ -514,6 +514,26 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     fireEvent.changeText(reason, 'Cashier added an item');
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
     expect(abandonCheckout).toHaveBeenCalledWith('Cashier added an item');
+  });
+
+  it('offers only to clear a cancelled purchase, never the changed-basket recovery or cancel controls', async () => {
+    const recoverCheckout = jest.fn().mockResolvedValue(undefined);
+    setContext({
+      recoverCheckout,
+      checkoutProgress: { basketDiverged: true },
+      checkoutMachine: { ...openCheckout('test-checkout', 3500), state: 'abandoned' },
+    });
+    const view = render(<CheckoutScreen />);
+
+    const guidance = view.getByTestId('checkout-guidance');
+    expect(guidance).toHaveTextContent(/This purchase was cancelled/);
+    expect(guidance).toHaveTextContent(/Your cart is still here/);
+    expect(guidance).not.toHaveTextContent(/Recover the earlier basket/);
+    expect(view.queryByTestId('sale-help-toggle')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Cancel this sale' })).toBeNull();
+
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Clear the cancelled purchase' })); });
+    expect(recoverCheckout).toHaveBeenCalledTimes(1);
   });
 
   it.each(['payment-in-progress', 'payment-unresolved', 'completed', 'abandoned', 'paid-but-unfulfilled'] as const)(
@@ -535,7 +555,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
       const confirmHandler = view.UNSAFE_getAllByType(AppButton).find(button => button.props.testID === 'confirm-cash-payment')!.props.onPress;
       act(() => { void confirmHandler(); });
       expect(completeCashSale).not.toHaveBeenCalled();
-      expect(view.getByTestId(state === 'paid-but-unfulfilled' || state === 'completed' ? 'checkout-guidance' : 'checkout-cash-error')).toBeTruthy();
+      expect(view.getByTestId(state === 'paid-but-unfulfilled' || state === 'completed' || state === 'abandoned' ? 'checkout-guidance' : 'checkout-cash-error')).toBeTruthy();
     },
   );
 

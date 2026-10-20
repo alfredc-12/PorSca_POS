@@ -12,7 +12,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
+import { cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
@@ -123,7 +123,13 @@ export default function CheckoutScreen() {
     receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
   const administratorRequired = Boolean(guidance?.admin);
   // A changed basket is not payment uncertainty: no tender was sent for it.
-  const basketDiverged = guidance?.category === 'changed';
+  // A cancelled purchase is terminal, so it never offers the changed-basket
+  // recovery or cancellation controls.
+  const purchaseCancelled = checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
+  const basketDiverged = Boolean(checkoutProgress?.basketDiverged) && !purchaseCancelled;
+  // A live tender keeps its own warning; the changed-basket reason only shows
+  // when the changed guidance itself is the active explanation.
+  const changedBasketActive = basketDiverged && guidance?.category === 'changed';
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
   const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
@@ -137,8 +143,8 @@ export default function CheckoutScreen() {
     || checkoutMachine?.state === 'paid-but-unfulfilled';
   const tenderLockReason = terminalLocked
     ? 'This purchase is locked. Do not take another payment.'
-    : basketDiverged
-      ? changedBasketCopy.tenderLockReason
+    : changedBasketActive
+      ? changedBasketCopy.tenderLock
       : 'Do not take another payment while this payment is waiting.';
 
   const checkoutItems = authorityCheckout?.items;
@@ -406,7 +412,7 @@ export default function CheckoutScreen() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
         {guidance ? <View testID="checkout-guidance" style={styles.paymentCard} accessibilityLiveRegion="polite">
-          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : guidance.category === 'changed' ? 'cart-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
+          <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : guidance.category === 'changed' ? purchaseCancelled ? 'close-circle-outline' : 'cart-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
           <Text>{guidance.body}</Text>
           <Text>{guidance.safety}</Text>
           {guidance.action === 'administrator' ? <Text>{guidance.label}</Text> : <AppButton
@@ -429,19 +435,19 @@ export default function CheckoutScreen() {
           <CheckoutOrderSummary cart={displayedCart} />
         </View>
 
-        {guidance?.category === 'interrupted' || guidance?.category === 'changed' || (authorityCheckout && !guidance) ? <View style={styles.orderCard}>
+        {!purchaseCancelled && (guidance?.category === 'interrupted' || guidance?.category === 'changed' || (authorityCheckout && !guidance)) ? <View style={styles.orderCard}>
           <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
-          {!showSaleHelp ? <Text style={styles.helper}>{basketDiverged ? changedBasketCopy.saleHelpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
+          {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? changedBasketCopy.helpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
             <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
             <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
             <Text style={styles.label}>Cancel this sale</Text>
             <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
-            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked || basketDiverged} />
-            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={(tenderLocked && !basketDiverged) || abandonReason.trim().length < 8} variant="secondary" />
+            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked || changedBasketActive} />
+            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={(tenderLocked && !changedBasketActive) || abandonReason.trim().length < 8} variant="secondary" />
           </> : null}
         </View> : null}
 
