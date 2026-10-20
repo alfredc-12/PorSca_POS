@@ -528,7 +528,10 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const guidance = view.getByTestId('checkout-guidance');
     expect(guidance).toHaveTextContent(/Cancellation not confirmed/);
     expect(guidance).toHaveTextContent(/may still be open/);
+    expect(guidance).toHaveTextContent(/try cancelling again to keep this cart/i);
+    expect(guidance).toHaveTextContent(/recover the earlier basket to replace this cart/i);
     expect(guidance).not.toHaveTextContent(/Payment interrupted|could not confirm the payment status|customer may still be charged/);
+    expect(view.getByText(/recover the earlier basket and replace this cart/i)).toBeTruthy();
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
 
     fireEvent.press(view.getByTestId('sale-help-toggle'));
@@ -549,6 +552,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
 
     expect(view.getByText(cancellationFailedCopy.notice)).toBeTruthy();
+    expect(view.getByText(/try cancelling again to keep this cart/i)).toBeTruthy();
     expect(view.queryByText(/We could not recover this purchase/)).toBeNull();
   });
 

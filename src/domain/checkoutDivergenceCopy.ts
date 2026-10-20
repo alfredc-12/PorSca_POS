@@ -43,7 +43,7 @@ export const cancelledPurchaseCopy = {
 export const cancellationFailedCopy = {
   headline: 'Cancellation not confirmed',
   body: 'We could not confirm that this purchase was cancelled. It may still be open.',
-  safety: 'Do not take another payment. Try cancelling again, or recover the purchase before ringing up this cart.',
-  notice: 'We could not confirm the cancellation. This purchase may still be open; try cancelling again or recover it before taking payment.',
-  helpHint: 'Open help to try cancelling this purchase again, or to recover it.',
+  safety: 'Do not take another payment. Try cancelling again to keep this cart, or recover the earlier basket to replace this cart and pay for it.',
+  notice: 'We could not confirm the cancellation. This purchase may still be open; try cancelling again to keep this cart, or recover the earlier basket to replace this cart.',
+  helpHint: 'Open help to cancel again and keep this cart, or recover the earlier basket and replace this cart.',
 } as const;

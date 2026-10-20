@@ -73,6 +73,8 @@ describe('cashier guidance from trusted truth', () => {
     const text = `${guidance!.body} ${guidance!.safety}`;
     expect(text).toMatch(/could not confirm that this purchase was cancelled/);
     expect(text).toMatch(/may still be open/);
+    expect(text).toMatch(/try cancelling again to keep this cart/i);
+    expect(text).toMatch(/recover the earlier basket to replace this cart/i);
     expect(text).not.toMatch(/Payment interrupted|could not confirm the payment|customer may still be charged|cash sale may already be recorded/);
     expect(checkoutGuidance({ machine: pending, progress: { cancellationFailed: true } })).toMatchObject({ category: 'pending', action: 'check' });
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { cancellationFailed: true } })).toMatchObject({ category: 'interrupted' });
