@@ -11,6 +11,7 @@ import { checkoutStorage } from '@/src/api/checkoutStorage';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from '@/src/domain/checkoutMachine';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
+import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
 import { CheckoutReads } from '@/src/domain/checkoutReads';
 import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
@@ -644,7 +645,7 @@ export function PosProvider({
       setStoredCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
       setCheckoutRecoveryError(error instanceof ApiClientError && error.code === 'checkout_basket_diverged'
-        ? 'Automatic checkout recovery stopped so this cart is not replaced. Resume the listed sale to recover its basket, or cancel that sale before taking payment.'
+        ? changedBasketCopy.autoRecoveryNotice(!emptyDiscovery)
         : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);

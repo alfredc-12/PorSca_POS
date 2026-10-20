@@ -1,4 +1,5 @@
 import { checkoutGuidance } from './checkoutGuidance';
+import { changedBasketCopy } from './changedBasketCopy';
 import { CheckoutMachine, openCheckout } from './checkoutMachine';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 const base = openCheckout('c', 2500);
@@ -6,7 +7,7 @@ const pending: CheckoutMachine = { ...base, state: 'payment-unresolved', attempt
 const authority: AuthorityCheckout = { id: 'c', storeId: 's', state: 'completed', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [], attempts: [], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' }, exceptions: [], history: [] };
 const completed = { ...pending, state: 'completed' as const, saleId: '9' };
 describe('cashier guidance from trusted truth', () => {
-  it('leaves idle, revised quote, abandonment and verified non-payability outside the four categories', () => {
+  it('leaves idle, revised quote, abandonment and verified non-payability outside the five categories', () => {
     for (const state of ['open', 'ready-for-new-attempt', 'abandoned'] as const) expect(checkoutGuidance({ machine: { ...base, state } })).toBeUndefined();
   });
   it('keeps pending after reservation release and restores it after unknown', () => {
@@ -32,12 +33,12 @@ describe('cashier guidance from trusted truth', () => {
   });
   it('offers recovery for a changed basket without implying a payment is unconfirmed', () => {
     const guidance = checkoutGuidance({ machine: base, progress: { basketDiverged: true } });
-    expect(guidance).toMatchObject({ category: 'changed', headline: 'The cart changed', action: 'recover', label: 'Recover the earlier basket', locked: true, admin: false });
+    expect(guidance).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, body: changedBasketCopy.body, safety: changedBasketCopy.safety, action: 'recover', label: changedBasketCopy.actionLabel, locked: true, admin: false });
     expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/No payment was taken/);
-    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Recover the open purchase/);
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Recover the retained purchase/);
     expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/cancel/);
-    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Cancelling also clears this cart/);
-    expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/still here|ringing up this cart|could not confirm|may already be recorded|may still be charged|Do not take another payment/);
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/already-cancelled purchase cannot be recovered/);
+    expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/ring up|ringing up|still here|clears this cart|keeps this cart|could not confirm|may already be recorded|may still be charged|Do not take another payment/);
   });
   it('keeps unconfirmed money ahead of a changed basket', () => {
     expect(checkoutGuidance({ machine: pending, progress: { basketDiverged: true } })).toMatchObject({ category: 'pending', body: 'We are still waiting for the payment.', action: 'check', locked: true });

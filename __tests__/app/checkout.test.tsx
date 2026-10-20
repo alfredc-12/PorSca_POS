@@ -12,6 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
+import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -491,13 +492,14 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const view = render(<CheckoutScreen />);
 
     const guidance = view.getByTestId('checkout-guidance');
-    expect(guidance).toHaveTextContent(/The cart changed/);
-    expect(guidance).toHaveTextContent(/No payment was taken for this cart/);
-    expect(guidance).toHaveTextContent(/Cancelling also clears this cart/);
+    expect(view.getByText(changedBasketCopy.headline)).toBeTruthy();
+    expect(view.getByText(changedBasketCopy.body)).toBeTruthy();
+    expect(view.getByText(changedBasketCopy.safety)).toBeTruthy();
+    expect(guidance).not.toHaveTextContent(/ring up|still here|clears this cart/);
     expect(guidance).not.toHaveTextContent(/could not confirm|may already be recorded/);
-    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/No payment was taken for this cart/);
-    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/Cancelling also clears this cart/);
+    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(changedBasketCopy.tenderLockReason);
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
+    expect(view.getByText(changedBasketCopy.saleHelpHint)).toBeTruthy();
 
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Recover the earlier basket' })); });
     expect(recoverCheckout).toHaveBeenCalledTimes(1);
@@ -505,7 +507,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     // "or abandon": cancellation stays usable while the basket is divergent.
     fireEvent.press(view.getByTestId('sale-help-toggle'));
-    expect(view.getByText(/Tell us briefly what happened so the shop can review it later. Cancelling also clears this cart./)).toBeTruthy();
+    expect(view.getByText('Tell us briefly what happened so the shop can review it later.')).toBeTruthy();
+    expect(view.queryByText(/clears this cart|keeps this cart|ring up/)).toBeNull();
     const reason = view.getByLabelText('What happened with this sale');
     expect(reason).toHaveProp('editable', true);
     fireEvent.changeText(reason, 'Cashier added an item');

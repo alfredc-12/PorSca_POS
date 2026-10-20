@@ -1,4 +1,5 @@
 import { describeFailure, newReference, supportCodeLine } from '@/src/domain/userFacingError';
+import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
 
 const RAW = {
   message: 'Illuminate\\Database\\QueryException: SQLSTATE[23000] (fetch failed at https://api.example.test)',
@@ -47,12 +48,12 @@ describe('describeFailure', () => {
 
   it('describes a changed basket without claiming money may already be recorded', () => {
     const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' });
-    expect(failure).toMatchObject({ title: 'The cart changed after checkout started', actionLabel: 'Recover the open purchase' });
+    expect(failure).toMatchObject({ title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel });
     expect(failure.body).toMatch(/No payment was taken/);
-    expect(failure.body).toMatch(/Recover the open purchase/);
+    expect(failure.body).toMatch(/Recover the retained purchase/);
     expect(failure.body).toMatch(/cancel/);
-    expect(failure.body).toMatch(/Cancelling also clears this cart/);
-    expect(`${failure.title} ${failure.body}`).not.toMatch(/Your cart is still here|already being saved|may already be recorded|could not confirm|Check Transactions/i);
+    expect(failure.body).toMatch(/already-cancelled purchase cannot be recovered/);
+    expect(`${failure.title} ${failure.body}`).not.toMatch(/ring up|ringing up|Your cart is still here|clears this cart|keeps this cart|already being saved|may already be recorded|could not confirm|Check Transactions/i);
   });
 
   it('keeps a QR Ph decline and a reconciliation apart', () => {

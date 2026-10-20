@@ -4,6 +4,7 @@ import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
+import { changedBasketCopy } from '@/src/domain/changedBasketCopy';
 import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
@@ -155,13 +156,23 @@ describe('POS durable checkout integration', () => {
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     await act(async () => { await result.current.openPosCheckouts(); });
-    expect(result.current.checkoutRecoveryError).toMatch(/Automatic checkout recovery stopped so this cart is not replaced. Resume the listed sale to recover its basket, or cancel that sale before taking payment./);
-    expect(result.current.checkoutRecoveryError).not.toMatch(/No payment was taken here|Nothing is paid locally|no authority record|could not confirm|may already|Retry/i);
+    expect(result.current.checkoutRecoveryError).toBe(changedBasketCopy.autoRecoveryNotice(true));
+    expect(result.current.checkoutRecoveryError).not.toMatch(/No payment|Nothing is paid|no authority record|could not confirm|may already|Retry/i);
     expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
     // The cart the cashier is building is never replaced silently, and the
     // retained purchase stays listed for explicit recovery.
     expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
     expect(result.current.recoverableCheckouts?.map(checkout => checkout.id)).toEqual(['durable-uuid']);
+  });
+  it('does not claim a listed retained purchase when discovery finds none', async () => {
+    const { wrapper, client } = fixture();
+    client.listCheckouts.mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.openPosCheckouts(); });
+    expect(result.current.checkoutRecoveryError).toBe(changedBasketCopy.autoRecoveryNotice(false));
+    expect(result.current.checkoutRecoveryError).not.toMatch(/listed below|Resume the listed|No payment was taken|Nothing is paid|Retry/i);
+    expect(result.current.recoverableCheckouts).toHaveLength(0);
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1']);
   });
   it('shares overlapping catalog, inventory and history work and retries failed reads', async () => {
     const { wrapper, client } = fixture();

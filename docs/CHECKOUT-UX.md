@@ -1,6 +1,6 @@
 # Checkout guidance and verification
 
-Checkout remains one existing payment step. Financial results still come only from Laravel v3; the four guidance categories are presentation, not new payment outcomes. Interrupted payments retain their purchase and exact retry keys. Administrator guidance overrides receipt refresh and hides payable QR codes. Back/Leave does not cancel a payment.
+Checkout remains one existing payment step. Financial results still come only from Laravel v3; the five guidance categories are presentation, not new payment outcomes. Interrupted payments retain their purchase and exact retry keys. Administrator guidance overrides receipt refresh and hides payable QR codes. Back/Leave does not cancel a payment.
 
 ## Intentional cashier copy changes
 
@@ -14,6 +14,7 @@ The approved everyday wording replaces older shop-server/operator/verification e
 - QR completion: “Payment confirmed. Stock and history updated.” This intentionally replaces the old technical success sentence in the manual oracle.
 - Conflict: “Conflicting payment records found. This purchase is locked.”
 - Administrator instruction: “Call the shop administrator now.” Administrator cases hide every payment and cancellation action; the phone only shows the instruction, safety line, and support code. The server-side exception procedure is in [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md); the app offers no local override or stock adjustment.
+- Changed basket: “The cart changed after this purchase was opened, so the earlier basket was kept.” Guidance, sale help, tender lock, failure card and automatic-recovery wording all come from `src/domain/changedBasketCopy.ts`; recovering an open purchase replaces this cart with the earlier basket, and an already-cancelled purchase cannot be recovered.
 
 Unknown/failed checks now say “Payment interrupted”, not payment failure. Uncertain cash no longer claims that nothing was charged or saved. Guidance replaces duplicate failure cards; support codes remain readable. Technical checkout, attempt, and case IDs are not shown to cashiers. Existing tender accessibility labels and QR start/check/new-attempt/leave identifiers keep their meanings.
 

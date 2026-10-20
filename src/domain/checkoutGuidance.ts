@@ -1,5 +1,6 @@
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from './checkoutMachine';
+import { changedBasketCopy } from './changedBasketCopy';
 
 export type CheckoutProgress = {
   uncertainTender?: 'cash' | 'qrph';
@@ -24,7 +25,7 @@ export function checkoutGuidance(input: {
   const active = machine?.attempts[machine.attempts.length - 1];
   const qr = progress.uncertainTender ? progress.uncertainTender === 'qrph' : active ? active.method === 'qr' : input.method === 'qrph';
   const make = (category: CheckoutGuidance['category'], body: string, safety: string, action: GuidanceAction, label: string): CheckoutGuidance => ({
-    category, headline: category === 'administrator' ? 'Administrator required' : category === 'changed' ? 'The cart changed' : `Payment ${category}`,
+    category, headline: category === 'administrator' ? 'Administrator required' : category === 'changed' ? changedBasketCopy.headline : `Payment ${category}`,
     body, safety, action, label, locked: true, admin: category === 'administrator',
   });
   const admin = (body: string, setup = false) => make('administrator', body,
@@ -58,6 +59,6 @@ export function checkoutGuidance(input: {
   // A basket that no longer matches the retained purchase is not payment
   // uncertainty: nothing was tendered, so the cashier is asked to recover or
   // abandon the retained basket rather than to guard against lost money.
-  if (progress.basketDiverged) return make('changed', 'The cart changed after this purchase was opened, so the earlier basket was kept. No payment was taken for this cart.', 'Recover the open purchase to ring up the earlier basket, or cancel that purchase. Cancelling also clears this cart.', 'recover', 'Recover the earlier basket');
+  if (progress.basketDiverged) return make('changed', changedBasketCopy.body, changedBasketCopy.safety, 'recover', changedBasketCopy.actionLabel);
   return undefined;
 }

@@ -11,6 +11,8 @@
  * Plan: data/porsca-mobile-feedback-plain-20261004/report.md, §6.1.
  */
 
+import { changedBasketCopy } from './changedBasketCopy';
+
 export type Failure = {
   status?: number;
   code?: string;
@@ -164,7 +166,7 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
   }
   if (failure.code === 'checkout_basket_diverged') {
-    return { title: 'The cart changed after checkout started', body: 'No payment was taken for this cart. Recover the open purchase to ring up its earlier basket, or cancel that purchase. Cancelling also clears this cart.', actionLabel: 'Recover the open purchase', action: 'retry' };
+    return { title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel, action: 'retry' };
   }
   if (failure.code === 'product_missing') {
     return { title: 'Product no longer available', body: 'A product in this cart is no longer in the catalog. Remove that item from the cart and try again. Your cart is still here.', actionLabel: 'Remove the item', action: 'fix-fields' };
