@@ -39,7 +39,6 @@ export const cancelledPurchaseCopy = {
   clear: 'Clear the cancelled purchase',
 } as const;
 
-
 export const cancellationFailedCopy = {
   headline: 'Cancellation not confirmed',
   body: 'We could not confirm that this purchase was cancelled. It may still be open.',
