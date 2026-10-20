@@ -2,14 +2,17 @@
 
 This is the exception procedure for a payment that Laravel cannot finish automatically: received money with no sale (`paid_unfulfilled`), or conflicting provider evidence (`provider_contradiction`). It covers NFR-03 and NFR-07, which sit outside the five core modules. Safe handling and an auditable server procedure are in scope; a new administrator module is not.
 
+Reconciliation closes the administrative exception; it does not return the device to service. After case review or closure the checkout remains locked, the phone keeps its recovery handle, and no further sale can be recorded on that device, even with a different basket, until a separately approved release path exists.
+
 The phone deliberately has **no** administrator reconciliation screen. Case review, closure, and reopening belong to Laravel's admin API. The mobile client keeps admin-only GET wrappers for reconciliation cases, but no screen calls them and there is no mobile case-mutation method. The phone cannot resolve a case or change a payment, sale, or stock total from this state. A mobile administrator module requires separate scope approval.
 
 ## Non-negotiable boundaries
 
-- **No unsafe override.** A locked checkout stays locked. Closing or reopening a reconciliation case never unlocks tender, creates a sale, refunds money, or marks an unresolved attempt as paid. The first verified financial outcome stands.
+- **No unsafe override.** A locked checkout stays locked permanently in this lane. Closing or reopening a reconciliation case never unlocks tender, creates a sale, refunds money, or marks an unresolved attempt as paid. The first verified financial outcome stands.
+- **No return to service.** Case review and closure resolve the administrative exception only. The checkout remains locked, the phone keeps its recovery handle, and the device cannot record another sale until a separately approved release path exists. See step 5.
 - **No silent stock adjustment.** Reconciliation is evidence handling, not inventory handling. Neither the phone nor a case `PATCH` changes inventory. Stock changes are a separate, explicit admin catalog action with its own reason and audit trail.
 - **Laravel remains the authority.** The mobile client sends no reconciliation write request and exposes no local resolution control. The Laravel admin routes require an active authenticated admin, the v3 contract header, and server-owned store scope.
-- **The purchase stays recoverable.** A locked checkout keeps its server checkout ID, attempt evidence, and the phone's recovery handle. The cashier or admin must not discard, abandon, or overwrite it to make the screen usable.
+- **The purchase stays recoverable.** A locked checkout keeps its server checkout ID, attempt evidence, and the phone's recovery handle. Recovery here means re-reading stored evidence, not restoring service. The cashier or admin must not discard, abandon, overwrite, or locally clear it to make the screen usable.
 
 ## What the cashier sees
 
@@ -22,6 +25,8 @@ In this state the app hides every payment and cancellation action, including QR 
 1. Stop the sale and keep the purchase open.
 2. Read the support code to the administrator.
 3. Wait for the administrator. Do not take cash or QR payment again, hand over goods, refund, or change stock.
+
+Case closure does not unlock the purchase. After the administrator closes or reopens the case, the checkout stays locked and the device cannot record another sale until a separately approved release path returns it to service.
 
 Administrator guidance overrides receipt refresh and any completed-looking state. It is not a request to retry payment.
 
@@ -113,7 +118,9 @@ After closure, re-read the case and the checkout:
 - a paid or contradictory checkout remains locked; closure never makes it payable or turns received money into a sale;
 - the phone still retains the recovery handle and shows the appropriate locked state.
 
-If fresh contradictory evidence arrives, the case reopens and the procedure repeats. Do not take another payment while any case is unresolved.
+Closure does not return the device to service. The checkout stays locked: the phone cannot tender, review or change the quote, abandon or retire the purchase, or record a sale with a different basket. No further sale can be recorded on that device until a separately approved release path exists. Do not clear app data, reinstall the app, or discard the handle to bypass this.
+
+If fresh contradictory evidence arrives, the case reopens and the procedure repeats. Do not take another payment while any case is unresolved, and never take another payment after closure; the checkout is not returned to service.
 
 ### 6. Record the exception
 
@@ -139,6 +146,8 @@ The mobile admin product editor reaches this explicit path through product updat
 - Marking a checkout paid, completed, or resolved from phone state.
 - Clearing a reconciliation lock because a new read, timer, navigation, or app restart looks clean.
 - Abandoning or discarding a locked checkout to make the screen usable.
+- Treating case closure as a return to service; no further sale can be recorded on the device until a separately approved release path exists.
+- Clearing app data or reinstalling the app to escape a locked checkout.
 - Treating a resolved case as proof that a sale exists, that money was refunded, or that stock changed.
 - Changing stock to match a payment or closing a case to match an inventory count.
 - Using real customer, production, or staging financial data in local development.
@@ -172,6 +181,7 @@ npm run verify
 
 - A new mobile administrator module, case list, detail screen, or resolution form.
 - A mobile reconciliation write wrapper or any local override.
+- A release, reset, or return-to-service path after reconciliation; that requires its own design and approval.
 - Automated refunds, provider outcome injection, or stock changes from reconciliation.
 - Changing staging data, promoting a branch, or starting a formal QA cycle.
 
