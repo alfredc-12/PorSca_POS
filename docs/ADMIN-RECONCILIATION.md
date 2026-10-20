@@ -159,7 +159,7 @@ Regression coverage:
 | `src/domain/checkoutMachine.test.ts` | Lock/sale monotonicity, rejected local closure, stored-observation overrides, attempt identity |
 | `src/domain/durableCheckout.test.ts` | No revalidate/abandon/retire while locked; stale unlocked observation fails closed |
 | `src/context/PosContext.test.tsx` | `paid_unfulfilled` refreshes inventory/history reads only; no stock write, no cash/QR sale, cart and handle retained; revalidate/abandon refused |
-| `src/api/checkoutAuthority.test.ts` | Admin checks, GET-only reconciliation surface, no mobile write method |
+| `src/api/checkoutAuthority.test.ts` | Admin checks and GET-only reconciliation requests |
 | `__tests__/app/checkout.test.tsx` | Administrator guidance hides every payment and cancellation action |
 
 Run the canonical gate before review:

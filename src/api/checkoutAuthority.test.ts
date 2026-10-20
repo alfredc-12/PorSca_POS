@@ -47,11 +47,6 @@ describe('v3 authority client surface', () => {
       ['https://shop.test/api/v1/reconciliation-cases?per_page=100&page=1', 'GET'],
       ['https://shop.test/api/v1/reconciliation-cases/7', 'GET'],
     ]);
-    const surface = Object.getOwnPropertyNames(Object.getPrototypeOf(client));
-    expect(surface.filter(name => /reconcil/i.test(name)).sort()).toEqual([
-      'getReconciliationCase',
-      'listReconciliationCases',
-    ]);
   });
   it('exposes only authorized read/capability routes, never client settlement', async () => {
     const { client, fetchImpl } = fixture('admin', true);

@@ -232,6 +232,11 @@ describe('checkout section 7 transition machine', () => {
     const unresolved = fixtures()['payment-unresolved'];
     rejected(unresolved, { type: 'authority-observed', checkout: { ...unresolved, attempts: [{ ...unresolved.attempts[0], amountCentavos: 200 }] } });
     rejected(unresolved, { type: 'authority-observed', checkout: { ...unresolved, attempts: [{ ...unresolved.attempts[0], method: 'cash' }] } });
+
+    const ready = fixtures()['ready-for-new-attempt'];
+    rejected(ready, { type: 'authority-observed', checkout: { ...ready, attempts: [] } });
+    const received = step(unresolved, paid);
+    rejected(received, { type: 'authority-observed', checkout: { ...received, state: 'ready-for-new-attempt', attempts: [] } });
   });
 
   it('ignores duplicate final observations without duplicating sale or effects', () => {

@@ -115,6 +115,7 @@ export function transitionCheckout(checkout: CheckoutMachine, event: CheckoutEve
         // still converging; the device tender handle keeps that replay exact.
         // A sale or reconciliation lock must never lose its payment ledger.
         if (!observedAttempt) {
+          if (previous.finalEvidence || previous.contradictions.length) return reject('A verified outcome cannot disappear from an authority observation.');
           if (checkout.reconciliationRequired || checkout.state === 'paid-but-unfulfilled' || checkout.saleId) return reject('Stored attempts cannot disappear from a locked authority observation.');
           continue;
         }
