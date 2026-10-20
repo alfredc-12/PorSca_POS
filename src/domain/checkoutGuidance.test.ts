@@ -36,7 +36,8 @@ describe('cashier guidance from trusted truth', () => {
     expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/No payment was taken/);
     expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Recover the open purchase/);
     expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/cancel/);
-    expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/could not confirm|may already be recorded|may still be charged|Do not take another payment/);
+    expect(`${guidance!.body} ${guidance!.safety}`).toMatch(/Cancelling also clears this cart/);
+    expect(`${guidance!.body} ${guidance!.safety}`).not.toMatch(/still here|ringing up this cart|could not confirm|may already be recorded|may still be charged|Do not take another payment/);
   });
   it('keeps unconfirmed money ahead of a changed basket', () => {
     expect(checkoutGuidance({ machine: pending, progress: { basketDiverged: true } })).toMatchObject({ category: 'pending', body: 'We are still waiting for the payment.', action: 'check', locked: true });

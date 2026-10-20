@@ -58,6 +58,6 @@ export function checkoutGuidance(input: {
   // A basket that no longer matches the retained purchase is not payment
   // uncertainty: nothing was tendered, so the cashier is asked to recover or
   // abandon the retained basket rather than to guard against lost money.
-  if (progress.basketDiverged) return make('changed', 'The cart changed after this purchase was opened, so the earlier basket was kept. No payment was taken for this cart.', 'Recover the open purchase to ring up the earlier basket, or cancel that purchase before ringing up this cart.', 'recover', 'Recover the earlier basket');
+  if (progress.basketDiverged) return make('changed', 'The cart changed after this purchase was opened, so the earlier basket was kept. No payment was taken for this cart.', 'Recover the open purchase to ring up the earlier basket, or cancel that purchase. Cancelling also clears this cart.', 'recover', 'Recover the earlier basket');
   return undefined;
 }

@@ -51,7 +51,8 @@ describe('describeFailure', () => {
     expect(failure.body).toMatch(/No payment was taken/);
     expect(failure.body).toMatch(/Recover the open purchase/);
     expect(failure.body).toMatch(/cancel/);
-    expect(`${failure.title} ${failure.body}`).not.toMatch(/already being saved|may already be recorded|could not confirm|Check Transactions/i);
+    expect(failure.body).toMatch(/Cancelling also clears this cart/);
+    expect(`${failure.title} ${failure.body}`).not.toMatch(/Your cart is still here|already being saved|may already be recorded|could not confirm|Check Transactions/i);
   });
 
   it('keeps a QR Ph decline and a reconciliation apart', () => {

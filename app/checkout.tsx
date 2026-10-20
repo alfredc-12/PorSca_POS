@@ -137,7 +137,7 @@ export default function CheckoutScreen() {
   const tenderLockReason = terminalLocked
     ? 'This purchase is locked. Do not take another payment.'
     : basketDiverged
-      ? 'No payment was taken for this cart. Recover the earlier basket, or cancel that purchase, before taking payment.'
+      ? 'No payment was taken for this cart. Recover the earlier basket, or cancel that purchase before taking payment. Cancelling also clears this cart.'
       : 'Do not take another payment while this payment is waiting.';
 
   const checkoutItems = authorityCheckout?.items;
@@ -432,13 +432,13 @@ export default function CheckoutScreen() {
           <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
-          {!showSaleHelp ? <Text style={styles.helper}>{basketDiverged ? 'Open help to recover the earlier basket or to cancel that purchase.' : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
+          {!showSaleHelp ? <Text style={styles.helper}>{basketDiverged ? 'Open help to recover the earlier basket or to cancel that purchase. Cancelling also clears this cart.' : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
             <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
             <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
             <Text style={styles.label}>Cancel this sale</Text>
-            <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
+            <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later. Cancelling also clears this cart.</Text>
             <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked || basketDiverged} />
             <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason))} disabled={(tenderLocked && !basketDiverged) || abandonReason.trim().length < 8} variant="secondary" />
           </> : null}

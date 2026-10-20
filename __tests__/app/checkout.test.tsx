@@ -493,8 +493,10 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const guidance = view.getByTestId('checkout-guidance');
     expect(guidance).toHaveTextContent(/The cart changed/);
     expect(guidance).toHaveTextContent(/No payment was taken for this cart/);
+    expect(guidance).toHaveTextContent(/Cancelling also clears this cart/);
     expect(guidance).not.toHaveTextContent(/could not confirm|may already be recorded/);
     expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/No payment was taken for this cart/);
+    expect(view.getByTestId('checkout-tender-lock-reason')).toHaveTextContent(/Cancelling also clears this cart/);
     expect(view.getByTestId('confirm-cash-payment')).toBeDisabled();
 
     await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Recover the earlier basket' })); });
@@ -503,6 +505,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     // "or abandon": cancellation stays usable while the basket is divergent.
     fireEvent.press(view.getByTestId('sale-help-toggle'));
+    expect(view.getByText(/Tell us briefly what happened so the shop can review it later. Cancelling also clears this cart./)).toBeTruthy();
     const reason = view.getByLabelText('What happened with this sale');
     expect(reason).toHaveProp('editable', true);
     fireEvent.changeText(reason, 'Cashier added an item');

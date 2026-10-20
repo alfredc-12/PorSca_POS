@@ -640,10 +640,12 @@ export function PosProvider({
       }
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
       await recoverCheckoutInternal(undefined, automatic);
-    } catch {
+    } catch (error) {
       setStoredCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
-      setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
+      setCheckoutRecoveryError(error instanceof ApiClientError && error.code === 'checkout_basket_diverged'
+        ? 'Automatic checkout recovery stopped so this cart is not replaced. Resume the listed sale to recover its basket, or cancel that sale before taking payment.'
+        : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
