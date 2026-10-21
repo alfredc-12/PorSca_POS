@@ -24,7 +24,7 @@
 
 ## Mobile/API handshake
 
-- The live contract name is `porsca-mobile-api-v3`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Treat that document as authoritative and reconcile any mismatch with this map before proceeding. Read the selected revision's contract header before API health or smoke checks; this map's version does not prove what is deployed on staging.
+- The live contract name is `porsca-mobile-api-v3`; verify it in [docs/API-CONTRACT.md](docs/API-CONTRACT.md). Treat that document as authoritative and reconcile any mismatch with this map before proceeding. Read the selected revision's contract header before API health or smoke checks; this map's version does not prove what is deployed on staging. Make this the first step of the check sequence, including local development probes.
 - Before formal QA, compare the exact mobile and API `staging` revisions with the human-created cycle record; repository setup does not create that record.
 - Cash checkout/history wire fields, receipt-completeness checks, QR attempt lifecycle, and authoritative Laravel routes are defined in [docs/API-CONTRACT.md](docs/API-CONTRACT.md); local API pairing uses the isolated `/tmp` procedure in [docs/SETUP.md](docs/SETUP.md).
 - Promote matching mobile and API revisions together only after human QA approval; never promote one side alone.
