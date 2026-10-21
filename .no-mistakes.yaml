@@ -2,6 +2,9 @@
 ignore_patterns:
   - "graphify-out/**"
 
+pr:
+  base_branch: development
+
 protected_paths:
   - ".no-mistakes.yaml"
   - "eas.json"

@@ -26,6 +26,16 @@ npm run verify
 
 It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. Mobile CI also runs this gate for pull requests targeting `development` and pushes to `development`; see the [workflow](../.github/workflows/mobile-ci.yml) for its triggers. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
 
+## Regenerate the local architecture graph
+
+With the Graphify CLI installed, run this from the repository root to regenerate the code-only graph without model-backed clustering:
+
+```bash
+graphify extract . --code-only --no-cluster
+```
+
+This writes `graphify-out/graph.json`. Keep generated Graphify output out of commits: `.gitignore` excludes `graphify-out/**`, and `.no-mistakes.yaml` excludes the same path from validation.
+
 ## Merging while the check runners are down (billing lock)
 
 Checks that never started are not the same as checks that failed. Code the runners actually failed must never be merged without a fix.
