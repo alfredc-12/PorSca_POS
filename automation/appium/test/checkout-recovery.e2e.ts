@@ -1,6 +1,7 @@
 import { beforeEach } from 'mocha';
 import {
   appiumTest,
+  assertEqual,
   byId,
   expect,
   finishReceipt,
@@ -10,8 +11,9 @@ import {
   searchAndSelect,
   tap,
   reveal,
+  visibleText,
 } from './support/appium';
-import { productSearch, qrExpectedStatus, qrStatusMessages } from './support/fixtures';
+import { productSearch, qrExpectedStatus } from './support/fixtures';
 
 beforeEach(prepareAppiumCase);
 
@@ -22,6 +24,14 @@ async function assertUnresolvedQrAttemptIsLocked() {
     throw new Error('An unresolved or reconciliation-locked QR attempt must not offer a new payment.');
   }
   await expect(byId('checkout-payment-cash')).toBeDisabled();
+}
+
+async function cartSnapshot() {
+  return {
+    quantity: await visibleText(byId('cart-quantity')),
+    lineTotal: await visibleText(byId('cart-line-total')),
+    total: await visibleText(byId('cart-total')),
+  };
 }
 
 describe('durable checkout recovery', () => {
@@ -38,24 +48,26 @@ describe('durable checkout recovery', () => {
       return;
     }
 
+    // The keyless local fixture can advance from pending to unknown after the
+    // automatic poll. Recovery asserts the unresolved attempt stays locked, not
+    // one exact status string.
     await (await reveal(byId('qr-payment-status'))).waitForDisplayed();
-    await expect(byId('qr-payment-status')).toHaveText(
-      qrStatusMessages[qrExpectedStatus as keyof typeof qrStatusMessages],
-    );
     await assertUnresolvedQrAttemptIsLocked();
     await tap('leave-qr-payment');
     await scrollToTop();
     await byId('pos-search-input').waitForDisplayed();
+    const checkoutBeforeRestart = await cartSnapshot();
 
     // Force-stop the process without clearing app data. Secure session and the
     // durable checkout handle must survive; leaving a QR attempt never cancels it.
     await restartAppPreservingData();
     await (await reveal(byId('cart-quantity'))).waitForDisplayed();
+    const checkoutAfterRestart = await cartSnapshot();
+    assertEqual(checkoutAfterRestart.quantity, checkoutBeforeRestart.quantity, 'Recovered checkout quantity');
+    assertEqual(checkoutAfterRestart.lineTotal, checkoutBeforeRestart.lineTotal, 'Recovered checkout line total');
+    assertEqual(checkoutAfterRestart.total, checkoutBeforeRestart.total, 'Recovered checkout total');
     await tap('proceed-to-payment');
     await (await reveal(byId('qr-payment-status'))).waitForDisplayed();
-    await expect(byId('qr-payment-status')).toHaveText(
-      qrStatusMessages[qrExpectedStatus as keyof typeof qrStatusMessages],
-    );
     await assertUnresolvedQrAttemptIsLocked();
     await tap('leave-qr-payment');
   });

@@ -13,7 +13,7 @@ Both environments run the same Appium smoke suite, fixture variables, and assert
 | App build | Development (dev-client) build | Preview build |
 | Build API URL | LAN URL of the development API | Stable staging API URL |
 | `APPIUM_LOGIN_EMAIL` / `APPIUM_LOGIN_PASSWORD` | Active development ADMIN account | Active staging admin account for the full suite; cashier is sufficient for cashier-only smoke cases |
-| `APPIUM_QR_EXPECTED_STATUS` | `pending` (local API without provider credentials) | `paid` for the approved sandbox success flow; the matching value for other approved outcomes |
+| `APPIUM_QR_EXPECTED_STATUS` | `pending` for the keyless local API; its automatic 2.5 s poll can advance the attempt to `unknown`, rendered as `Payment interrupted` | `paid` for the approved sandbox success flow; the matching value for other approved outcomes |
 | `APPIUM_DEV_SERVER_URL` | Set to Metro LAN URL (for example `http://192.168.100.84:8081`) | Unset |
 
 Everything else remains identical: Appium smoke suite, device setup, fixture variables and values, and assertions. The fixture data must be prepared on the backend under test; defaults below reflect the shared `qa-baseline-2026-10` catalog seed.
@@ -85,7 +85,7 @@ The shared setup signs in after app reset, handles the optional development-clie
 
 The smoke cases retained in `test/smoke.e2e.ts` cover search → cash checkout, the physical barcode scan → cash checkout, insufficient-stock and insufficient-cash rejection, successful cash history, and one visible history row after repeated cash confirmation. QR Ph status and restart recovery are covered by `checkout-recovery.e2e.ts`. Server-side inventory exactness across a retry/duplicate is also covered by the API `Idempotency-Key` contract and mobile provider tests.
 
-`APPIUM_QR_EXPECTED_STATUS` accepts `pending` for the stable no-credential fixture on the backend under test, or `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
+`APPIUM_QR_EXPECTED_STATUS` accepts `pending` for the stable no-credential fixture on the backend under test, or `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. The keyless Development fixture starts at `pending`, but the checkout's automatic 2500 ms poll can move that same attempt to `unknown`, which renders `Payment interrupted`; recovery accepts either unresolved state and asserts the locked tender rather than an exact status string. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
 
 Separately record native session restart/restoration, sign-out, expired/revoked-token redirect, and admin-versus-cashier inventory controls in the QA cycle. Fast Jest/RNTL tests cover these boundaries without claiming native secure-storage/device execution.
 
