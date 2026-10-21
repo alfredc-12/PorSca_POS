@@ -8,6 +8,7 @@ import {
   finishReceipt,
   prepareAppiumCase,
   readStock,
+  scrollToTop,
   searchFor,
   selectTab,
   tap,
@@ -15,7 +16,7 @@ import {
   typeCashReceived,
   visibleText,
 } from './support/appium';
-import { productSearch } from './support/fixtures';
+import { cashReceived, productSearch } from './support/fixtures';
 
 beforeEach(prepareAppiumCase);
 
@@ -25,7 +26,7 @@ describe('authoritative stock deduction', () => {
     const stockBefore = readStock(await visibleText(byId('search-product-stock')));
     await tap('search-result');
     await tap('proceed-to-payment');
-    await typeCashReceived(process.env.APPIUM_CASH_AMOUNT ?? '400');
+    await typeCashReceived(cashReceived);
 
     await tapElement(byId('confirm-cash-payment'));
     // The second tap may find the button disabled by the in-flight request; it
@@ -34,6 +35,7 @@ describe('authoritative stock deduction', () => {
     await finishReceipt('cash');
 
     await selectTab('tab-pos');
+    await scrollToTop();
     await searchFor(productSearch);
     const stockAfter = readStock(await visibleText(byId('search-product-stock')));
     assertEqual(stockAfter, stockBefore - 1, 'Stock after repeated cash confirmation');
@@ -50,6 +52,7 @@ describe('authoritative stock deduction', () => {
     await tapElement(byDescription('Go back'));
 
     await selectTab('tab-pos');
+    await scrollToTop();
     await searchFor(productSearch);
     const stockAfter = readStock(await visibleText(byId('search-product-stock')));
     assertEqual(stockAfter, stockBefore, 'Stock after insufficient cash tender');

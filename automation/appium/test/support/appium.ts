@@ -1,4 +1,4 @@
-import { $$, $, browser, expect } from '@wdio/globals';
+import { $, browser, expect } from '@wdio/globals';
 import { ensureColdStartVisible, appUnavailableMsg } from './cold-start-gate';
 import {
   appPackage,
@@ -8,7 +8,6 @@ import {
   devServerUrl,
   productSearch,
   productText,
-  qrExpectedStatus,
   qrStatusMessages,
 } from './fixtures';
 
@@ -45,10 +44,6 @@ export function byId(id: string) {
 
 export function byText(value: string) {
   return $(`android=new UiSelector().textContains(${JSON.stringify(value)})`);
-}
-
-export function byExactText(value: string) {
-  return $(`android=new UiSelector().text(${JSON.stringify(value)})`);
 }
 
 export function byDescription(value: string) {
@@ -271,4 +266,4 @@ export function assertEqual<T>(actual: T, expected: T, message: string) {
   if (actual !== expected) throw new Error(`${message}: expected ${String(expected)}, received ${String(actual)}.`);
 }
 
-export { $$, $, browser, expect, productSearch, productText, qrExpectedStatus, qrStatusMessages, appiumEnabled };
+export { expect };

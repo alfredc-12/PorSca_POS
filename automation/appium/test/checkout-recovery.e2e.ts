@@ -2,16 +2,16 @@ import { beforeEach } from 'mocha';
 import {
   appiumTest,
   byId,
-  byText,
   expect,
   finishReceipt,
   prepareAppiumCase,
   restartAppPreservingData,
+  scrollToTop,
   searchAndSelect,
   tap,
   reveal,
 } from './support/appium';
-import { productSearch, productText, qrExpectedStatus, qrStatusMessages } from './support/fixtures';
+import { productSearch, qrExpectedStatus, qrStatusMessages } from './support/fixtures';
 
 beforeEach(prepareAppiumCase);
 
@@ -44,12 +44,13 @@ describe('durable checkout recovery', () => {
     );
     await assertUnresolvedQrAttemptIsLocked();
     await tap('leave-qr-payment');
+    await scrollToTop();
     await byId('pos-search-input').waitForDisplayed();
 
     // Force-stop the process without clearing app data. Secure session and the
     // durable checkout handle must survive; leaving a QR attempt never cancels it.
     await restartAppPreservingData();
-    await byText(productText).waitForDisplayed();
+    await (await reveal(byId('cart-quantity'))).waitForDisplayed();
     await tap('proceed-to-payment');
     await (await reveal(byId('qr-payment-status'))).waitForDisplayed();
     await expect(byId('qr-payment-status')).toHaveText(
