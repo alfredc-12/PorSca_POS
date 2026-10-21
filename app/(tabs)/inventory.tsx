@@ -45,6 +45,7 @@ export default function InventoryScreen() {
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
           <TextInput
+            testID="inventory-search-input"
             accessibilityLabel="Search inventory"
             value={query}
             onChangeText={setQuery}

@@ -12,7 +12,7 @@ Both environments run the same Appium smoke suite, fixture variables, and assert
 | --- | --- | --- |
 | App build | Development (dev-client) build | Preview build |
 | Build API URL | LAN URL of the development API | Stable staging API URL |
-| `APPIUM_LOGIN_EMAIL` / `APPIUM_LOGIN_PASSWORD` | Active development ADMIN account | Active staging cashier/admin account |
+| `APPIUM_LOGIN_EMAIL` / `APPIUM_LOGIN_PASSWORD` | Active development ADMIN account | Active staging admin account for the full suite; cashier is sufficient for cashier-only smoke cases |
 | `APPIUM_QR_EXPECTED_STATUS` | `pending` (local API without provider credentials) | `paid` for the approved sandbox success flow; the matching value for other approved outcomes |
 | `APPIUM_DEV_SERVER_URL` | Set to Metro LAN URL (for example `http://192.168.100.84:8081`) | Unset |
 
@@ -70,18 +70,20 @@ npm run smoke
 
 The Development block sets `APPIUM_DEV_SERVER_URL` to the Metro LAN origin, which the staging block leaves unset for the standalone preview build. A reset launch of a dev-client build lands on the Expo development launcher, which never reopens the remembered server on its own, so after the configured wait the seam opens that server through the dev-client deep link and closes the developer-menu panel that covers the app; `APPIUM_DEV_SERVER_LAUNCH_TIMEOUT_MS` bounds that launch (default `90000`). With the variable unset, no dev server is opened; if neither the login nor the signed-in POS is visible after the first-paint wait, the seam fails fast with `Neither login nor the signed-in POS became available.` before any case body runs.
 
-For the barcode case, the test opens the native camera and waits for a human to present the physical label/fixture whose value is `APPIUM_BARCODE_FIXTURE`. The reset grants the Android camera permission itself, so the system dialog never covers the case; Appium cannot synthesize a camera image, so a human still holds the label. The test then asserts the product name, successful cash receipt, and history text through native UI only.
+The physical-label case in `test/smoke.e2e.ts` opens the native camera and waits for a human to present the printed label whose value is `APPIUM_BARCODE_FIXTURE`. The reset grants the Android camera permission itself, so the system dialog never covers the case; Appium cannot synthesize a camera image, so a human still holds the label. The test then asserts the product name, successful cash receipt, and history text through native UI only.
 
-The specs in `test/smoke.e2e.ts` cover:
+The focused specs in `test/` share session, locator, scrolling, and fixture helpers from `test/support/` and run under the same existing `APPIUM_*` environment contract:
 
-- individual account login after each app reset;
-- search → cash checkout;
-- barcode scan → cash checkout;
-- insufficient-stock rejection;
-- insufficient-cash rejection;
-- QR Ph creation and provider-verified status refresh through Laravel, including leave-payment (never a cancel) and the locked-tender reconciliation for `pending`, `unknown`, and `paid_unfulfilled`, which never offers a new payment;
-- history showing a successful sale; and
-- exactly one history row for a repeated cash confirmation (server-side inventory exactness across a retry/duplicate is covered by the API `Idempotency-Key` contract and the mobile provider test).
+- `cart-totals.e2e.ts` checks line totals, subtotal, and total after quantity increment/decrement;
+- `inventory-admin.e2e.ts` checks admin product controls and changes/restores the selected fixture's stock;
+- `stock-deduction.e2e.ts` checks exactly one unit is deducted after repeated cash confirmation and no deduction after insufficient cash;
+- `checkout-recovery.e2e.ts` restarts the Android process without clearing app data and checks the retained QR attempt is recovered without an unsafe new tender. A provider-confirmed `paid` outcome is terminal and ends at its receipt instead;
+- `history-filters.e2e.ts` filters a newly recorded cash receipt by tender and searches for its receipt ID; and
+- `barcode-fixture.e2e.ts` types `APPIUM_BARCODE_FIXTURE` into POS search to exercise deterministic exact-barcode lookup without camera input. It does not claim native camera/decoder coverage; the human-held physical-label case remains in `smoke.e2e.ts`.
+
+The shared setup signs in after app reset, handles the optional development-client launcher, and grants camera access. `APPIUM_RESET_APP` clears the app between cases but does not reset the backend. Cash-sale cases and the recovery case create backend records; prepare the approved API fixture before a run and use the recorded QA procedure to reconcile/reset data between runs. Leaving a pending/unknown QR attempt does not cancel or resolve it, and it must not be replaced by another payment until Laravel confirms a terminal non-payable outcome. WDIO runs `checkout-recovery.e2e.ts` last because a pending attempt is intentionally retained rather than unsafely cancelled.
+
+The smoke cases retained in `test/smoke.e2e.ts` cover search → cash checkout, the physical barcode scan → cash checkout, insufficient-stock and insufficient-cash rejection, successful cash history, and one visible history row after repeated cash confirmation. QR Ph status and restart recovery are covered by `checkout-recovery.e2e.ts`. Server-side inventory exactness across a retry/duplicate is also covered by the API `Idempotency-Key` contract and mobile provider tests.
 
 `APPIUM_QR_EXPECTED_STATUS` accepts `pending` for the stable no-credential fixture on the backend under test, or `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
 
