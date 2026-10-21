@@ -24,3 +24,6 @@ expo-env.d.ts
 .akidev/tmp/
 .akidev/conflicts/
 # <<< AkiDev project-local runtime <<<
+
+# Generated architecture graph output
+graphify-out/**
