@@ -39,8 +39,10 @@ src/
   data/               # seeded local demonstration data and barcode fixtures
   domain/             # behavior rules: cart, barcode, revalidation, checkout and money
   hooks/              # scan session, debounce, responsive metrics
+  observability/      # on-device failure records behind the admin support codes
   theme/
   types/
+  utils/              # stock classification fallback for local/demo rows
 ```
 
 Runtime checkout is coordinated by `DurableCheckout` in
