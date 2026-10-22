@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
@@ -414,8 +414,7 @@ export default function CheckoutScreen() {
   const qrHasPayment = Boolean(qrPayment);
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
+    <Screen title="Checkout" subtitle="Record payment before handing over the goods." back>
         {guidance ? <View testID="checkout-guidance" style={styles.paymentCard} accessibilityLiveRegion="polite">
           <View style={styles.headingRow}><Ionicons name={guidance.admin ? 'warning-outline' : guidance.category === 'interrupted' ? 'alert-circle-outline' : guidance.category === 'changed' ? purchaseCancelled ? 'close-circle-outline' : 'cart-outline' : 'time-outline'} size={24} color={guidance.admin ? colors.danger : colors.warning} /><Text style={styles.sectionTitle}>{guidance.headline}</Text></View>
           <Text>{guidance.body}</Text>
@@ -565,8 +564,7 @@ export default function CheckoutScreen() {
             <Text style={styles.secureText}>Stock and history change only after the sale is recorded.</Text>
           </View>
         </View>
-      </Screen>
-    </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
@@ -637,7 +635,6 @@ function alertBody(failure: DescribedFailure): string {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   dueCard: { backgroundColor: colors.primaryWash, borderRadius: radius.lg, borderWidth: 1, borderColor: '#D9EADB', padding: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   dueLabel: { color: colors.textMuted, fontSize: typography.label, fontWeight: '700' },
   dueTotal: { color: colors.primary, fontSize: 38, fontWeight: '900', letterSpacing: -1.2, marginTop: 2 },
