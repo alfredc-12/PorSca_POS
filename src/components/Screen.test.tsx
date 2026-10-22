@@ -65,9 +65,9 @@ describe('Screen keyboard avoidance', () => {
 
   it('renders exactly one keyboard-avoiding wrapper and one scroll surface', () => {
     setPlatform('ios');
-    const { getAllByTestId } = render(<Screen><View /></Screen>);
+    const { getAllByTestId, UNSAFE_getAllByType } = render(<Screen><View /></Screen>);
 
-    expect(getAllByTestId('screen-keyboard-avoiding')).toHaveLength(1);
+    expect(UNSAFE_getAllByType(KeyboardAvoidingView)).toHaveLength(1);
     expect(getAllByTestId('screen-scroll')).toHaveLength(1);
   });
 });

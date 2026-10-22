@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import { KeyboardAvoidingView } from 'react-native';
 import CheckoutScreen from '@/app/checkout';
 import { useCheckout } from '@/src/context/PosContext';
 
@@ -38,10 +39,10 @@ beforeEach(() => {
 
 describe('Checkout keyboard shell', () => {
   it('renders through exactly one shared keyboard-avoiding screen wrapper', () => {
-    const { getAllByTestId, getByText } = render(<CheckoutScreen />);
+    const { getAllByTestId, getByText, UNSAFE_getAllByType } = render(<CheckoutScreen />);
 
     expect(getByText('The cart is empty')).toBeTruthy();
-    expect(getAllByTestId('screen-keyboard-avoiding')).toHaveLength(1);
+    expect(UNSAFE_getAllByType(KeyboardAvoidingView)).toHaveLength(1);
     expect(getAllByTestId('screen-scroll')).toHaveLength(1);
   });
 });

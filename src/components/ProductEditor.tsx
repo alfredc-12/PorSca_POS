@@ -125,7 +125,6 @@ export const ProductEditor = forwardRef<ProductEditorHandle, Props>(function Pro
       <ScrollView
         ref={scrollView}
         keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         contentContainerStyle={styles.body}
       >

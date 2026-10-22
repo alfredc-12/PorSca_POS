@@ -1,5 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
+import { KeyboardAvoidingView } from 'react-native';
 import ProductFormScreen from '@/app/product-form';
 
 jest.mock('expo-router', () => ({
@@ -16,9 +17,9 @@ jest.mock('@/src/components/ProductEditor', () => {
 
 describe('Product form keyboard shell', () => {
   it('uses one shared keyboard-avoiding wrapper around the product editor', () => {
-    const { getAllByTestId, getByTestId, queryByTestId } = render(<ProductFormScreen />);
+    const { getByTestId, queryByTestId, UNSAFE_getAllByType } = render(<ProductFormScreen />);
 
-    expect(getAllByTestId('screen-keyboard-avoiding')).toHaveLength(1);
+    expect(UNSAFE_getAllByType(KeyboardAvoidingView)).toHaveLength(1);
     expect(getByTestId('product-editor')).toBeTruthy();
     expect(queryByTestId('screen-scroll')).toBeNull();
   });
