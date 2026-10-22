@@ -437,7 +437,7 @@ export class ApiClient {
   }
 
   checkoutSession() { return this.request<CheckoutSession>(this.versionedPath('/checkout-session')); }
-  listCheckouts(page = 1) { return this.request<AuthorityPage<AuthorityCheckout>>(this.versionedPath(`/checkouts?per_page=100&page=${page}`)); }
+  listCheckouts(page = 1) { return this.listAuthorityPage<AuthorityCheckout>(`/checkouts?per_page=100&page=${page}`, page); }
   createCheckout(items: { productId: number; quantity: number }[], key: string) {
     return this.request<AuthorityCheckout>(this.versionedPath('/checkouts'), { method: 'POST', headers: { 'Idempotency-Key': key }, body: { items } });
   }
@@ -462,7 +462,7 @@ export class ApiClient {
   }
   async listReconciliationCases(page = 1) {
     await this.requireCheckoutAdmin();
-    return this.request<AuthorityPage<ReconciliationCase>>(this.versionedPath(`/reconciliation-cases?per_page=100&page=${page}`));
+    return this.listAuthorityPage<ReconciliationCase>(`/reconciliation-cases?per_page=100&page=${page}`, page);
   }
   async getReconciliationCase(id: number) {
     await this.requireCheckoutAdmin();
@@ -472,6 +472,17 @@ export class ApiClient {
     if ((await this.checkoutSession()).user.role !== 'admin') throw new ApiClientError('Administrator access required.', 403);
   }
   private checkoutPath(id: string, suffix = '') { return this.versionedPath(`/checkouts/${encodeURIComponent(id)}${suffix}`); }
+
+  private async listAuthorityPage<T>(path: string, page: number): Promise<AuthorityPage<T>> {
+    const payload = await this.request<AuthorityPage<T>>(this.versionedPath(path));
+    const pagination = payload?.pagination;
+    if (!Array.isArray(payload?.items) || !pagination
+      || !Number.isInteger(pagination.current_page) || !Number.isInteger(pagination.last_page)
+      || pagination.current_page !== page || pagination.last_page < page) {
+      throw new ApiClientError('Invalid checkout pagination received from the shop server.');
+    }
+    return payload;
+  }
 
   private versionedPath(path: string) {
     const baseUrl = this.baseUrl ?? '';
