@@ -51,6 +51,7 @@ Core values:
 - Cashier avatar/status marker.
 - Warm botanical background texture.
 - Consistent page spacing and safe-area behavior.
+- One keyboard-avoiding wrapper for every screen, so content stays visible while the software keyboard is open. The keyboard is dismissed only by dragging it away; there is no Done accessory above it.
 
 Tab navigation lives in `app/(tabs)/_layout.tsx` and must remain visually consistent with the approved mockups.
 

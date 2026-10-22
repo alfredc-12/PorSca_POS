@@ -49,6 +49,7 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <DecorativeBackground />
+      {/* iOS scrollable screens lift content with native scroll insets; everywhere else the avoiding view does it. */}
       <KeyboardAvoidingView
         testID="screen-keyboard-avoiding"
         style={styles.keyboardAvoiding}

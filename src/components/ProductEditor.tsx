@@ -122,6 +122,7 @@ export const ProductEditor = forwardRef<ProductEditorHandle, Props>(function Pro
           <Ionicons name="close" size={24} color={colors.text} />
         </Pressable>
       </View>
+      {/* The keyboard-avoiding view around this editor only resizes its container, so the scroll view keeps its own iOS insets to scroll the focused field back into view. */}
       <ScrollView
         ref={scrollView}
         keyboardShouldPersistTaps="handled"
