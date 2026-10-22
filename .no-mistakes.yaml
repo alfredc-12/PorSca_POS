@@ -3,7 +3,7 @@ ignore_patterns:
   - "graphify-out/**"
 
 pr:
-  base_branch: development
+  base_branch: staging
 
 protected_paths:
   - ".no-mistakes.yaml"
