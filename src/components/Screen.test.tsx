@@ -29,7 +29,6 @@ describe('Screen keyboard avoidance', () => {
     expect(scroll.automaticallyAdjustKeyboardInsets).toBe(true);
     expect(scroll.keyboardDismissMode).toBe('interactive');
     expect(scroll.keyboardShouldPersistTaps).toBe('handled');
-    expect(scroll.scrollEventThrottle).toBe(16);
   });
 
   it('uses Android keyboard avoidance and drag dismissal', () => {
@@ -43,7 +42,6 @@ describe('Screen keyboard avoidance', () => {
     expect(scroll.automaticallyAdjustKeyboardInsets).toBe(false);
     expect(scroll.keyboardDismissMode).toBe('on-drag');
     expect(scroll.keyboardShouldPersistTaps).toBe('handled');
-    expect(scroll.scrollEventThrottle).toBe(16);
   });
 
   it('keeps the keyboard-avoiding shell but omits the scroll surface when scrolling is disabled', () => {
@@ -51,6 +49,16 @@ describe('Screen keyboard avoidance', () => {
     const { queryByTestId, getByText, UNSAFE_getByType } = render(<Screen scroll={false}><Text>Fixed content</Text></Screen>);
 
     expect(UNSAFE_getByType(KeyboardAvoidingView).props.enabled).toBe(true);
+    expect(queryByTestId('screen-scroll')).toBeNull();
+    expect(getByText('Fixed content')).toBeTruthy();
+  });
+
+  it('enables the avoiding view for scroll-disabled screens on iOS where scroll insets are unavailable', () => {
+    setPlatform('ios');
+    const { queryByTestId, getByText, UNSAFE_getByType } = render(<Screen scroll={false}><Text>Fixed content</Text></Screen>);
+
+    expect(UNSAFE_getByType(KeyboardAvoidingView).props.enabled).toBe(true);
+    expect(UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe('padding');
     expect(queryByTestId('screen-scroll')).toBeNull();
     expect(getByText('Fixed content')).toBeTruthy();
   });

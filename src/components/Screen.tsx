@@ -52,7 +52,7 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
       <KeyboardAvoidingView
         testID="screen-keyboard-avoiding"
         style={styles.keyboardAvoiding}
-        enabled={Platform.OS === 'android'}
+        enabled={Platform.OS === 'android' || !scroll}
         behavior="padding"
       >
         {scroll ? (
@@ -62,7 +62,6 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            scrollEventThrottle={16}
             showsVerticalScrollIndicator={false}
           >
             {body}
