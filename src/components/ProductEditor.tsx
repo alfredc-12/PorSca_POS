@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/src/context/AuthContext';
 import { usePos } from '@/src/context/PosContext';
@@ -122,7 +122,13 @@ export const ProductEditor = forwardRef<ProductEditorHandle, Props>(function Pro
           <Ionicons name="close" size={24} color={colors.text} />
         </Pressable>
       </View>
-      <ScrollView ref={scrollView} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.body}>
+      <ScrollView
+        ref={scrollView}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        contentContainerStyle={styles.body}
+      >
         {confirmDiscard ? <View accessibilityRole="alert" testID="discard-confirmation" style={styles.error}>
           <Text style={styles.errorTitle}>Discard unsaved changes?</Text>
           <Text style={styles.errorText}>Your edits have not been saved. Discarding will lose them.</Text>

@@ -6,7 +6,7 @@ import { ProductEditor, ProductEditorHandle } from './ProductEditor';
 export function ProductEditorModal({ product, scannedBarcode, onClose }: { product?: Product; scannedBarcode?: string; onClose: () => void }) {
   const editor = useRef<ProductEditorHandle>(null);
   return <Modal visible transparent animationType="fade" onShow={() => editor.current?.focus()} onRequestClose={() => editor.current?.requestClose()}>
-    <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={styles.backdrop} enabled={Platform.OS === 'android'} behavior="padding">
       <View style={styles.dialog} accessibilityViewIsModal>
         <ProductEditor ref={editor} product={product} scannedBarcode={scannedBarcode} onClose={onClose} />
       </View>

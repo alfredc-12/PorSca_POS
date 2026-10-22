@@ -1,5 +1,5 @@
-import React from 'react';
-import { Alert, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Alert, Keyboard, KeyboardAvoidingView, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, TextInput, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -19,6 +19,32 @@ type Props = {
 
 export function Screen({ title, subtitle, children, scroll = true, back = false, backConfirm, contentStyle }: Props) {
   const responsive = useResponsive();
+  const scrollView = useRef<ScrollView>(null);
+  const scrollOffset = useRef(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !scroll) return;
+
+    const subscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      const focusedInput = TextInput.State.currentlyFocusedInput();
+      const currentScrollView = scrollView.current;
+      const nativeScrollView = currentScrollView?.getNativeScrollRef();
+      if (!focusedInput || !currentScrollView || !nativeScrollView) return;
+
+      focusedInput.measureInWindow((_x, inputY, _width, inputHeight) => {
+        nativeScrollView.measureInWindow((_scrollX, scrollY, _scrollWidth, scrollHeight) => {
+          const keyboardTop = event.endCoordinates.screenY;
+          const visibleBottom = Math.min(keyboardTop, scrollY + scrollHeight);
+          const overlap = inputY + inputHeight - visibleBottom;
+          if (overlap <= 0) return;
+
+          currentScrollView.scrollTo({ y: scrollOffset.current + overlap + 16, animated: true });
+        });
+      });
+    });
+
+    return () => subscription.remove();
+  }, [scroll]);
 
   const body = (
     <View
@@ -49,15 +75,30 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <DecorativeBackground />
-      {scroll ? (
-        <ScrollView
-          contentContainerStyle={[styles.scroll, { paddingBottom: responsive.short ? spacing.xl : spacing.xxl }]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {body}
-        </ScrollView>
-      ) : body}
+      <KeyboardAvoidingView
+        testID="screen-keyboard-avoiding"
+        style={styles.keyboardAvoiding}
+        enabled={Platform.OS === 'android'}
+        behavior="padding"
+      >
+        {scroll ? (
+          <ScrollView
+            ref={scrollView}
+            testID="screen-scroll"
+            contentContainerStyle={[styles.scroll, { paddingBottom: responsive.short ? spacing.xl : spacing.xxl }]}
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            scrollEventThrottle={16}
+            onScroll={(event: NativeSyntheticEvent<NativeScrollEvent>) => {
+              scrollOffset.current = event.nativeEvent.contentOffset.y;
+            }}
+            showsVerticalScrollIndicator={false}
+          >
+            {body}
+          </ScrollView>
+        ) : body}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -130,6 +171,7 @@ function DecorativeBackground() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
+  keyboardAvoiding: { flex: 1 },
   scroll: { flexGrow: 1 },
   content: { flex: 1, width: '100%', alignSelf: 'center' },
   brandRow: { flexDirection: 'row', alignItems: 'center' },
