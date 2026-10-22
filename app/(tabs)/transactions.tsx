@@ -38,6 +38,7 @@ export default function TransactionsScreen() {
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
           <TextInput
+            testID="transaction-search-input"
             value={query}
             onChangeText={setQuery}
             placeholder="Search receipt, product, or amount..."

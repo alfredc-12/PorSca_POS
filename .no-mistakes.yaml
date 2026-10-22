@@ -2,6 +2,9 @@
 ignore_patterns:
   - "graphify-out/**"
 
+pr:
+  base_branch: development
+
 protected_paths:
   - ".no-mistakes.yaml"
   - "eas.json"
@@ -49,8 +52,27 @@ review:
 
 test:
   instructions: |
-    Run the relevant automated tests using
-    the project's existing verification commands.
+    Route validation by change tier (T0-T3). Run only the tier
+    matching the change scope; each higher tier subsumes the lower ones.
+
+    T0 - docs/markdown only, no product code:
+    No automated doc-check command exists in this repo, so validation
+    is review-only: check consistency with the authoritative owners
+    listed under `document:` above. Do not invent markdown lint tooling.
+
+    T1 - small scoped code change (single target):
+    npm run lint, plus typecheck (npm run typecheck), plus the
+    targeted fast suite: npm run test:fast -- <target>.
+
+    T2 - default feature change:
+    npm run verify (lint + typecheck + fast Jest/RNTL suite;
+    the Mobile CI gate command).
+
+    T3 - checkout/payment, stock/transaction, or API-contract change:
+    npm run verify, plus the src/domain and src/api suites:
+    npm run test:fast -- src/domain src/api.
+
+    Tier command mapping lives in PROJECT_CHECKS.md.
 
     Use only Expo Web through chrome-devtools-axi
     for browser-compatible live verification.

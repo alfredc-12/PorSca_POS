@@ -178,9 +178,9 @@ these defects. Each is fixed on this branch with the tests listed.
 - Signing and read-back of `EAN13_IN_STOCK` etc. use synthetic GTINs; the values
   are now mod-10 valid so they can be printed and scanned, but they are not real
   products and are not in any production catalog.
-- The Appium smoke seam's `APPIUM_BARCODE_FIXTURE` default is an external
-  staging-seed value supplied by the device lab, not one of this repo's
-  fixtures; it is left to the captain-owned device run.
+- The Appium seam's barcode fixtures and supported `APPIUM_*` variables are
+  owned by [automation/appium/README.md](../automation/appium/README.md); the
+  printed-card device run remains deferred.
 - Resolving an uncertain cash attempt reads `GET /sales?per_page=100` and
   matches the echoed idempotency key. A found receipt blocks another charge.
   Absence is conclusive only when pagination identifies a complete first page

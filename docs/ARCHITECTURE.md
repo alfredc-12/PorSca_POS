@@ -8,7 +8,7 @@ The mobile bundle never contains PayMongo secrets. QR creation, payment status c
 
 ## Documentation traceability
 
-The approved deployment is Laravel on AWS Lightsail, with EAS distributing the phone app. PayMongo is integrated in Laravel, not a separate PorSca payment repository. Tailscale Funnel is a break-glass fallback only. See [DEPLOYMENT.md](DEPLOYMENT.md) for the reconciliation of report sections **6.2**, **7**, and **Test Plan 2.1**, deployment ownership, and required evidence. The configured staging origin is not deployment evidence by itself; the recorded health fields are. [Documentation gap issue](https://github.com/alfredc-12/PorSca_POS/issues/62) tracks teammate reconciliation of the external report and test plan.
+The approved deployment is Laravel on AWS Lightsail, with EAS distributing the phone app. PayMongo is integrated in Laravel, not a separate PorSca payment repository. Tailscale Funnel is a break-glass fallback only. See [DEPLOYMENT.md](DEPLOYMENT.md) for the reconciliation of report sections **6.2**, **7**, and **Test Plan 2.1**, deployment ownership, and required evidence. The configured staging hostname is not deployment evidence by itself; pair it with the external health evidence below. [Documentation gap issue](https://github.com/alfredc-12/PorSca_POS/issues/62) tracks teammate reconciliation of the external report and test plan.
 
 ## Mobile app
 
@@ -94,7 +94,7 @@ Saved SecureStore token -> /auth/me restore -> signed-in route guard
   -> transaction history
 ```
 
-Unpaid, failed, cancelled, expired, or pending payments do not create a sale or change stock. A `paid_unfulfilled` payment took money without recording a sale: inventory and history are refreshed but the cart is kept and no new payment is offered until the operator reconciles. Repeating a paid request with the same idempotency key returns the original result and does not deduct inventory again.
+Unpaid, failed, cancelled, expired, or pending payments do not create a sale or change stock. A `paid_unfulfilled` payment took money without recording a sale: inventory and history are refreshed, the cart and recovery handle are kept, and no new payment is offered. The operator then reconciles through the Laravel admin exception procedure in [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md), but that lock is one-way: case closure does not return the checkout or device to service, so no further sale can be recorded on it until a separately approved release path exists. Repeating a paid request with the same idempotency key returns the original result and does not deduct inventory again.
 
 ## API resources
 

@@ -26,6 +26,16 @@ npm run verify
 
 It runs, in order, Expo lint, TypeScript typechecking, and the fast Jest/RNTL suite. A PR is not ready when any part is red. Mobile CI also runs this gate for pull requests targeting `development` and pushes to `development`; see the [workflow](../.github/workflows/mobile-ci.yml) for its triggers. The API track owns its own API CI gate; the cycle record must include both exact commit SHAs and both CI links.
 
+## Regenerate the local architecture graph
+
+With the Graphify CLI installed, run this from the repository root to regenerate the code-only graph without model-backed clustering:
+
+```bash
+graphify extract . --code-only --no-cluster
+```
+
+This writes `graphify-out/graph.json`. Keep generated Graphify output out of commits: `.gitignore` excludes `graphify-out/**`, and `.no-mistakes.yaml` excludes the same path from validation.
+
 ## Merging while the check runners are down (billing lock)
 
 Checks that never started are not the same as checks that failed. Code the runners actually failed must never be merged without a fix.
@@ -52,7 +62,7 @@ The linked EAS project uses the matching `porsca-app` slug configured in [`app.j
 
 ## Staging deployment handoff
 
-Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The configured origin is not live evidence by itself; the recorded health fields are. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
+Laravel deploys to AWS Lightsail through the API repository's manual staging workflow; EAS builds distribute only the mobile app. See [DEPLOYMENT.md](DEPLOYMENT.md#staging-and-deployment-section-7) for the owning runbook and report section 7 reconciliation. No push automatically deploys or creates a preview build. Record the deployed API full SHA and external HTTPS health fields, not just a configured hostname. The configured hostname is not live evidence by itself; the recorded health fields are. Deployments migrate but do not reset/seed the QA database; only the human release owner authorizes the cycle baseline reset.
 
 ## Preview/staging build gate
 
@@ -81,7 +91,7 @@ The following do not block a connectivity preview build, but must be complete be
 - API-track backend automation checks (Postman/Newman) are green.
 - The cycle owner records the gate decision, candidate SHAs, environment URLs (without secrets), seed/data version, and sandbox context in the formal QA cycle record (see below).
 
-The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows with the Android/Appium suite against the staging build: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment, history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
+The mobile smoke suite stays post-build as today: after the preview build, run the required smoke flows with the Android/Appium suite against the staging build: login, restored session, logout/expired-token redirect, cashier read-only inventory, admin product writes, search→cash checkout, barcode scan→cash checkout, insufficient-stock rejection, insufficient-cash rejection, QR Ph sandbox success, QR Ph failure/leave with no sale, paid_unfulfilled reconciliation without a new payment (server-side exception procedure: [ADMIN-RECONCILIATION.md](ADMIN-RECONCILIATION.md)), history shows success, and exactly-once inventory deduction across retry/duplicate conditions.
 
 ## Formal QA cycle record
 

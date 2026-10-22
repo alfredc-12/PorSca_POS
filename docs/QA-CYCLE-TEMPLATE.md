@@ -13,7 +13,7 @@ See [WORKFLOW.md](WORKFLOW.md) for the standing collaboration and release rules 
 - **QA owner:** `<designated human tester>`
 - **Release owner:** `<human release owner>`
 - **Environment:** `staging`
-- **Staging API address:** `<the Lightsail HTTPS origin ending in /api/v1 configured in the preview build>`
+- **Staging API address:** `<configured Lightsail HTTPS origin ending in /api/v1; not the literal <domain> placeholder>`
 - **API deployment evidence:** `<manual workflow URL, dispatched full SHA, timestamped external health result with matching commit and staging/database/sandbox/status fields>`
 - **Mobile artifact:** `<EAS build ID/link, bundled API origin, native runtime/build, applied OTA update ID or none>`
 - **Documentation traceability:** `section 6.2; section 7; Test Plan 2.1` — see [DEPLOYMENT.md](DEPLOYMENT.md)

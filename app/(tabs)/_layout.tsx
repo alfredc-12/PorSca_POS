@@ -53,6 +53,7 @@ export default function TabsLayout() {
         name="pos"
         options={{
           title: 'POS',
+          tabBarButtonTestID: 'tab-pos',
           tabBarIcon: ({ color }) => <Ionicons name="cart-outline" color={color} size={iconSize} />,
         }}
       />
@@ -60,6 +61,7 @@ export default function TabsLayout() {
         name="inventory"
         options={{
           title: 'Inventory',
+          tabBarButtonTestID: 'tab-inventory',
           tabBarIcon: ({ color }) => <Ionicons name="cube-outline" color={color} size={iconSize} />,
         }}
       />
@@ -67,6 +69,7 @@ export default function TabsLayout() {
         name="transactions"
         options={{
           title: 'Transactions',
+          tabBarButtonTestID: 'tab-transactions',
           tabBarIcon: ({ color }) => <Ionicons name="receipt-outline" color={color} size={iconSize} />,
         }}
       />

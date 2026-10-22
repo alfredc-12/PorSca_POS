@@ -1,5 +1,6 @@
 /**
- * The one module that owns user-facing failure copy.
+ * The module that assembles user-facing failure copy. Changed-basket
+ * sentences come from `checkoutDivergenceCopy.ts` so every surface stays in step.
  *
  * A cashier never sees a database exception, a JavaScript error, or a payment
  * provider's decline code; support still gets a short code that maps back to
@@ -10,6 +11,8 @@
  *
  * Plan: data/porsca-mobile-feedback-plain-20261004/report.md, §6.1.
  */
+
+import { cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
 
 export type Failure = {
   status?: number;
@@ -157,11 +160,17 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
   if (failure.code === 'insufficient_cash') {
     return { title: 'Not enough cash', body: 'The amount received is less than the total. Enter the full amount and confirm again. Your cart is still here.', actionLabel: 'Confirm again', action: 'retry' };
   }
+  if (failure.code === 'checkout_purchase_cancelled') {
+    return { title: cancelledPurchaseCopy.headline, body: `${cancelledPurchaseCopy.body} ${cancelledPurchaseCopy.safety}`, actionLabel: cancelledPurchaseCopy.clear, action: 'retry' };
+  }
   if (failure.code === 'qr_payment_unresolved') {
     return { title: 'Check the QR Ph payment first', body: 'A QR Ph payment for this cart is still unresolved. Check its status before recording cash. Your cart is still here.', actionLabel: 'Check the QR Ph status', action: 'check-payment' };
   }
   if (failure.code === 'cash_attempt_unresolved' || failure.code === 'cash_attempt_already_recorded') {
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
+  }
+  if (failure.code === 'checkout_basket_diverged') {
+    return { title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel, action: 'retry' };
   }
   if (failure.code === 'product_missing') {
     return { title: 'Product no longer available', body: 'A product in this cart is no longer in the catalog. Remove that item from the cart and try again. Your cart is still here.', actionLabel: 'Remove the item', action: 'fix-fields' };

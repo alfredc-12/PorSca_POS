@@ -246,7 +246,7 @@ export default function PosScreen() {
                 <ProductThumbnail product={product} size={responsive.s(responsive.narrow ? 40 : 44)} />
                 <View style={styles.resultCopy}>
                   <Text style={[styles.productName, { fontSize: responsive.font(responsive.narrow ? 13.5 : 15.5) }]}>{product.name}</Text>
-                  <Text style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>{stockLabel} ({product.stock}) • ₱{product.price.toFixed(2)}</Text>
+                  <Text testID="search-product-stock" style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>{stockLabel} ({product.stock}) • ₱{product.price.toFixed(2)}</Text>
                 </View>
                 <View style={[styles.addCircle, outOfStock && styles.addCircleDisabled, { width: responsive.s(34), height: responsive.s(34) }]}>
                   <Ionicons name="add" size={responsive.s(20)} color={outOfStock ? colors.textMuted : colors.white} />
@@ -339,13 +339,13 @@ export default function PosScreen() {
             <ProductThumbnail product={line.product} size={productThumbSize} />
             <View style={styles.lineCopy}>
               <Text numberOfLines={2} style={[styles.productName, { fontSize: responsive.font(responsive.narrow ? 13.5 : 15.5) }]}>{line.product.name}</Text>
-              <Text style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>₱{line.product.price.toFixed(2)}</Text>
+              <Text testID="cart-unit-price" style={[styles.meta, { fontSize: responsive.font(typography.caption) }]}>₱{line.product.price.toFixed(2)}</Text>
               <View style={styles.stockLine}><View style={styles.greenDotSmall} /><Text style={[styles.stockText, { fontSize: responsive.font(responsive.narrow ? 11 : 12.5) }]}>In stock ({line.product.stock})</Text></View>
             </View>
             <View style={[styles.lineRight, { minWidth: responsive.narrow ? 94 : 108, gap: responsive.short ? 7 : 10 }]}>
               <View style={[styles.qtyControl, { minHeight: responsive.s(38) }]}>
                 <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${line.product.name}`} style={[styles.qtyButton, { width: responsive.s(responsive.narrow ? 32 : 36), height: responsive.s(48) }]} onPress={() => decrementProduct(line.product.id)}><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>−</Text></Pressable>
-                <Text style={[styles.qtyNumber, { width: responsive.s(responsive.narrow ? 30 : 35), fontSize: responsive.font(16) }]}>{line.quantity}</Text>
+                <Text testID="cart-quantity" style={[styles.qtyNumber, { width: responsive.s(responsive.narrow ? 30 : 35), fontSize: responsive.font(16) }]}>{line.quantity}</Text>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Increase ${line.product.name}`}
@@ -353,15 +353,15 @@ export default function PosScreen() {
                   onPress={() => addToCart(line.product.id)}
                 ><Text style={[styles.qtyText, { fontSize: responsive.font(20) }]}>+</Text></Pressable>
               </View>
-              <Text style={[styles.amount, { fontSize: responsive.font(responsive.narrow ? 16 : 18) }]}>₱{(line.product.price * line.quantity).toFixed(2)}</Text>
+              <Text testID="cart-line-total" style={[styles.amount, { fontSize: responsive.font(responsive.narrow ? 16 : 18) }]}>₱{(line.product.price * line.quantity).toFixed(2)}</Text>
             </View>
           </View>
         ))}
 
         <View style={[styles.summaryCard, { padding: responsive.narrow ? 10 : spacing.md, gap: responsive.short ? 8 : 11 }]}>
-          <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="calculator-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Subtotal ({totalItems} items)</Text></View><Text style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱{total.toFixed(2)}</Text></View>
+          <View style={styles.summaryRow}><View style={styles.summaryLabelRow}><Ionicons name="calculator-outline" size={responsive.s(19)} color={colors.primary} /><Text style={[styles.summaryLabel, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>Subtotal ({totalItems} items)</Text></View><Text testID="cart-subtotal" style={[styles.summaryValue, { fontSize: responsive.font(responsive.narrow ? 13 : 14.5) }]}>₱{total.toFixed(2)}</Text></View>
           <View style={styles.divider} />
-          <View style={styles.totalRow}><Text style={[styles.totalLabel, { fontSize: responsive.font(responsive.narrow ? 21 : 23) }]}>Total</Text><Text style={[styles.totalValue, { fontSize: responsive.font(responsive.narrow ? 27 : 30) }]}>₱{total.toFixed(2)}</Text></View>
+          <View style={styles.totalRow}><Text style={[styles.totalLabel, { fontSize: responsive.font(responsive.narrow ? 21 : 23) }]}>Total</Text><Text testID="cart-total" style={[styles.totalValue, { fontSize: responsive.font(responsive.narrow ? 27 : 30) }]}>₱{total.toFixed(2)}</Text></View>
         </View>
       </View>
 
