@@ -1,6 +1,17 @@
 export const config = {
   runner: 'local',
-  specs: ['./test/**/*.e2e.ts'],
+  // Recovery may intentionally leave a provider-pending QR attempt unresolved.
+  // Keep it last so no later case can mistake the retained backend checkout
+  // for a fresh fixture or start another tender against it.
+  specs: [
+    './test/barcode-fixture.e2e.ts',
+    './test/cart-totals.e2e.ts',
+    './test/history-filters.e2e.ts',
+    './test/inventory-admin.e2e.ts',
+    './test/stock-deduction.e2e.ts',
+    './test/smoke.e2e.ts',
+    './test/checkout-recovery.e2e.ts',
+  ],
   maxInstances: 1,
   // Login credentials are supplied through element commands; do not log their payloads.
   logLevel: 'warn',

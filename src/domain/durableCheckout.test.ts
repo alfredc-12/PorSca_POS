@@ -7,6 +7,7 @@ const lines = [{ product: { id: '1', name: 'Coffee', barcode: '12345678', price:
 const open: AuthorityCheckout = { id: 'server-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 1010, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 1010 }], attempts: [], sale: null, exceptions: [], history: [] };
 const pending: AuthorityCheckout = { ...open, state: 'payment_unresolved', attempts: [{ id: 7, method: 'qrph', status: 'pending', financialStatus: 'pending', amountCentavos: 1010, currency: 'PHP', firstVerifiedOutcome: null, qrPayload: 'QR', qrExpiresAt: null, reservation: { state: 'held', expiresAt: null, durationSeconds: 1800 } }] };
 const readyQr: AuthorityCheckout = { ...pending, state: 'ready_for_attempt', attempts: [{ ...pending.attempts[0], status: 'non_payable', financialStatus: 'expired', firstVerifiedOutcome: 'non_payable' }] };
+const paidUnfulfilled: AuthorityCheckout = { ...pending, state: 'paid_unfulfilled', attempts: [{ ...pending.attempts[0], status: 'paid', financialStatus: 'paid_unfulfilled', firstVerifiedOutcome: 'paid' }] };
 const cashAfterQr: AuthorityCheckout = { ...readyQr, state: 'completed', attempts: [...readyQr.attempts, { ...pending.attempts[0], id: 8, method: 'cash', status: 'paid', financialStatus: 'paid', firstVerifiedOutcome: 'paid', qrPayload: null, reservation: null }], sale: { id: 9, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } };
 const terminalQrStates: Record<string, AuthorityCheckout> = {
   pending,
@@ -393,6 +394,45 @@ describe('durable authority workflow and machine integration', () => {
     expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
   });
+  it('refuses a basket changed after checkout opened with its own code instead of payment uncertainty', async () => {
+    const { authority, client } = fixture();
+    await authority.prepare(lines);
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    // The cashier edits the cart after the durable checkout was opened, before
+    // any tender exists. The refusal must not read as "money may be recorded".
+    await expect(authority.exclusive(() => authority.tender([{ ...lines[0], quantity: 2 }], 'cash', '100.00')))
+      .rejects.toMatchObject({ status: 409, code: 'checkout_basket_diverged' });
+    expect(authority.basketDivergedFrom([{ ...lines[0], quantity: 2 }])).toBe(true);
+    expect(authority.basketDivergedFrom(lines)).toBe(false);
+    expect(authority.progress.recoveryFailure).toBeUndefined();
+    expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+    // The retained basket is still the one the purchase was opened for, and it
+    // stays recoverable: going back to the original basket clears the refusal.
+    await authority.prepare(lines);
+    expect(authority.basketDivergedFrom(lines)).toBe(false);
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+  });
+  it('reports a changed basket for a live cart that cannot be validated', async () => {
+    const { authority } = fixture();
+    await authority.prepare(lines);
+    const malformed = [{ ...lines[0], product: { ...lines[0].product, id: 'prd-001' } }];
+    expect(authority.basketDivergedFrom(malformed)).toBe(true);
+  });
+  it.each(['cash', 'qrph'] as const)('refuses %s on a server-cancelled purchase without reporting payment uncertainty', async method => {
+    const { authority, client } = fixture();
+    await authority.prepare(lines);
+    client.getCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+    await expect(authority.exclusive(() => authority.tender(lines, method, method === 'cash' ? '20.00' : undefined)))
+      .rejects.toMatchObject({ status: 409, code: 'checkout_purchase_cancelled' });
+    expect(authority.machine?.state).toBe('abandoned');
+    expect(authority.progress.recoveryFailure).toBeUndefined();
+    expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(authority.progress.basketDiverged).toBeFalsy();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+  });
   it('does not clear a QR key when a verification result is abandoned', async () => {
     const { authority, client, saved } = fixture();
     await authority.tender(lines, 'qrph');
@@ -437,6 +477,35 @@ describe('durable authority workflow and machine integration', () => {
     expect(authority.machine?.attempts[0].contradictions).toHaveLength(1);
     expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
     expect(checkoutPayment(authority.current!).status).toBe('unknown');
+  });
+  it('refuses quote review, abandonment, and identity retirement while reconciliation is locked', async () => {
+    const { authority, client, saved } = fixture();
+    await authority.tender(lines, 'qrph');
+    client.recoverCheckout.mockResolvedValue(paidUnfulfilled);
+    client.refreshCheckoutAttempt.mockResolvedValue(paidUnfulfilled);
+    await authority.refresh('7');
+    expect(authority.machine?.state).toBe('paid-but-unfulfilled');
+    expect(authority.machine?.reconciliationRequired).toBe(true);
+
+    await expect(authority.revalidate()).rejects.toThrow(/administrator reconciliation/);
+    expect(client.revalidateCheckout).not.toHaveBeenCalled();
+    await expect(authority.abandon('administrator reviewed externally')).rejects.toThrow(/administrator reconciliation/);
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+    await expect(authority.retire()).rejects.toThrow(/administrator reconciliation/);
+    expect(saved()).not.toBeNull();
+  });
+  it('fails closed instead of accepting a stale observation that clears reconciliation', async () => {
+    const { authority, client } = fixture();
+    await authority.tender(lines, 'qrph');
+    client.recoverCheckout.mockResolvedValue(paidUnfulfilled);
+    client.refreshCheckoutAttempt.mockResolvedValue(paidUnfulfilled);
+    await authority.refresh('7');
+
+    client.recoverCheckout.mockResolvedValue(pending);
+    await expect(authority.recover()).rejects.toThrow(/reconciliation lock/);
+    expect(authority.machine?.reconciliationRequired).toBe(true);
+    expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
+    expect(authority.progress.recoveryFailure).toBe('inconsistent');
   });
   it('permits a new tender only after verified non-payability', async () => {
     const { authority, client } = fixture();

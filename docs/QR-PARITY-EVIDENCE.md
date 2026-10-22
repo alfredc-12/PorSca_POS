@@ -28,7 +28,7 @@ A repeated QR creation request with the same `Idempotency-Key` returned the same
 
 The QR suites cover Laravel creation, returned QR payload rendering, pending, paid, failed, cancelled, expired, recoverable verification, concurrent starts, and same-key transport retries. QR success calls the Laravel-backed inventory/history refresh only after a `paid` response; no mobile QR fallback creates a sale.
 
-The Appium seam in [`automation/appium/test/smoke.e2e.ts`](../automation/appium/test/smoke.e2e.ts) starts QR through the Laravel API and asserts a configurable provider result; [`automation/appium/README.md`](../automation/appium/README.md) owns the supported `APPIUM_QR_EXPECTED_STATUS` values. `npm run typecheck --prefix automation/appium` passed. Device/provider execution remains part of the staging QA gate.
+The Appium seam in [`automation/appium/test/checkout-recovery.e2e.ts`](../automation/appium/test/checkout-recovery.e2e.ts) starts QR through the Laravel API: a configured `paid` fixture ends at its receipt, while unresolved fixtures assert the retained attempt stays locked instead of an exact status string; [`automation/appium/README.md`](../automation/appium/README.md) owns the supported `APPIUM_QR_EXPECTED_STATUS` values. `npm run typecheck --prefix automation/appium` passed. Device/provider execution remains part of the staging QA gate.
 
 ## Secret audit
 

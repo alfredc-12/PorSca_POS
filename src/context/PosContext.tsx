@@ -4,6 +4,7 @@ import { BarcodeLookupResult, barcodeCandidates } from '@/src/domain/barcode';
 import { isDemoCatalogEnabled, OFFLINE_COPY } from '@/src/config/offline';
 import { cartReducer, CartAction, CartReduction, emptyCartState, reduceCart } from '@/src/domain/cart';
 import { CartRevalidation, cartSignature, reconcileCart } from '@/src/domain/revalidation';
+import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { calculateCartTotal, CartChange, isBarcodeQuery, searchProducts as searchLocalProducts } from '@/src/domain/pos';
 import { seedProducts } from '@/src/data/mockProducts';
 import { CheckoutStorage, DurableCheckout, checkoutSale } from '@/src/domain/durableCheckout';
@@ -142,7 +143,7 @@ export function PosProvider({
   const readCatalog = useCallback((generation: number) => reads.run('catalog', generation, () => client.listProducts()), [reads, client]);
   const consumeSalesHandoff = useCallback(() => reads.consumeHistoryHandoff(), [reads]);
   const [authorityCheckout, setAuthorityCheckout] = useState<AuthorityCheckout>();
-  const [checkoutProgress, setCheckoutProgress] = useState<CheckoutProgress>({});
+  const [storedCheckoutProgress, setStoredCheckoutProgress] = useState<CheckoutProgress>({});
   const [checkoutCompletion, setCheckoutCompletion] = useState<PosContextValue['checkoutCompletion']>();
   const acknowledgeCheckout = useCallback(() => setCheckoutCompletion(undefined), []);
   const completionAlerts = useRef(new Set<string>());
@@ -157,7 +158,7 @@ export function PosProvider({
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
     try { return await authority.exclusive(action); }
-    finally { setAuthorityCheckout(authority.current); setCheckoutProgress(authority.progress); }
+    finally { setAuthorityCheckout(authority.current); setStoredCheckoutProgress(authority.progress); }
   }, [authority]);
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
   const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
@@ -565,26 +566,28 @@ export function PosProvider({
       product: { ...await client.getProduct(String(item.productId)).catch(() => ({ id: String(item.productId), name: item.name, barcode: '', price: item.unitPriceCentavos / 100, stock: 0 })), name: item.name, price: item.unitPriceCentavos / 100 },
       quantity: item.quantity,
     })));
-    if (canReplace && !canReplace()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    if (canReplace && !canReplace()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     commitCart({ type: 'replace-lines', lines });
     setAuthorityCheckout(checkout);
   }, [client, commitCart]);
 
   const recoverCheckoutInternal = useCallback(async (id?: string, automatic?: { revision: number; signature: string }) => exclusive(async () => {
     const cartUnchanged = () => automatic !== undefined && cartRevision.current === automatic.revision && cartSignature(cartRef.current.lines) === automatic.signature;
-    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     const checkout = await authority.recover(id);
     if (!checkout) return;
     if (checkout.sale) reads.observeSale(String(checkout.sale.id));
-    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
-    await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
+    if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     if (checkout.state === 'abandoned') {
-      const restoredRevision = cartRevision.current;
+      // A cancelled purchase is terminal and its basket can never be paid. Do
+      // not copy that dead basket over the cart the cashier is editing, and do
+      // not clear it either: retire the useless device identity and keep the
+      // cart exactly as the cashier left it. An empty cart stays empty.
       await authority.retire();
       setAuthorityCheckout(undefined);
-      if (!automatic || cartRevision.current === restoredRevision) commitCart({ type: 'reset' });
       return;
     }
+    await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     // A lost cash response may already have committed a receipt. Resolve that
     // identity instead of stranding the device on a completed, untenderable cart.
     if (checkout.state === 'completed' && checkout.sale?.method === 'cash' && !authority.machine?.reconciliationRequired) {
@@ -638,12 +641,14 @@ export function PosProvider({
         authority.confirmEmptyRecoveryDiscovery();
         setCanDiscardCorruptCheckout(corruptLocalStorage);
       }
-      if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover the listed checkout explicitly.', 409, 'checkout_recovery_required');
+      if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
       await recoverCheckoutInternal(undefined, automatic);
-    } catch {
-      setCheckoutProgress(authority.progress);
+    } catch (error) {
+      setStoredCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
-      setCheckoutRecoveryError('Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
+      setCheckoutRecoveryError(error instanceof ApiClientError && error.code === 'checkout_basket_diverged'
+        ? changedBasketCopy.autoRecoveryNotice(!emptyDiscovery)
+        : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
@@ -663,11 +668,21 @@ export function PosProvider({
     await applyCheckout(await authority.revalidate());
   }), [exclusive, authority, applyCheckout]);
 
-  const abandonCheckout = useCallback(async (reason: string) => exclusive(async () => {
-    await authority.abandon(reason);
-    setAuthorityCheckout(undefined);
-    commitCart({ type: 'reset' });
-  }), [exclusive, authority, commitCart]);
+  const abandonCheckout = useCallback(async (reason: string) => {
+    try {
+      await exclusive(async () => {
+        // Cancelling ends the retained purchase, not the cashier's basket. Retire
+        // the device handle and drop the retained display state, but leave the
+        // draft cart (and any Clear All undo) untouched so it can be rung up as a
+        // new sale. Only a completed sale clears the cart.
+        await authority.abandon(reason);
+        setAuthorityCheckout(undefined);
+      });
+    } catch (error) {
+      setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
+      throw error;
+    }
+  }, [exclusive, authority]);
 
   const completeCashSale = useCallback(async (cashReceived: number | string) => exclusive(async () => {
     commitCart({ type: 'discard-undo' });
@@ -796,6 +811,11 @@ export function PosProvider({
   ), [client, saveRemoteProduct]);
 
   const checkoutMachine = authority.machine;
+  const checkoutProgress = useMemo<CheckoutProgress>(() => (
+    authority.basketDivergedFrom(cart)
+      ? { ...storedCheckoutProgress, basketDiverged: true }
+      : storedCheckoutProgress
+  ), [authority, cart, storedCheckoutProgress]);
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
     total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
   }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);

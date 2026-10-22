@@ -79,6 +79,18 @@ export class DurableCheckout {
   private assertActive() {
     if (!this.active) throw new CheckoutIdentityError('This checkout session is no longer active.', 409, 'checkout_recovery_required');
   }
+  /**
+   * Reconciliation is an administrator procedure outside this app, and its
+   * lock is one-way: case review or closure does not restore service. Once
+   * reconciliation is required, no local caller may review the quote, abandon,
+   * or retire the purchase; only stored reads and provider verification remain
+   * available. Laravel still enforces the same boundary.
+   */
+  private assertReconciliationUnlocked(action: string) {
+    if (this.machine?.reconciliationRequired || this.machine?.state === 'paid-but-unfulfilled') {
+      throw new ApiClientError(`This purchase requires administrator reconciliation; ${action} is locked.`, 409, 'checkout_reconciliation_required');
+    }
+  }
 
   private submittedQrAttempt() {
     return this.current?.attempts.find(attempt => attempt.method === 'qrph' && attempt.id === this.handle?.tender?.attemptId);
@@ -112,7 +124,7 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
       }
       throw error;
     } finally { this.busy = false; }
@@ -146,6 +158,14 @@ export class DurableCheckout {
     }
   }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
+  basketDivergedFrom(lines: CartLine[]) {
+    if (!this.handle) return false;
+    try {
+      return this.handle.signature !== signatureForItems(checkoutItems(lines));
+    } catch {
+      return true;
+    }
+  }
   confirmEmptyRecoveryDiscovery() { if (this.corruptStorage) this.corruptWithoutChoice = true; }
   private async discoverCheckouts() {
     const checkouts: AuthorityCheckout[] = [];
@@ -216,7 +236,9 @@ export class DurableCheckout {
     const sig = signatureForItems(items);
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The stored checkout identity is unreadable. Discover and explicitly recover a server checkout before starting another purchase.', 409, 'checkout_recovery_required');
-    if (this.handle && this.handle.signature !== sig) throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_recovery_required');
+    if (this.handle && this.handle.signature !== sig) {
+      throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged');
+    }
     if (!this.handle) {
       this.handle = { key: key(), signature: sig };
       await this.persist(); // save before I/O, including a lost creation response
@@ -243,6 +265,10 @@ export class DurableCheckout {
     const replaying = uncertainTender === method;
     if (!canAcceptCheckoutTender(this.machine) && (!replaying || this.machine?.reconciliationRequired || this.machine?.state === 'abandoned')) {
       if (method === 'qrph' && this.retainedPayment()) return checkout;
+      if (this.machine?.state === 'abandoned' && !this.progress.uncertainTender
+        && !this.machine.attempts.some(attempt => attempt.payment === 'pending' || attempt.payment === 'unknown')) {
+        throw new ApiClientError('This purchase was cancelled. Clear it before recording another payment.', 409, 'checkout_purchase_cancelled');
+      }
       throw new ApiClientError('QR Ph payment is unresolved or checkout is locked. Recover it before recording cash.', 409, 'qr_payment_unresolved');
     }
     const localAmount = lines.reduce((sum, l) => sum + Math.round(l.product.price * 100) * l.quantity, 0);
@@ -303,6 +329,7 @@ export class DurableCheckout {
   }
   async revalidate() {
     await this.recover();
+    this.assertReconciliationUnlocked('quote review');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before reviewing the quote.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to revalidate.');
     this.current = await this.client.revalidateCheckout(this.current.id);
@@ -311,6 +338,7 @@ export class DurableCheckout {
   }
   async abandon(reason: string) {
     await this.recover();
+    this.assertReconciliationUnlocked('abandonment');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before abandoning the purchase.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to abandon.');
     this.current = await this.client.abandonCheckout(this.current.id, reason);
@@ -320,6 +348,7 @@ export class DurableCheckout {
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The unreadable checkout identity must be resolved through server recovery before it can be cleared.', 409, 'checkout_recovery_required');
     this.assertActive();
+    this.assertReconciliationUnlocked('device identity retirement');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the submitted payment before retiring this purchase.', 409, 'checkout_recovery_required');
     if (!this.handle) return;
     await this.storage.save(null, this.handle.key);

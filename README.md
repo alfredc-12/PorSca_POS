@@ -310,6 +310,6 @@ Search for a product, add it to the cart, and proceed to checkout. For Cash, ent
 - [Architecture](docs/ARCHITECTURE.md)
 - [Mobile/API contract](docs/API-CONTRACT.md)
 - [Development and QA workflow](docs/WORKFLOW.md)
-- [Android/Appium smoke scaffold](automation/appium/README.md)
+- [Android/Appium smoke seam](automation/appium/README.md)
 - [Approved design](DESIGN.md)
 - [Cashier product flow](PRODUCT.md)

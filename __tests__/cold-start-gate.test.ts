@@ -1,6 +1,6 @@
 /*
  * Regression test for the staging-path setup-hook cold-start gate
- * (`automation/appium/test/cold-start-gate.ts`, used by `smoke.e2e.ts`).
+ * (`automation/appium/test/support/cold-start-gate.ts`, used by Appium specs).
  *
  * End-user-aligned reproduction: a slow staging startup with no visible
  * login or POS screen. Before the fix the hook swallowed that timeout on the
@@ -13,7 +13,7 @@ import {
   appUnavailableMsg,
   ensureColdStartVisible,
   type ColdStartGate,
-} from '../automation/appium/test/cold-start-gate';
+} from '../automation/appium/test/support/cold-start-gate';
 
 function stagingGate(overrides: Partial<ColdStartGate> = {}): ColdStartGate & {
   reopen: jest.Mock;

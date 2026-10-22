@@ -1,6 +1,7 @@
 /**
  * Checkout failure classification and cashier-facing copy. The words live in
- * `src/domain/userFacingError.ts`; this module only classifies the failure
+ * `src/domain/userFacingError.ts`, with changed-basket sentences shared from
+ * `src/domain/checkoutDivergenceCopy.ts`; this module only classifies the failure
  * (deleted product, stock conflict, cash-conflict, idempotency replay,
  * definitive QR refusal), hands it to the shared describer, and records the
  * raw payload on the device — it never prints the API's message or details.
