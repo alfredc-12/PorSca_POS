@@ -15,6 +15,7 @@ import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
 import { CheckoutReads } from '@/src/domain/checkoutReads';
 import { CartLine, Product, Sale } from '@/src/types';
 import { localFailure } from '@/src/domain/userFacingError';import { describeAndRecordFailure } from '@/src/observability/diagnostics';
+import { isOpenCheckout } from '@/src/domain/salesHolds';
 
 export type { BarcodeLookupResult };
 
@@ -78,12 +79,22 @@ type PosContextValue = {
   acknowledgeCheckout: () => void;
   claimCheckoutCompletionAlert: (saleId: string) => boolean;
   recoverableCheckouts: AuthorityCheckout[];
+  checkoutListState: ReadState;
+  checkoutListError?: string;
   checkoutRecoveryError?: string;
+  hasUnreadableCheckoutIdentity: boolean;
   canDiscardCorruptCheckout: boolean;
+  activeCheckoutCount: number;
+  retainedCheckoutId?: string;
+  parkedCheckoutId?: string;
   openPosCheckouts: () => Promise<void>;
+  refreshCheckouts: () => Promise<boolean>;
+  checkCheckoutStatus: (id: string) => Promise<void>;
+  parkSale: () => Promise<AuthorityCheckout>;
+  cancelDiscoveredCheckout: (id: string, reason: string) => Promise<void>;
+  clearCancelledCheckout: (id: string) => Promise<AuthorityCheckout>;
   discardCorruptCheckout: (reason: string) => Promise<string>;
   recoverCheckout: (id?: string) => Promise<void>;
-  discoverCheckouts: () => Promise<AuthorityCheckout[]>;
   revalidateCheckout: () => Promise<void>;
   /** Returns the authoritative result; only `abandoned` means the purchase is terminal. */
   abandonCheckout: (reason: string) => Promise<AuthorityCheckout>;
@@ -164,10 +175,16 @@ export function PosProvider({
   useEffect(() => () => reads.dispose(), [reads]);
   const exclusive = useCallback(async <T,>(action: () => Promise<T>, options?: { financial?: boolean }): Promise<T> => {
     try { return await authority.exclusive(action, options); }
-    finally { setAuthorityCheckout(authority.current); setStoredCheckoutProgress(authority.progress); }
+    finally {
+      setAuthorityCheckout(authority.current);
+      setStoredCheckoutProgress(authority.progress);
+    }
   }, [authority]);
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
+  const [checkoutListState, setCheckoutListState] = useState<ReadState>('idle');
+  const [checkoutListError, setCheckoutListError] = useState<string>();
   const [checkoutRecoveryError, setCheckoutRecoveryError] = useState<string>();
+  const [hasUnreadableCheckoutIdentity, setHasUnreadableCheckoutIdentity] = useState(false);
   const [canDiscardCorruptCheckout, setCanDiscardCorruptCheckout] = useState(false);
   const productsRef = useRef(products);
   /**
@@ -582,6 +599,7 @@ export function PosProvider({
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     const checkout = await authority.recover(id);
     if (!checkout) return;
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     if (checkout.sale) reads.observeSale(String(checkout.sale.id));
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     if (checkout.state === 'abandoned') {
@@ -614,60 +632,189 @@ export function PosProvider({
   }), [reads, exclusive, authority, applyCheckout, refreshInventory, refreshSales, commitCart]);
   const recoverCheckout = useCallback(async (id?: string) => {
     await recoverCheckoutInternal(id);
+    setHasUnreadableCheckoutIdentity(false);
     setCanDiscardCorruptCheckout(false);
     setCheckoutRecoveryError(undefined);
   }, [recoverCheckoutInternal]);
 
-  const discoverCheckouts = useCallback(async () => {
-    const items: AuthorityCheckout[] = [];
+  const discoverLiveCheckouts = useCallback(async () => {
+    const discovered: AuthorityCheckout[] = [];
     for (let page = 1; ; page++) {
       const result = await client.listCheckouts(page);
-      items.push(...result.items);
-      if (page >= result.pagination.last_page) return items;
+      discovered.push(...result.items);
+      if (page >= result.pagination.last_page) break;
     }
-  }, [client]);
+    const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
+    const parked = await authority.hasParkedCheckout();
+    const retainedId = authority.retainedCheckoutId;
+    if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
+      const retained = await client.getCheckout(retainedId).catch(() => undefined);
+      if (retained) live.push(retained);
+    }
+    return { live, parked };
+  }, [authority, client]);
+
+  const refreshCheckouts = useCallback(async () => {
+    try { setHasUnreadableCheckoutIdentity(await authority.hasCorruptStorage()); }
+    catch { setHasUnreadableCheckoutIdentity(false); }
+    if (!client.isConfigured) {
+      setCheckoutListState('unavailable');
+      setCheckoutListError('Connect to the shop server to discover saved purchases.');
+      return false;
+    }
+    setCheckoutListState('loading');
+    setCheckoutListError(undefined);
+    try {
+      const { live } = await discoverLiveCheckouts();
+      setStoredCheckoutProgress(authority.progress);
+      setRecoverableCheckouts(live);
+      setCheckoutListState('ready');
+      setCheckoutRecoveryError(undefined);
+      return true;
+    } catch {
+      setCheckoutListState('unavailable');
+      setCheckoutListError('Saved purchases could not be refreshed from the shop server. Retry when the connection is available.');
+      return false;
+    }
+  }, [client, discoverLiveCheckouts, authority]);
 
   const openPosCheckouts = useCallback(async () => {
-    if (!client.isConfigured) return;
+    let corruptLocalStorage = false;
+    try {
+      corruptLocalStorage = await authority.hasCorruptStorage();
+      setHasUnreadableCheckoutIdentity(corruptLocalStorage);
+    } catch { setHasUnreadableCheckoutIdentity(false); }
+    if (!client.isConfigured) {
+      setCheckoutListState('unavailable');
+      setCheckoutListError('Connect to the shop server to discover saved purchases.');
+      return;
+    }
     setCheckoutRecoveryError(undefined);
+    setCheckoutListError(undefined);
+    setCheckoutListState('loading');
     setCanDiscardCorruptCheckout(false);
     let emptyDiscovery = false;
-    let corruptLocalStorage = false;
+    let discoveryCompleted = false;
     const initialCart = cartSignature(cartRef.current.lines);
     const initialRevision = cartRevision.current;
     const automatic = { revision: initialRevision, signature: initialCart };
     const cartUnchanged = () => cartRevision.current === initialRevision && cartSignature(cartRef.current.lines) === initialCart;
     try {
-      const discovered = await discoverCheckouts();
-      const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
-      emptyDiscovery = live.length === 0;
+      const { live, parked } = await discoverLiveCheckouts();
+      discoveryCompleted = true;
       setRecoverableCheckouts(live);
+      setCheckoutListState('ready');
+      const openCheckouts = live.filter(isOpenCheckout);
+      emptyDiscovery = openCheckouts.length === 0;
       if (emptyDiscovery) {
-        corruptLocalStorage = await authority.hasCorruptStorage();
         authority.confirmEmptyRecoveryDiscovery();
         setCanDiscardCorruptCheckout(corruptLocalStorage);
       }
+      setStoredCheckoutProgress(authority.progress);
+      if (parked && !(await authority.hasActiveCheckoutIdentity())) return;
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
       await recoverCheckoutInternal(undefined, automatic);
     } catch (error) {
+      if (!discoveryCompleted) {
+        setCheckoutListState('unavailable');
+        setCheckoutListError('Saved purchases could not be discovered from the shop server. Retry when the connection is available.');
+      }
       setStoredCheckoutProgress(authority.progress);
       setCanDiscardCorruptCheckout(emptyDiscovery && corruptLocalStorage);
       setCheckoutRecoveryError(error instanceof ApiClientError && error.code === 'checkout_basket_diverged'
         ? changedBasketCopy.autoRecoveryNotice(!emptyDiscovery)
         : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
-  }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
+  }, [authority, client, discoverLiveCheckouts, recoverCheckoutInternal]);
+
+  const parkSale = useCallback(async () => {
+    const outcome = await exclusive(async () => {
+      if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
+      const lines = cartRef.current.lines;
+      if (!lines.length) throw new ApiClientError('Add products to the cart before parking this sale.');
+      const revision = cartRevision.current;
+      const signature = cartSignature(lines);
+      const created = await authority.prepare(lines);
+      if (cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature) {
+        throw new ApiClientError('The POS cart changed while this sale was being saved. Review both baskets before continuing.', 409, 'checkout_basket_diverged');
+      }
+      await authority.park();
+      const diverged = cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature;
+      if (!diverged) commitCart({ type: 'reset' });
+      return { checkout: authority.current ?? created, diverged };
+    }, { financial: false });
+    setRecoverableCheckouts(current => mergeCheckouts(current, [outcome.checkout]));
+    setCheckoutListState('ready');
+    setCheckoutListError(undefined);
+    setCheckoutRecoveryError(undefined);
+    if (outcome.diverged) throw new ApiClientError('The sale was parked but the POS cart changed while it was being saved. The edited cart was kept.', 409, 'checkout_parked_basket_diverged');
+    return outcome.checkout;
+  }, [exclusive, client, authority, commitCart]);
+
+  const checkCheckoutStatus = useCallback(async (id: string) => {
+    try {
+      const checkout = await exclusive(async () => {
+        const retained = await authority.isRetainedCheckout(id);
+        let current = retained ? await authority.recover(id) : await client.getCheckout(id);
+        if (!current) throw new ApiClientError('The shop server did not return this saved purchase. Retry discovery.');
+        const latestAttempt = current.attempts[current.attempts.length - 1];
+        if (current.state === 'payment_unresolved' && latestAttempt && (latestAttempt.status === 'pending' || latestAttempt.status === 'unknown')) {
+          current = retained
+            ? await authority.refresh(String(latestAttempt.id))
+            : await client.refreshCheckoutAttempt(id, latestAttempt.id);
+        }
+        return current;
+      }, { financial: false });
+      if (!checkout) throw new ApiClientError('The shop server did not return this saved purchase. Retry discovery.');
+      setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
+      setCheckoutListState('ready');
+      setCheckoutListError(undefined);
+      setCheckoutRecoveryError(undefined);
+    } catch (error) {
+      setCheckoutListError('The shop server could not confirm this purchase status. Retry the status check.');
+      throw error;
+    }
+  }, [exclusive, authority, client]);
+
+  const cancelDiscoveredCheckout = useCallback(async (id: string, reason: string) => {
+    try {
+      const checkout = await exclusive(() => authority.abandonDiscovered(id, reason), { financial: false });
+      if (!checkout || checkout.state !== 'abandoned') throw new ApiClientError('The shop server did not confirm cancellation. Check the purchase status before continuing.');
+      setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
+      setCheckoutListState('ready');
+      setCheckoutListError(undefined);
+      setCheckoutRecoveryError(undefined);
+    } catch (error) {
+      if (authority.retainedCheckoutId === id || authority.current?.id === id) {
+        setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
+      }
+      const observed = authority.current;
+      const cancelled = authority.cancelledCheckout ?? (observed?.state === 'abandoned' && observed.id === id ? observed : undefined);
+      if (cancelled) setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
+      throw error;
+    }
+  }, [exclusive, authority]);
+
+  const clearCancelledCheckout = useCallback(async (id: string) => {
+    const checkout = await exclusive(() => authority.clearCancelledCheckout(id), { financial: false });
+    setRecoverableCheckouts(current => current.filter(item => item.id !== id));
+    setCheckoutListState('ready');
+    setCheckoutListError(undefined);
+    setCheckoutRecoveryError(undefined);
+    return checkout;
+  }, [exclusive, authority]);
 
   const discardCorruptCheckout = useCallback(async (reason: string) => {
     if (!canDiscardCorruptCheckout) throw new ApiClientError('Complete empty server discovery before discarding the unreadable checkout identity.', 409, 'checkout_recovery_required');
     return exclusive(async () => {
       const attributedReason = await authority.discardCorruptIdentity(reason);
       setAuthorityCheckout(undefined);
-      setRecoverableCheckouts([]);
+      setHasUnreadableCheckoutIdentity(false);
+      setStoredCheckoutProgress({});
       setCheckoutRecoveryError(undefined);
       setCanDiscardCorruptCheckout(false);
       return attributedReason;
-    });
+    }, { financial: false });
   }, [exclusive, authority, canDiscardCorruptCheckout]);
 
   const prepareCheckout = useCallback(async () => exclusive(async () => {
@@ -686,12 +833,18 @@ export function PosProvider({
         // Cancelling ends the retained purchase, not the cashier's basket. Retire
         // the device handle and drop the retained display state, but leave the
         // draft cart (and any Clear All undo) untouched so it can be rung up as a
-        // new sale. Only a completed sale clears the cart.
+        // new sale. A completed sale, a successful park, or Clear All is what
+        // clears the cart, never cancellation.
         const result = await authority.abandon(reason);
-        if (result.state === 'abandoned') setAuthorityCheckout(undefined);
+        if (result.state === 'abandoned') {
+          setAuthorityCheckout(undefined);
+          setRecoverableCheckouts(current => mergeCheckouts(current, [result]));
+        }
         return result;
       });
     } catch (error) {
+      const cancelled = authority.current;
+      if (cancelled?.state === 'abandoned') setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
       setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
       throw error;
     }
@@ -710,6 +863,7 @@ export function PosProvider({
     reads.observeSale(sale.id);
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setSales(current => mergeSales(current, [sale]));
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     let retired = false;
     try {
       await authority.retire();
@@ -769,6 +923,7 @@ export function PosProvider({
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
     const sale = checkoutSale(checkout);
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     await authority.retire();
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
@@ -825,10 +980,15 @@ export function PosProvider({
 
   const checkoutMachine = authority.machine;
   const checkoutProgress = useMemo<CheckoutProgress>(() => (
-    authority.basketDivergedFrom(cart)
+    cart.length > 0 && authority.basketDivergedFrom(cart)
       ? { ...storedCheckoutProgress, basketDiverged: true }
       : storedCheckoutProgress
   ), [authority, cart, storedCheckoutProgress]);
+  const activeCheckoutCount = useMemo(() => {
+    const ids = new Set(recoverableCheckouts.filter(isOpenCheckout).map(checkout => checkout.id));
+    if (authorityCheckout && isOpenCheckout(authorityCheckout)) ids.add(authorityCheckout.id);
+    return ids.size;
+  }, [recoverableCheckouts, authorityCheckout]);
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
     total, cart, apiConfigured: client.isConfigured, prepareCancellation: prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
   }), [total, cart, prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
@@ -875,12 +1035,22 @@ export function PosProvider({
         acknowledgeCheckout,
         claimCheckoutCompletionAlert,
         recoverableCheckouts,
+        checkoutListState,
+        checkoutListError,
         checkoutRecoveryError,
+        hasUnreadableCheckoutIdentity,
         canDiscardCorruptCheckout,
+        activeCheckoutCount,
+        retainedCheckoutId: authority.retainedCheckoutId,
+        parkedCheckoutId: authority.parkedCheckoutId,
         openPosCheckouts,
+        refreshCheckouts,
+        checkCheckoutStatus,
+        parkSale,
+        cancelDiscoveredCheckout,
+        clearCancelledCheckout,
         discardCorruptCheckout,
         recoverCheckout,
-        discoverCheckouts,
         revalidateCheckout,
         abandonCheckout,
         apiConfigured: client.isConfigured,
@@ -961,6 +1131,16 @@ function mergeSales(current: Sale[], incoming: Sale[]) {
   const merged = new Map(current.map((sale) => [sale.id, sale]));
   incoming.forEach((sale) => merged.set(sale.id, { ...merged.get(sale.id), ...sale }));
   return [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function mergeCheckouts(current: AuthorityCheckout[], incoming: AuthorityCheckout[]) {
+  const merged = new Map(current.map(checkout => [checkout.id, checkout]));
+  incoming.forEach(checkout => merged.set(checkout.id, checkout));
+  return [...merged.values()];
+}
+
+export function useOptionalPos() {
+  return useContext(PosContext);
 }
 
 export function usePos() {

@@ -53,6 +53,18 @@ describe.each(['ios', 'web'])('checkout identity storage on %s', os => {
     await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
   });
 
+  it('persists a parked marker beside a retained checkout identity', async () => {
+    const handle = { ...first, parkedId: 'parked-checkout' };
+    await checkoutStorage(url).save(handle);
+    await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
+  });
+
+  it('loads a parked marker that no longer carries an active device identity', async () => {
+    const handle = { parkedId: 'parked-checkout' };
+    await checkoutStorage(url).save(handle);
+    await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
+  });
+
   it.each([
     { previousAttemptIds: null }, { previousAttemptIds: [-1] }, { previousAttemptIds: [7, 7] },
     { attemptId: 0 }, { attemptId: '8' }, { previousAttemptIds: [7], attemptId: 7 },

@@ -8,8 +8,13 @@ import { CheckoutProgress } from './checkoutGuidance';
 
 export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
+export class CancellationMarkerUnclearedError extends ApiClientError {
+  constructor() {
+    super('Cancellation was accepted by the shop server, but this device could not clear its local marker.', 409, 'checkout_cancelled_marker_uncleared');
+  }
+}
 
-export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number } };
+export type CheckoutHandle = { key?: string; signature?: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number }; parkedId?: string };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
 export class CheckoutStorageCorruptionError extends Error {}
 const key = () => `mobile-v3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -21,6 +26,9 @@ function validateItems(items: { productId: number; quantity: number }[]) {
 }
 function signatureForItems(items: { productId: number; quantity: number }[]) {
   return JSON.stringify(validateItems(items).map(item => [item.productId, item.quantity]).sort((a, b) => a[0] - b[0]));
+}
+function hasPaymentInFlight(checkout: AuthorityCheckout) {
+  return checkout.attempts.some(attempt => attempt.status === 'pending' || attempt.status === 'unknown' || attempt.status === 'paid' || attempt.status === 'contradiction');
 }
 function itemsFromSignature(value: string) {
   let parsed: unknown;
@@ -37,8 +45,12 @@ function checkoutItems(lines: CartLine[]) {
 /** A single device purchase handle; all financial state is read from Laravel. */
 export class DurableCheckout {
   private observed?: AuthorityCheckout;
+  private confirmedCancellation?: AuthorityCheckout;
   machine?: CheckoutMachine;
   get current() { return this.observed; }
+  get cancelledCheckout() { return this.confirmedCancellation; }
+  get retainedCheckoutId() { return this.handle?.id; }
+  get parkedCheckoutId() { return this.handle?.parkedId; }
   private set current(checkout: AuthorityCheckout | undefined) {
     if (!checkout) { this.observed = undefined; this.machine = undefined; return; }
     const observation = authorityObservation(checkout);
@@ -141,6 +153,11 @@ export class DurableCheckout {
     }
   }
   private async persist() { this.assertActive(); await this.storage.save(this.handle ?? null); }
+  private async replaceHandle(candidate: CheckoutHandle | undefined, expectedKey?: string) {
+    this.assertActive();
+    await this.storage.save(candidate ?? null, expectedKey);
+    this.handle = candidate;
+  }
   private releaseResolvedQrTender() {
     const submittedAttempt = this.machine?.attempts.find(attempt => attempt.id === String(this.handle?.tender?.attemptId));
     if (!this.handle?.tender || !canAcceptCheckoutTender(this.machine) || submittedAttempt?.method !== 'qr' || submittedAttempt.payment !== 'non-payable'
@@ -159,8 +176,21 @@ export class DurableCheckout {
     }
   }
   async hasCorruptStorage() { await this.load(); return this.corruptStorage; }
+  async hasParkedCheckout() { await this.load(); return Boolean(this.handle?.parkedId); }
+  async hasActiveCheckoutIdentity() { await this.load(); return Boolean(this.handle?.key && this.handle.signature); }
+  async isRetainedCheckout(id: string) { await this.load(); return this.handle?.id === id; }
+  async park() {
+    await this.load();
+    if (!this.handle?.id || !this.current) throw new ApiClientError('Create or recover the checkout before parking it.');
+    if (this.progress.uncertainTender || this.machine?.reconciliationRequired || (this.machine?.state !== 'open' && this.machine?.state !== 'ready-for-new-attempt') || !canAcceptCheckoutTender(this.machine)) {
+      throw new ApiClientError('This purchase is locked or unresolved and cannot be parked. Check its status before continuing.', 409, 'checkout_recovery_required');
+    }
+    await this.replaceHandle({ parkedId: this.handle.id }, this.handle.key);
+    this.current = undefined;
+    this.unresolvedCashRefusal = false;
+  }
   basketDivergedFrom(lines: CartLine[]) {
-    if (!this.handle) return false;
+    if (!this.handle?.id || !this.handle.signature) return false;
     try {
       return this.handle.signature !== signatureForItems(checkoutItems(lines));
     } catch {
@@ -186,7 +216,7 @@ export class DurableCheckout {
     if (!this.corruptStorage) throw new ApiClientError('There is no unreadable checkout identity to discard.', 409, 'checkout_recovery_required');
     const attributedReason = reason.trim();
     if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
-    if ((await this.discoverCheckouts()).length > 0) throw new ApiClientError('Server checkout records were found. Recover one before discarding the unreadable identity.', 409, 'checkout_recovery_required');
+    if ((await this.discoverCheckouts()).some(checkout => checkout.state !== 'completed' && checkout.state !== 'abandoned')) throw new ApiClientError('Server open checkout records were found. Recover one before discarding the unreadable identity.', 409, 'checkout_recovery_required');
     this.assertActive();
     await this.storage.save(null);
     this.handle = undefined;
@@ -213,16 +243,19 @@ export class DurableCheckout {
       return this.current;
     }
     if (id) {
-      if (this.handle && this.handle.id !== id) throw new ApiClientError('Resolve the device purchase before recovering another checkout.');
+      if (this.handle?.id && this.handle.id !== id) throw new ApiClientError('Resolve the device purchase before recovering another checkout.');
       const checkout = await this.client.recoverCheckout(id);
-      this.handle ??= { id, key: key(), signature: signatureForItems(checkout.items) };
-      await this.persist();
+      const next: CheckoutHandle = this.handle?.key && this.handle.signature && this.handle.id === id
+        ? this.handle
+        : { id, key: key(), signature: signatureForItems(checkout.items) };
+      await this.replaceHandle(next);
       this.current = checkout;
-    } else if (this.handle) {
+    } else if (this.handle?.key && this.handle.signature) {
       if (!this.handle.id) {
         const items = validateItems(itemsFromSignature(this.handle.signature));
-        this.current = await this.createCheckout(items, this.handle.key);
-        this.handle.id = this.current.id; await this.persist();
+        const created = await this.createCheckout(items, this.handle.key);
+        await this.replaceHandle({ ...this.handle, id: created.id });
+        this.current = created;
       }
       try { this.current = await this.client.recoverCheckout(this.handle.id!); }
       catch (error) {
@@ -237,19 +270,26 @@ export class DurableCheckout {
     const sig = signatureForItems(items);
     await this.load();
     if (this.corruptStorage) throw new ApiClientError('The stored checkout identity is unreadable. Discover and explicitly recover a server checkout before starting another purchase.', 409, 'checkout_recovery_required');
-    if (this.handle && this.handle.signature !== sig) {
+    if (this.handle?.signature && this.handle.signature !== sig) {
+      if (this.handle.id) throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged');
+      const originalItems = validateItems(itemsFromSignature(this.handle.signature));
+      const created = await this.createCheckout(originalItems, this.handle.key!);
+      await this.replaceHandle({ ...this.handle, id: created.id });
+      this.current = created;
       throw new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged');
     }
-    if (!this.handle) {
-      this.handle = { key: key(), signature: sig };
-      await this.persist(); // save before I/O, including a lost creation response
+    let handle = this.handle;
+    if (!handle?.signature) {
+      handle = { key: key(), signature: sig, ...(handle?.parkedId ? { parkedId: handle.parkedId } : {}) };
+      await this.replaceHandle(handle);
     }
-    if (!this.handle.id) {
-      this.current = await this.createCheckout(items, this.handle.key);
-      this.handle.id = this.current.id;
-      await this.persist();
+    if (!handle.id) {
+      const created = await this.createCheckout(items, handle.key!);
+      handle = { ...handle, id: created.id };
+      await this.replaceHandle(handle);
+      this.current = created;
     } else {
-      try { this.current = await this.client.getCheckout(this.handle.id); }
+      try { this.current = await this.client.getCheckout(handle.id); }
       catch (error) {
         if (error instanceof ApiClientError && error.status === 404) throw new CheckoutIdentityError('Retained checkout was not found.', 404);
         throw error;
@@ -338,14 +378,68 @@ export class DurableCheckout {
     return this.current;
   }
   async abandon(reason: string) {
+    this.confirmedCancellation = undefined;
+    const attributedReason = reason.trim();
+    if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
     await this.recover();
     this.assertReconciliationUnlocked('abandonment');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before abandoning the purchase.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to abandon.');
-    const result = await this.client.abandonCheckout(this.current.id, reason);
-    this.current = result;
-    if (result.state === 'abandoned') await this.retire();
+    if ((this.current.state !== 'open' && this.current.state !== 'ready_for_attempt') || !canAcceptCheckoutTender(this.machine) || hasPaymentInFlight(this.current)) throw new ApiClientError('Only an open or ready checkout without an in-flight payment can be cancelled.', 409, 'checkout_recovery_required');
+    this.current = await this.client.abandonCheckout(this.current.id, attributedReason);
+    const abandoned = this.current;
+    if (abandoned.state === 'abandoned') {
+      try { await this.retire(); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
+    }
+    return abandoned;
+  }
+  async abandonDiscovered(id: string, reason: string) {
+    this.confirmedCancellation = undefined;
+    const attributedReason = reason.trim();
+    if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
+    await this.load();
+    if (this.handle?.id === id) return this.abandon(attributedReason);
+    if (this.handle?.key && !this.handle.id) throw new ApiClientError('Recover the retained device purchase before cancelling a discovered checkout.', 409, 'checkout_recovery_required');
+    const checkout = await this.client.getCheckout(id);
+    const observation = authorityObservation(checkout);
+    if ((checkout.state !== 'open' && checkout.state !== 'ready_for_attempt') || checkout.exceptions.length > 0
+      || observation.reconciliationRequired || !canAcceptCheckoutTender(observation) || hasPaymentInFlight(checkout)) {
+      throw new ApiClientError('This purchase is locked or unresolved and cannot be cancelled. Check its status before continuing.', 409, 'checkout_recovery_required');
+    }
+    const result = await this.client.abandonCheckout(id, attributedReason);
+    if (this.handle?.parkedId !== id) return result;
+    const previous = this.current;
+    const wasCurrent = previous?.id === id;
+    const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
+    if (candidate) delete candidate.parkedId;
+    try {
+      await this.replaceHandle(candidate, this.handle.key);
+    } catch (error) {
+      this.confirmedCancellation = result;
+      if (error instanceof CheckoutIdentityError) throw error;
+      throw new CancellationMarkerUnclearedError();
+    }
+    if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     return result;
+  }
+  async clearCancelledCheckout(id: string) {
+    await this.load();
+    const checkout = await this.client.getCheckout(id);
+    if (checkout.state !== 'abandoned') throw new ApiClientError('This purchase is not marked cancelled by the shop server.', 409, 'checkout_recovery_required');
+    if (this.handle?.id === id) {
+      this.current = checkout;
+      try { await this.retire(); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
+    } else if (this.handle?.parkedId === id) {
+      const wasCurrent = this.current?.id === id;
+      const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
+      if (candidate) delete candidate.parkedId;
+      try { await this.replaceHandle(candidate, this.handle.key); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
+      if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
+    }
+    return checkout;
   }
   async retire() {
     await this.load();
@@ -353,9 +447,10 @@ export class DurableCheckout {
     this.assertActive();
     this.assertReconciliationUnlocked('device identity retirement');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the submitted payment before retiring this purchase.', 409, 'checkout_recovery_required');
-    if (!this.handle) return;
-    await this.storage.save(null, this.handle.key);
-    this.handle = undefined; this.current = undefined; this.unresolvedCashRefusal = false;
+    if (!this.handle?.key || !this.handle.signature) return;
+    const next: CheckoutHandle | undefined = this.handle.parkedId ? { parkedId: this.handle.parkedId } : undefined;
+    await this.storage.save(next ?? null, this.handle.key);
+    this.handle = next; this.current = undefined; this.unresolvedCashRefusal = false;
   }
 }
 
