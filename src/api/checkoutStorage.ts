@@ -11,7 +11,6 @@ function isCheckoutHandle(value: unknown): value is CheckoutHandle {
   if (!activeIdentity && (typeof handle.parkedId !== 'string' || !handle.parkedId)) return false;
   if (handle.id !== undefined && (typeof handle.id !== 'string' || !handle.id)) return false;
   if (handle.parkedId !== undefined && (typeof handle.parkedId !== 'string' || !handle.parkedId)) return false;
-  if (handle.customerReference !== undefined && (typeof handle.customerReference !== 'string' || handle.customerReference.length > 80)) return false;
   if (handle.tender !== undefined && (!handle.tender || typeof handle.tender.key !== 'string' || !handle.tender.key || typeof handle.tender.signature !== 'string')) return false;
   if (handle.tender?.attemptId !== undefined && (!Number.isSafeInteger(handle.tender.attemptId) || handle.tender.attemptId <= 0)) return false;
   if (handle.tender?.previousAttemptIds !== undefined && (!Array.isArray(handle.tender.previousAttemptIds) || handle.tender.previousAttemptIds.some(id => !Number.isSafeInteger(id) || id <= 0)

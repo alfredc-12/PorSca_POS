@@ -218,7 +218,7 @@ describe('POS durable checkout integration', () => {
     const prepared = handle();
     store.save = jest.fn().mockRejectedValueOnce(new Error('keychain unavailable'));
 
-    await act(async () => { await expect(result.current.parkSale('Order A-17')).rejects.toThrow(/keychain unavailable/); });
+    await act(async () => { await expect(result.current.parkSale()).rejects.toThrow(/keychain unavailable/); });
 
     expect(handle()).toEqual(prepared);
     expect(result.current.parkedCheckoutId).toBeUndefined();
@@ -247,13 +247,12 @@ describe('POS durable checkout integration', () => {
     const { result } = renderHook(() => usePos(), { wrapper });
     await add(result);
 
-    await act(async () => { await result.current.parkSale('Order A-17'); });
+    await act(async () => { await result.current.parkSale(); });
 
     expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
-    expect(handle()).toMatchObject({ parkedId: 'durable-uuid', customerReference: 'Order A-17' });
+    expect(handle()).toMatchObject({ parkedId: 'durable-uuid' });
     expect(result.current.cart).toHaveLength(0);
     expect(result.current.parkedCheckoutId).toBe('durable-uuid');
-    expect(result.current.parkedCustomerReference).toBe('Order A-17');
     expect(result.current.activeCheckoutCount).toBe(1);
   });
 
@@ -643,6 +642,21 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await result.current.recoverCheckout(); });
     expect(handle()).toBeNull(); expect(client.checkoutCash).toHaveBeenCalledTimes(1);
   });
+  it('drops a settled checkout from the live count even when retirement storage fails', async () => {
+    const { wrapper, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9' }); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
+  });
   it('does not publish the history handoff when recovered cash retirement fails', async () => {
     const { wrapper, client, store, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
@@ -1014,6 +1028,9 @@ describe('POS durable checkout integration', () => {
   it('does not publish the history handoff when QR retirement fails', async () => {
     const { wrapper, client, store, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
     await act(async () => { await result.current.startQrPhPayment(); });
     const save = store.save.bind(store);
     store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await save(value, expectedKey); };
@@ -1024,6 +1041,8 @@ describe('POS durable checkout integration', () => {
     expect(handle()?.id).toBe('durable-uuid');
     expect(result.current.checkoutCompletion).toBeUndefined();
     expect(result.current.consumeSalesHandoff()).toBe(false);
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
   });
   it('ignores a caller-supplied paid status unless Laravel records a completed sale', async () => {
     const { wrapper } = fixture(); const { result } = renderHook(() => usePos(), { wrapper });

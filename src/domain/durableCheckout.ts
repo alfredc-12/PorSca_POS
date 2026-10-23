@@ -9,7 +9,7 @@ import { CheckoutProgress } from './checkoutGuidance';
 export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
 
-export type CheckoutHandle = { key?: string; signature?: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number }; parkedId?: string; customerReference?: string };
+export type CheckoutHandle = { key?: string; signature?: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number }; parkedId?: string };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
 export class CheckoutStorageCorruptionError extends Error {}
 const key = () => `mobile-v3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -44,7 +44,6 @@ export class DurableCheckout {
   get current() { return this.observed; }
   get retainedCheckoutId() { return this.handle?.id; }
   get parkedCheckoutId() { return this.handle?.parkedId; }
-  get customerReference() { return this.handle?.customerReference; }
   private set current(checkout: AuthorityCheckout | undefined) {
     if (!checkout) { this.observed = undefined; this.machine = undefined; return; }
     const observation = authorityObservation(checkout);
@@ -173,14 +172,13 @@ export class DurableCheckout {
   async hasParkedCheckout() { await this.load(); return Boolean(this.handle?.parkedId); }
   async hasActiveCheckoutIdentity() { await this.load(); return Boolean(this.handle?.key && this.handle.signature); }
   async isRetainedCheckout(id: string) { await this.load(); return this.handle?.id === id; }
-  async park(reference?: string) {
+  async park() {
     await this.load();
     if (!this.handle?.id || !this.current) throw new ApiClientError('Create or recover the checkout before parking it.');
     if (this.progress.uncertainTender || this.machine?.reconciliationRequired || (this.machine?.state !== 'open' && this.machine?.state !== 'ready-for-new-attempt') || !canAcceptCheckoutTender(this.machine)) {
       throw new ApiClientError('This purchase is locked or unresolved and cannot be parked. Check its status before continuing.', 409, 'checkout_recovery_required');
     }
-    const customerReference = reference?.trim();
-    await this.replaceHandle({ parkedId: this.handle.id, ...(customerReference ? { customerReference: customerReference.slice(0, 80) } : {}) }, this.handle.key);
+    await this.replaceHandle({ parkedId: this.handle.id }, this.handle.key);
     this.current = undefined;
     this.unresolvedCashRefusal = false;
   }
@@ -275,7 +273,7 @@ export class DurableCheckout {
     }
     let handle = this.handle;
     if (!handle?.signature) {
-      handle = { key: key(), signature: sig, ...(handle?.parkedId ? { parkedId: handle.parkedId, ...(handle.customerReference ? { customerReference: handle.customerReference } : {}) } : {}) };
+      handle = { key: key(), signature: sig, ...(handle?.parkedId ? { parkedId: handle.parkedId } : {}) };
       await this.replaceHandle(handle);
     }
     if (!handle.id) {
@@ -401,7 +399,7 @@ export class DurableCheckout {
     if (this.handle?.parkedId === id) {
       const wasCurrent = this.current?.id === id;
       const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
-      if (candidate) { delete candidate.parkedId; delete candidate.customerReference; }
+      if (candidate) delete candidate.parkedId;
       await this.replaceHandle(candidate, this.handle.key);
       if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     }
@@ -417,7 +415,7 @@ export class DurableCheckout {
     } else if (this.handle?.parkedId === id) {
       const wasCurrent = this.current?.id === id;
       const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
-      if (candidate) { delete candidate.parkedId; delete candidate.customerReference; }
+      if (candidate) delete candidate.parkedId;
       await this.replaceHandle(candidate, this.handle.key);
       if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     }
@@ -430,9 +428,7 @@ export class DurableCheckout {
     this.assertReconciliationUnlocked('device identity retirement');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the submitted payment before retiring this purchase.', 409, 'checkout_recovery_required');
     if (!this.handle?.key || !this.handle.signature) return;
-    const next: CheckoutHandle | undefined = this.handle.parkedId
-      ? { parkedId: this.handle.parkedId, ...(this.handle.customerReference ? { customerReference: this.handle.customerReference } : {}) }
-      : undefined;
+    const next: CheckoutHandle | undefined = this.handle.parkedId ? { parkedId: this.handle.parkedId } : undefined;
     await this.storage.save(next ?? null, this.handle.key);
     this.handle = next; this.current = undefined; this.unresolvedCashRefusal = false;
   }

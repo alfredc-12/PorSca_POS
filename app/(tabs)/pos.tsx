@@ -59,7 +59,6 @@ export default function PosScreen() {
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
   const [showParkPrompt, setShowParkPrompt] = useState(false);
-  const [customerReference, setCustomerReference] = useState('');
   const [parkingSale, setParkingSale] = useState(false);
   const [review, setReview] = useState<CartRevalidation>();
   const [checkingPrices, setCheckingPrices] = useState(false);
@@ -112,14 +111,12 @@ export default function PosScreen() {
     setParkingSale(true);
     setCartNotice(undefined);
     try {
-      await parkSale(customerReference);
+      await parkSale();
       setShowParkPrompt(false);
-      setCustomerReference('');
       setCartNotice('Sale parked with the shop server. The POS cart is ready for the next customer.');
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'checkout_parked_basket_diverged') {
         setShowParkPrompt(false);
-        setCustomerReference('');
         setCartNotice('The sale was parked with the shop server. The edited cart was kept; review Sales/Holds before taking payment.');
       } else if (error instanceof ApiClientError && error.code === 'checkout_basket_diverged') {
         setShowParkPrompt(false);
@@ -129,7 +126,7 @@ export default function PosScreen() {
     } finally {
       setParkingSale(false);
     }
-  }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, customerReference, retainedCheckoutId]);
+  }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, retainedCheckoutId]);
 
   /**
    * Proceed re-reads the cart against the catalog first. A clean cart goes
@@ -336,7 +333,6 @@ export default function PosScreen() {
                   openConflictResolver();
                   return;
                 }
-                setCustomerReference('');
                 setShowParkPrompt(true);
               }}
               style={[styles.parkAction, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}
@@ -493,18 +489,6 @@ export default function PosScreen() {
           <View style={styles.parkPrompt}>
             <Text style={styles.parkPromptTitle}>Park this sale?</Text>
             <Text style={styles.parkPromptBody}>The shop server will retain this checkout. The current cart will reset only after the save succeeds.</Text>
-            <TextInput
-              testID="park-customer-reference"
-              accessibilityLabel="Optional customer reference"
-              value={customerReference}
-              onChangeText={setCustomerReference}
-              placeholder="Short customer reference or order tag (optional)"
-              placeholderTextColor={colors.textMuted}
-              maxLength={80}
-              editable={!parkingSale}
-              style={styles.parkReferenceInput}
-            />
-            <Text style={styles.parkPromptHint}>Use a short, non-sensitive reference. It stays on this device and is not sent to the shop server.</Text>
             <View style={styles.parkPromptActions}>
               <Pressable accessibilityRole="button" disabled={parkingSale} onPress={() => setShowParkPrompt(false)} style={styles.parkCancelButton}><Text style={styles.parkCancelText}>Keep editing</Text></Pressable>
               <Pressable testID="confirm-park-sale" accessibilityRole="button" disabled={!cart.length || !apiConfigured || parkingSale} onPress={() => void confirmParkSale()} style={[styles.parkConfirmButton, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}><Text style={styles.parkConfirmText}>{parkingSale ? 'Saving…' : 'Park sale'}</Text></Pressable>
@@ -580,8 +564,6 @@ const styles = StyleSheet.create({
   parkPrompt: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: spacing.md, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.surface },
   parkPromptTitle: { color: colors.text, fontSize: 20, fontWeight: '900' },
   parkPromptBody: { color: colors.textMuted, lineHeight: 21 },
-  parkReferenceInput: { minHeight: 48, borderRadius: radius.md, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.white, color: colors.text, paddingHorizontal: spacing.md },
-  parkPromptHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
   parkPromptActions: { flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: spacing.sm },
   parkCancelButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
   parkCancelText: { color: colors.text, fontWeight: '800' },

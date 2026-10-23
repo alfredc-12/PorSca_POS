@@ -87,11 +87,10 @@ type PosContextValue = {
   activeCheckoutCount: number;
   retainedCheckoutId?: string;
   parkedCheckoutId?: string;
-  parkedCustomerReference?: string;
   openPosCheckouts: () => Promise<void>;
   refreshCheckouts: () => Promise<boolean>;
   checkCheckoutStatus: (id: string) => Promise<void>;
-  parkSale: (customerReference?: string) => Promise<AuthorityCheckout>;
+  parkSale: () => Promise<AuthorityCheckout>;
   cancelDiscoveredCheckout: (id: string, reason: string) => Promise<void>;
   clearCancelledCheckout: (id: string) => Promise<AuthorityCheckout>;
   discardCorruptCheckout: (reason: string) => Promise<string>;
@@ -729,7 +728,7 @@ export function PosProvider({
     }
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
-  const parkSale = useCallback(async (customerReference?: string) => {
+  const parkSale = useCallback(async () => {
     const outcome = await exclusive(async () => {
       if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
       const lines = cartRef.current.lines;
@@ -740,7 +739,7 @@ export function PosProvider({
       if (cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature) {
         throw new ApiClientError('The POS cart changed while this sale was being saved. Review both baskets before continuing.', 409, 'checkout_basket_diverged');
       }
-      await authority.park(customerReference);
+      await authority.park();
       const diverged = cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature;
       if (!diverged) commitCart({ type: 'reset' });
       return { checkout: authority.current ?? created, diverged };
@@ -859,12 +858,12 @@ export function PosProvider({
     reads.observeSale(sale.id);
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setSales(current => mergeSales(current, [sale]));
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     let retired = false;
     try {
       await authority.retire();
       retired = true;
       setAuthorityCheckout(undefined);
-      setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
       if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
     } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
     const generation = reads.generation;
@@ -919,11 +918,11 @@ export function PosProvider({
     const [inventory, history] = await Promise.all([refreshInventory(), refreshSales()]);
     if (!inventory || !history) throw new ApiClientError('Retry inventory and history verification.');
     const sale = checkoutSale(checkout);
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     await authority.retire();
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setAuthorityCheckout(undefined);
-    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     if (matches && cartUnchanged()) commitCart({ type: 'reset' });
     return sale;
   }), [reads, exclusive, authority, commitCart, refreshInventory, refreshSales]);
@@ -1039,7 +1038,6 @@ export function PosProvider({
         activeCheckoutCount,
         retainedCheckoutId: authority.retainedCheckoutId,
         parkedCheckoutId: authority.parkedCheckoutId,
-        parkedCustomerReference: authority.customerReference,
         openPosCheckouts,
         refreshCheckouts,
         checkCheckoutStatus,

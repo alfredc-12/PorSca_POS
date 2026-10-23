@@ -21,7 +21,6 @@ export default function SalesHoldsScreen() {
     activeCheckoutCount,
     retainedCheckoutId,
     parkedCheckoutId,
-    parkedCustomerReference,
     refreshCheckouts,
     checkCheckoutStatus,
     recoverCheckout,
@@ -152,7 +151,6 @@ export default function SalesHoldsScreen() {
             </View>
             <View style={styles.metaRow}>
               <Text style={styles.elapsed}>{elapsed === 'Elapsed time unavailable' ? elapsed : `${elapsed} elapsed`}</Text>
-              {localParked && parkedCustomerReference ? <Text numberOfLines={1} style={styles.reference}>Ref: {parkedCustomerReference}</Text> : null}
             </View>
             <View style={styles.itemsPreview}>
               {checkout.items.slice(0, 4).map(item => (
@@ -248,7 +246,6 @@ const styles = StyleSheet.create({
   badgeCompleted: { backgroundColor: colors.primaryWash, borderColor: '#B9DEC6' },
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm },
   elapsed: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
-  reference: { flexShrink: 1, color: colors.textMuted, fontSize: 11 },
   itemsPreview: { gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.background },
   previewRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
   itemName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },
