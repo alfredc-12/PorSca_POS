@@ -24,6 +24,21 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] } })).toMatchObject({ category: 'interrupted' });
     expect(checkoutGuidance({ machine: pending })).toMatchObject({ category: 'pending' });
   });
+  it.each([
+    ['QR pending', 'qr', 'pending', 'pending', 'check'],
+    ['QR unknown', 'qr', 'unknown', 'interrupted', 'check'],
+    ['cash pending', 'cash', 'pending', 'pending', 'recover'],
+    ['cash unknown', 'cash', 'unknown', 'interrupted', 'recover'],
+  ] as const)('locks tender switching for %s', (_label, method, payment, category, action) => {
+    const machine: CheckoutMachine = {
+      ...pending,
+      attempts: [{ ...pending.attempts[0], method, payment }],
+    };
+    const guidance = checkoutGuidance({ machine });
+    expect(guidance).toMatchObject({ category, action, locked: true });
+    expect(`${guidance?.body} ${guidance?.safety}`).toMatch(/Do not take another payment/);
+    expect(['start', 'cash-retry', 'done']).not.toContain(guidance?.action);
+  });
   it('does not complete received money without a committed sale', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], finalEvidence: { outcome: 'paid', reference: 'e' }, payment: 'paid' }] } })).toMatchObject({ category: 'pending', body: 'Payment is received. Still recording the sale.' });
   });
