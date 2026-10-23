@@ -12,7 +12,7 @@
  * Plan: data/porsca-mobile-feedback-plain-20261004/report.md, §6.1.
  */
 
-import { cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from './checkoutDivergenceCopy';
+import { BasketDivergenceState, basketDivergenceCopy, cancelledPurchaseCopy } from './checkoutDivergenceCopy';
 
 export type Failure = {
   status?: number;
@@ -33,7 +33,7 @@ export type FailureScreen =
   | 'staff-save'
   | 'shop-server';
 
-export type FailureContext = { screen: FailureScreen; basketObserved?: boolean };
+export type FailureContext = { screen: FailureScreen; basketDivergence?: BasketDivergenceState };
 
 export type FailureAction =
   | 'retry'
@@ -122,7 +122,7 @@ function describeFailureBody(failure: Failure, context: FailureContext): Omit<De
       return { title: 'You have been signed out', body: 'Your session ended. Sign in again to keep selling.', actionLabel: 'Sign in again', action: 'sign-in' };
 
     case 'cash-sale':
-      return cashSaleCopy(failure, context.basketObserved);
+      return cashSaleCopy(failure, context.basketDivergence);
 
     case 'qr-verification':
       return { title: 'We cannot check this payment yet', body: 'Do not hand over the goods. Check the connection and check again.', actionLabel: 'Check again', action: 'check-payment' };
@@ -153,7 +153,7 @@ function describeFailureBody(failure: Failure, context: FailureContext): Omit<De
   }
 }
 
-function cashSaleCopy(failure: Failure, basketObserved?: boolean): Omit<DescribedFailure, 'internal' | 'reference'> {
+function cashSaleCopy(failure: Failure, basketDivergence?: BasketDivergenceState): Omit<DescribedFailure, 'internal' | 'reference'> {
   if (failure.code === 'revalidation_required') {
     return { title: 'Review the price before payment', body: 'The shop price changed. No payment was submitted. Check the current price in sale help before confirming again.', actionLabel: 'Check the current price', action: 'fix-fields' };
   }
@@ -173,7 +173,7 @@ function cashSaleCopy(failure: Failure, basketObserved?: boolean): Omit<Describe
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
   }
   if (failure.code === 'checkout_basket_diverged') {
-    const copy = basketObserved ? changedBasketCopy : unobservedBasketCopy;
+    const copy = basketDivergenceCopy(basketDivergence ?? 'unobserved');
     return { title: copy.failureTitle, body: copy.failureBody, actionLabel: copy.failureActionLabel, action: 'retry' };
   }
   if (failure.code === 'product_missing') {

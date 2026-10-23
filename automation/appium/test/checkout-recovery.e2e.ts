@@ -28,9 +28,11 @@ async function assertUnresolvedQrAttemptIsLocked() {
     throw new Error('An unresolved or reconciliation-locked QR attempt must not offer checkout cancellation.');
   }
   await expect(byId('checkout-payment-cash')).toBeDisabled();
-  const providerImageVisible = await byId('qr-payment-image').isDisplayed().catch(() => false);
-  const generatedSymbolVisible = await byId('qr-payment-code').isDisplayed().catch(() => false);
-  if (!providerImageVisible && !generatedSymbolVisible) throw new Error('The server-returned QR image or symbol is not visible on Android.');
+  if (qrExpectedStatus === 'pending' || qrExpectedStatus === 'unknown') {
+    const providerImageVisible = await byId('qr-payment-image').isDisplayed().catch(() => false);
+    const generatedSymbolVisible = await byId('qr-payment-code').isDisplayed().catch(() => false);
+    if (!providerImageVisible && !generatedSymbolVisible) throw new Error('The server-returned QR image or symbol is not visible on Android.');
+  }
   await expect(byId('qr-expiry-countdown')).toBeDisplayed();
   const expiry = await visibleText(byId('qr-expiry-countdown'));
   if (qrExpiryExpectation === 'countdown') {

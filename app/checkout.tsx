@@ -13,7 +13,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { BasketDivergenceState, basketDivergenceCopy, cancellationFailedCopy, cancelledPurchaseCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { canSafelyAbandonCheckout } from '@/src/domain/checkoutCancellation';
@@ -91,7 +91,6 @@ export default function CheckoutScreen() {
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
   const [cancelledCheckoutId, setCancelledCheckoutId] = useState<string>();
   const authorityObserved = Boolean(authorityCheckout || checkoutMachine);
-  const basketCopy = authorityObserved ? changedBasketCopy : unobservedBasketCopy;
 
   // A cancelled purchase is terminal until another checkout is observed or a
   // new tender starts; only that local acknowledgement belongs to this screen.
@@ -137,6 +136,8 @@ export default function CheckoutScreen() {
   const administratorRequired = Boolean(guidance?.admin);
   const safeCancellationAvailable = !administratorRequired && !purchaseCancelled && !checkoutProgress?.uncertainTender
     && canSafelyAbandonCheckout(authorityCheckout, checkoutMachine);
+  const divergenceState: BasketDivergenceState = safeCancellationAvailable ? 'safe' : authorityObserved ? 'blocked' : 'unobserved';
+  const basketCopy = basketDivergenceCopy(divergenceState);
   // A changed basket is not payment uncertainty: no tender was sent for it.
   const basketDiverged = Boolean(checkoutProgress?.basketDiverged) && !purchaseCancelled;
   const cancellationFailed = Boolean(checkoutProgress?.cancellationFailed) && !purchaseCancelled;
@@ -249,7 +250,7 @@ export default function CheckoutScreen() {
         code: apiError?.code,
         message: apiError?.message,
         details: apiError?.details,
-      }, authorityObserved);
+      }, divergenceState);
       setCashError(failure);
       if (modalAllowed()) Alert.alert(failure.title, alertBody(failure));
     } finally {
@@ -346,7 +347,7 @@ export default function CheckoutScreen() {
     } catch (error) {
       if (surfaceRetainedQrAttempt(error)) return;
       if (error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged')) setShowSaleHelp(true);
-      const startFailure = qrStartFailure(error, authorityObserved);
+      const startFailure = qrStartFailure(error, divergenceState);
       setQrStatus(startFailure.status);
       setQrError(startFailure.failure);
     } finally {
@@ -354,7 +355,7 @@ export default function CheckoutScreen() {
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired, authorityObserved]);
+  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired, divergenceState]);
 
   const performQrCheck = useCallback(async () => {
     if (!qrPayment || operationRef.current || administratorRequired) return;
@@ -502,7 +503,7 @@ export default function CheckoutScreen() {
                 }
               }} disabled={operationBusy || abandonReason.trim().length < 8 || abandonReason.trim().length > 500} variant="secondary" />
             </> : recoveryBusy && cancellationPreparable ? <Text testID="cancel-sale-preparing" accessibilityLiveRegion="polite">Preparing this sale for safe cancellation…</Text>
-              : basketDiverged && !authorityObserved ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">{unobservedBasketCopy.helpUnavailable}</Text>
+              : basketDiverged && divergenceState !== 'safe' ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">{basketCopy.helpUnavailable}</Text>
                 : cancellationPreparable ? null
                   : !guidance?.admin ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">
                     Cancellation is unavailable while this purchase is unresolved. Use the payment-status or recovery action above, or Leave Payment where shown; do not take another payment.
@@ -662,14 +663,14 @@ function describeQrVerification(error: unknown): DescribedFailure {
  * no QR attempt, so they return the panel to idle instead of inventing a QR
  * verification state; a transport or server outcome stays unresolved.
  */
-function qrStartFailure(error: unknown, basketObserved?: boolean): { status: QrViewStatus; failure: DescribedFailure } {
+function qrStartFailure(error: unknown, basketDivergence?: BasketDivergenceState): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
   if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged' || apiError?.code === 'checkout_purchase_cancelled') {
     return {
       status: 'idle',
       failure: describeAndRecordFailure(
         { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
-        { screen: 'cash-sale', basketObserved },
+        { screen: 'cash-sale', basketDivergence },
       ),
     };
   }

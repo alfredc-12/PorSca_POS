@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, blockedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -198,6 +198,24 @@ describe('CheckoutScreen cash states', () => {
 
     expect(alertSpy).toHaveBeenCalledWith(changedBasketCopy.failureTitle, expect.stringContaining('or cancel this purchase to keep this cart'));
     expect(getByTestId('checkout-cash-error')).toHaveTextContent(/or cancel this purchase to keep this cart/);
+  });
+
+  it('keeps observed but cancellation-blocked cash failures on recovery-only copy', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({
+      completeCashSale,
+      authorityCheckout: safeOpenCheckout(),
+      checkoutProgress: { uncertainTender: 'cash', cashInput: '100.00', basketDiverged: true },
+    });
+    const view = render(<CheckoutScreen />);
+
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Retry saving cash payment' })); });
+
+    expect(alertSpy).toHaveBeenCalledWith(blockedBasketCopy.failureTitle, expect.stringContaining('until this purchase is resolved'));
+    const body = alertSpy.mock.calls[0][1] as string;
+    expect(body).not.toMatch(/or cancel this purchase|keep this cart|No payment was taken/);
+    expect(view.getByTestId('cancel-sale-unavailable')).toHaveTextContent(/Cancellation is not available while this purchase has unresolved payment/);
+    expect(view.getByTestId('cancel-sale-unavailable')).not.toHaveTextContent(/No payment was taken/);
   });
 
   it('keeps unobserved changed-basket QR start failures free of cancellation promises', async () => {

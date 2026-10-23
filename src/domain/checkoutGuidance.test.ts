@@ -1,10 +1,11 @@
 import { checkoutGuidance } from './checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from './checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, blockedBasketCopy, unobservedBasketCopy } from './checkoutDivergenceCopy';
 import { CheckoutMachine, openCheckout } from './checkoutMachine';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 const base = openCheckout('c', 2500);
 const pending: CheckoutMachine = { ...base, state: 'payment-unresolved', attempts: [{ id: '7', method: 'qr', amountCentavos: 2500, payment: 'pending', contradictions: [] }] };
 const authority: AuthorityCheckout = { id: 'c', storeId: 's', state: 'completed', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [], attempts: [], sale: { id: 9, method: 'qrph', amountCentavos: 2500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: 'today' }, exceptions: [], history: [] };
+const openAuthority: AuthorityCheckout = { ...authority, state: 'open', sale: null };
 const completed = { ...pending, state: 'completed' as const, saleId: '9' };
 describe('cashier guidance from trusted truth', () => {
   it('leaves idle and verified non-payability outside the guidance categories', () => {
@@ -41,7 +42,7 @@ describe('cashier guidance from trusted truth', () => {
     expect(checkoutGuidance({ machine: { ...completed, reconciliationRequired: true }, authority, receipt: 'failed' })).toMatchObject({ category: 'administrator', body: 'Conflicting payment records found. This purchase is locked.' });
   });
   it('offers recovery for a changed basket without implying a payment is unconfirmed', () => {
-    const guidance = checkoutGuidance({ machine: base, progress: { basketDiverged: true } });
+    const guidance = checkoutGuidance({ authority: openAuthority, machine: base, progress: { basketDiverged: true } });
     expect(guidance).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, action: 'recover', label: changedBasketCopy.recover, locked: true, admin: false });
     const text = `${guidance!.body} ${guidance!.safety}`;
     expect(text).toMatch(/No payment was taken/);
@@ -61,6 +62,14 @@ describe('cashier guidance from trusted truth', () => {
     expect(text).toMatch(/no confirmed open purchase to cancel/);
     expect(text).not.toMatch(/or cancel this purchase|keep this cart/);
   });
+  it('offers only recovery when observed money or a lock blocks cancellation', () => {
+    const lockedAuthority: AuthorityCheckout = { ...openAuthority, exceptions: [{ caseId: 3, reason: 'stock', state: 'open' }] };
+    const guidance = checkoutGuidance({ authority: lockedAuthority, machine: base, progress: { basketDiverged: true } });
+    expect(guidance).toMatchObject({ category: 'changed', headline: blockedBasketCopy.headline, action: 'recover', label: blockedBasketCopy.recover });
+    const text = `${guidance!.body} ${guidance!.safety}`;
+    expect(text).toMatch(/until this purchase is resolved/);
+    expect(text).not.toMatch(/or cancel this purchase|keep this cart|No payment was taken/);
+  });
   it('keeps unconfirmed money and a live tender ahead of a changed basket', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { basketDiverged: true } })).toMatchObject({ category: 'interrupted' });
     expect(checkoutGuidance({ machine: pending, progress: { basketDiverged: true } })).toMatchObject({ category: 'pending', action: 'check' });
@@ -73,7 +82,7 @@ describe('cashier guidance from trusted truth', () => {
   it('keeps cancelled and changed guidance when a recovery failure has no live tender', () => {
     expect(checkoutGuidance({ machine: { ...base, state: 'abandoned' }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
     expect(checkoutGuidance({ authority: { ...authority, state: 'abandoned', sale: null }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ headline: cancelledPurchaseCopy.headline, label: cancelledPurchaseCopy.clear });
-    expect(checkoutGuidance({ machine: base, progress: { basketDiverged: true, recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, label: changedBasketCopy.recover });
+    expect(checkoutGuidance({ authority: openAuthority, machine: base, progress: { basketDiverged: true, recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'changed', headline: changedBasketCopy.headline, label: changedBasketCopy.recover });
     expect(checkoutGuidance({ machine: { ...pending, state: 'abandoned' }, progress: { recoveryFailure: 'interrupted' } })).toMatchObject({ category: 'pending', action: 'check' });
   });
   it('reports an unconfirmed cancellation without claiming payment uncertainty', () => {

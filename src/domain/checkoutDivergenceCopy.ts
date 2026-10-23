@@ -12,8 +12,12 @@
  * failure card, the tender lock reason, sale help, and the POS recovery
  * notice) renders these strings so wording cannot drift from behavior. A
  * retained earlier basket with no observed checkout uses the recovery-only
- * `unobservedBasketCopy` instead, because cancellation is not available yet.
+ * `unobservedBasketCopy`, and an observed purchase whose cancellation is
+ * blocked by unresolved money or a lock uses `blockedBasketCopy`; neither
+ * promises a cancellation the screen cannot offer.
  */
+
+export type BasketDivergenceState = 'safe' | 'blocked' | 'unobserved';
 
 const noPayment = 'No payment was taken for this cart.';
 const replaceOrKeep = 'Recover the earlier basket to replace this cart and pay for it, or cancel this purchase to keep this cart.';
@@ -26,6 +30,7 @@ export const changedBasketCopy = {
   recover: 'Recover the earlier basket',
   tenderLock: `${noPayment} ${replaceOrKeep}`,
   helpHint: 'Open help to recover the earlier basket, or to cancel that purchase and keep this cart.',
+  helpUnavailable: 'Cancellation is not available for this purchase. Use the payment-status or recovery action above; do not take another payment for this cart.',
   failureTitle: 'The cart changed after checkout started',
   failureBody: `${noPayment} ${replaceOrKeep} ${alreadyCancelled}`,
   failureActionLabel: 'Recover the earlier basket',
@@ -51,6 +56,30 @@ export const unobservedBasketCopy = {
   failureBody: `${noPayment} This phone has no confirmed open purchase to cancel. Recover the earlier basket to replace this cart and pay for it.`,
   failureActionLabel: 'Recover the earlier basket',
 } as const;
+
+/**
+ * An observed purchase whose cancellation is blocked by unresolved money, a
+ * completed/paid state, or a reconciliation lock. Recovery and status remain
+ * available, but the copy must not promise a cancellation or claim that no
+ * payment was taken.
+ */
+export const blockedBasketCopy = {
+  headline: 'The cart changed',
+  body: 'The cart changed after this purchase was opened. This purchase has unresolved payment or lock state, so cancelling it is not available yet.',
+  safety: 'Recover the earlier basket to replace this cart and pay for it. Do not take another payment for this cart until this purchase is resolved.',
+  recover: 'Recover the earlier basket',
+  tenderLock: 'The cart changed. Recover the earlier basket before taking payment; do not take another payment for this cart until this purchase is resolved.',
+  helpHint: 'Open help to recover the earlier basket. Cancellation is not available while this purchase has unresolved payment or a reconciliation lock.',
+  helpUnavailable: 'Cancellation is not available while this purchase has unresolved payment or a reconciliation lock. Use the payment-status or recovery action above; do not take another payment for this cart.',
+  failureTitle: 'The cart changed after checkout started',
+  failureBody: 'The cart changed after this purchase was opened. Recover the earlier basket to replace this cart and pay for it. Do not take another payment for this cart until this purchase is resolved.',
+  failureActionLabel: 'Recover the earlier basket',
+} as const;
+
+/** Selects the divergence wording the screen can actually back up. */
+export function basketDivergenceCopy(state: BasketDivergenceState) {
+  return state === 'safe' ? changedBasketCopy : state === 'blocked' ? blockedBasketCopy : unobservedBasketCopy;
+}
 
 export const cancelledPurchaseCopy = {
   headline: 'This purchase was cancelled',

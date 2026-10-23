@@ -1,5 +1,5 @@
 import { describeFailure, newReference, supportCodeLine } from '@/src/domain/userFacingError';
-import { cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancelledPurchaseCopy, changedBasketCopy, blockedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 const RAW = {
   message: 'Illuminate\\Database\\QueryException: SQLSTATE[23000] (fetch failed at https://api.example.test)',
@@ -8,8 +8,8 @@ const RAW = {
 
 const FORBIDDEN = /SQLSTATE|Illuminate|QueryException|Exception|fetch|EXPO_PUBLIC_|Laravel|https?:\/\//i;
 
-function described(screen: Parameters<typeof describeFailure>[1]['screen'], failure: Parameters<typeof describeFailure>[0] = RAW, basketObserved?: boolean) {
-  const result = describeFailure(failure, { screen, basketObserved });
+function described(screen: Parameters<typeof describeFailure>[1]['screen'], failure: Parameters<typeof describeFailure>[0] = RAW, basketDivergence?: Parameters<typeof describeFailure>[1]['basketDivergence']) {
+  const result = describeFailure(failure, { screen, basketDivergence });
   return result;
 }
 
@@ -47,7 +47,7 @@ describe('describeFailure', () => {
   });
 
   it('describes a changed basket without claiming money may already be recorded', () => {
-    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, true);
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, 'safe');
     expect(failure).toMatchObject({ title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel });
     expect(failure.body).toMatch(/No payment was taken/);
     expect(failure.body).toMatch(/Recover the earlier basket/);
@@ -58,12 +58,19 @@ describe('describeFailure', () => {
   });
 
   it('describes an unobserved changed basket without promising a cancellation', () => {
-    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, false);
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, 'unobserved');
     expect(failure).toMatchObject({ title: unobservedBasketCopy.failureTitle, body: unobservedBasketCopy.failureBody, actionLabel: unobservedBasketCopy.failureActionLabel });
     expect(failure.body).toMatch(/No payment was taken/);
     expect(failure.body).toMatch(/no confirmed open purchase to cancel/);
     expect(failure.body).toMatch(/Recover the earlier basket/);
     expect(failure.body).not.toMatch(/or cancel this purchase|keep this cart/);
+  });
+
+  it('describes an observed but cancellation-blocked changed basket without promising a cancellation', () => {
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, 'blocked');
+    expect(failure).toMatchObject({ title: blockedBasketCopy.failureTitle, body: blockedBasketCopy.failureBody, actionLabel: blockedBasketCopy.failureActionLabel });
+    expect(failure.body).toMatch(/until this purchase is resolved/);
+    expect(failure.body).not.toMatch(/or cancel this purchase|keep this cart|No payment was taken/);
   });
 
   it('describes a cancelled purchase without payment uncertainty', () => {
