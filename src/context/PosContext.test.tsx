@@ -6,6 +6,7 @@ import { PosProvider, usePos, useCheckout } from './PosContext';
 import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
+import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
 const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
@@ -179,6 +180,34 @@ describe('POS durable checkout integration', () => {
     expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
     expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
     expect(result.current.cart).toHaveLength(1);
+  });
+
+  it('keeps a failed Sales/Holds status check from locking a fresh untendered cart', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await expect(result.current.checkCheckoutStatus('other-checkout')).rejects.toThrow(/Unable to reach/); });
+    await add(result);
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(checkoutGuidance({ progress: result.current.checkoutProgress })).toBeUndefined();
+  });
+
+  it('keeps failed Sales/Holds cancellations from locking a fresh untendered cart', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    client.getCheckout.mockResolvedValueOnce(open);
+    client.abandonCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('other-checkout', 'Customer changed their mind')).rejects.toThrow(/Unable to reach/); });
+
+    client.getCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await act(async () => { await expect(result.current.clearCancelledCheckout('other-checkout')).rejects.toThrow(/Unable to reach/); });
+
+    await add(result);
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(checkoutGuidance({ progress: result.current.checkoutProgress })).toBeUndefined();
   });
 
   it('keeps the retained checkout identity when the parked marker cannot be stored', async () => {

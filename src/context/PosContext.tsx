@@ -765,7 +765,7 @@ export function PosProvider({
             : await client.refreshCheckoutAttempt(id, latestAttempt.id);
         }
         return current;
-      });
+      }, { financial: false });
       if (!checkout) throw new ApiClientError('The shop server did not return this saved purchase. Retry discovery.');
       setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
       setCheckoutListState('ready');
@@ -779,7 +779,7 @@ export function PosProvider({
 
   const cancelDiscoveredCheckout = useCallback(async (id: string, reason: string) => {
     try {
-      const checkout = await exclusive(() => authority.abandonDiscovered(id, reason));
+      const checkout = await exclusive(() => authority.abandonDiscovered(id, reason), { financial: false });
       if (!checkout || checkout.state !== 'abandoned') throw new ApiClientError('The shop server did not confirm cancellation. Check the purchase status before continuing.');
       setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
       setCheckoutListState('ready');
@@ -794,7 +794,7 @@ export function PosProvider({
   }, [exclusive, authority]);
 
   const clearCancelledCheckout = useCallback(async (id: string) => {
-    const checkout = await exclusive(() => authority.clearCancelledCheckout(id));
+    const checkout = await exclusive(() => authority.clearCancelledCheckout(id), { financial: false });
     setRecoverableCheckouts(current => current.filter(item => item.id !== id));
     setCheckoutListState('ready');
     setCheckoutListError(undefined);
@@ -812,7 +812,7 @@ export function PosProvider({
       setCheckoutRecoveryError(undefined);
       setCanDiscardCorruptCheckout(false);
       return attributedReason;
-    });
+    }, { financial: false });
   }, [exclusive, authority, canDiscardCorruptCheckout]);
 
   const prepareCheckout = useCallback(async () => exclusive(async () => {
