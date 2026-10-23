@@ -657,6 +657,64 @@ describe('POS durable checkout integration', () => {
     expect(result.current.activeCheckoutCount).toBe(0);
     expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
   });
+  it('drops a cancelled checkout from the live count even when the identity write fails', async () => {
+    const { wrapper, client, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    client.recoverCheckout.mockResolvedValue(open);
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+  it('drops a cancelled parked checkout from the live count even when clearing its marker fails', async () => {
+    const { wrapper, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.parkSale(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout(open.id, 'Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+  it('publishes discovered purchases even when the retained checkout cannot be read', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'retained-missing' });
+    client.getCheckout.mockImplementation(async (id: string) => {
+      if (id === 'retained-missing') throw new ApiClientError('not found', 404);
+      return open;
+    });
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { expect(await result.current.refreshCheckouts()).toBe(true); });
+
+    expect(result.current.checkoutListState).toBe('ready');
+    expect(result.current.recoverableCheckouts.map(item => item.id)).toEqual([open.id]);
+  });
+  it('keeps the discovered list when automatic recovery cannot read the retained checkout', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'retained-missing' });
+    client.getCheckout.mockImplementation(async (id: string) => {
+      if (id === 'retained-missing') throw new ApiClientError('not found', 404);
+      return open;
+    });
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.openPosCheckouts(); });
+
+    expect(result.current.checkoutListState).toBe('ready');
+    expect(result.current.recoverableCheckouts.map(item => item.id)).toContain(open.id);
+  });
   it('does not publish the history handoff when recovered cash retirement fails', async () => {
     const { wrapper, client, store, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);

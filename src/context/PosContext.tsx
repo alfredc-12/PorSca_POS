@@ -662,7 +662,10 @@ export function PosProvider({
       const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
       await authority.hasParkedCheckout();
       const retainedId = authority.retainedCheckoutId;
-      if (retainedId && !live.some(checkout => checkout.id === retainedId)) live.push(await client.getCheckout(retainedId));
+      if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
+        const retained = await client.getCheckout(retainedId).catch(() => undefined);
+        if (retained) live.push(retained);
+      }
       setStoredCheckoutProgress(authority.progress);
       setRecoverableCheckouts(live);
       setCheckoutListState('ready');
@@ -701,7 +704,10 @@ export function PosProvider({
       const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
       const parked = await authority.hasParkedCheckout();
       const retainedId = authority.retainedCheckoutId;
-      if (retainedId && !live.some(checkout => checkout.id === retainedId)) live.push(await client.getCheckout(retainedId));
+      if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
+        const retained = await client.getCheckout(retainedId).catch(() => undefined);
+        if (retained) live.push(retained);
+      }
       discoveryCompleted = true;
       setRecoverableCheckouts(live);
       setCheckoutListState('ready');
@@ -789,6 +795,8 @@ export function PosProvider({
       if (authority.retainedCheckoutId === id || authority.current?.id === id) {
         setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
       }
+      const cancelled = authority.current;
+      if (cancelled?.state === 'abandoned' && cancelled.id === id) setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
       throw error;
     }
   }, [exclusive, authority]);
@@ -840,6 +848,8 @@ export function PosProvider({
         return result;
       });
     } catch (error) {
+      const cancelled = authority.current;
+      if (cancelled?.state === 'abandoned') setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
       setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
       throw error;
     }

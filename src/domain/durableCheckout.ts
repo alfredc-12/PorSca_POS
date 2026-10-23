@@ -396,13 +396,18 @@ export class DurableCheckout {
       throw new ApiClientError('This purchase is locked or unresolved and cannot be cancelled. Check its status before continuing.', 409, 'checkout_recovery_required');
     }
     const result = await this.client.abandonCheckout(id, attributedReason);
-    if (this.handle?.parkedId === id) {
-      const wasCurrent = this.current?.id === id;
-      const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
-      if (candidate) delete candidate.parkedId;
-      await this.replaceHandle(candidate, this.handle.key);
-      if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
+    const previous = this.current;
+    this.current = result;
+    if (this.handle?.parkedId !== id) {
+      this.current = previous;
+      return result;
     }
+    const wasCurrent = previous?.id === id;
+    const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
+    if (candidate) delete candidate.parkedId;
+    await this.replaceHandle(candidate, this.handle.key);
+    this.current = wasCurrent ? undefined : previous;
+    if (wasCurrent) this.unresolvedCashRefusal = false;
     return result;
   }
   async clearCancelledCheckout(id: string) {
