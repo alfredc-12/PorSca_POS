@@ -260,19 +260,29 @@ describe('checkout remount with durable machine state', () => {
     if (failReads) client.listSales.mockRejectedValueOnce(new Error('offline'));
     fireEvent.press(view.getByTestId('refresh-qr-payment'));
     await waitFor(() => expect(finishCheck).toBeDefined());
-    act(() => changeState('background'));
+    act(() => {
+      Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background' });
+      changeState('background');
+    });
     setCheckout(completed);
     await act(async () => { finishCheck(completed); });
     expect(Alert.alert).not.toHaveBeenCalled();
-    act(() => changeState('active'));
+    act(() => {
+      Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
+      changeState('active');
+    });
     if (failReads) {
       expect(handle()?.id).toBe(open.id);
       expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
       expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Retry receipt refresh');
       await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
+      expect(Alert.alert).toHaveBeenCalledTimes(1);
+    } else {
+      // The paid receipt is already displayed after resuming, so a modal would
+      // obscure it and ask for a second acknowledgement.
+      expect(Alert.alert).not.toHaveBeenCalled();
     }
     expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Receipt 9/);
-    expect(Alert.alert).toHaveBeenCalledTimes(1);
     expect(handle()).toBeNull();
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);

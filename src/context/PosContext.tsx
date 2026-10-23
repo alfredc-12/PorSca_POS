@@ -64,6 +64,8 @@ type PosContextValue = {
   beginCheckout: () => void;
   /** Re-read every cart line against the catalog before payment is attempted. */
   revalidateCart: () => Promise<CartRevalidation>;
+  /** Persist a Laravel open checkout before exposing safe cancellation. */
+  prepareCheckout: () => Promise<AuthorityCheckout>;
   /** Apply a reconciled cart from the review sheet. */
   replaceCartLines: (lines: CartLine[]) => void;
   updateProduct: (product: ProductUpdate) => Promise<ProductMutationResult>;
@@ -98,7 +100,7 @@ type PosContextValue = {
   unresolvedQrPayment: () => Payment | undefined;
 };
 
-type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'claimCheckoutCompletionAlert' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
+type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'prepareCheckout' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'claimCheckoutCompletionAlert' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
 const PosContext = createContext<PosContextValue | null>(null);
 export function useCheckout() {
@@ -664,6 +666,12 @@ export function PosProvider({
     });
   }, [exclusive, authority, canDiscardCorruptCheckout]);
 
+  const prepareCheckout = useCallback(async () => exclusive(async () => {
+    if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
+    if (!cartRef.current.lines.length) throw new ApiClientError('Add an item before preparing this checkout.');
+    return authority.prepare(cartRef.current.lines);
+  }), [exclusive, authority, client]);
+
   const revalidateCheckout = useCallback(async () => exclusive(async () => {
     await applyCheckout(await authority.revalidate());
   }), [exclusive, authority, applyCheckout]);
@@ -817,8 +825,8 @@ export function PosProvider({
       : storedCheckoutProgress
   ), [authority, cart, storedCheckoutProgress]);
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
-    total, cart, apiConfigured: client.isConfigured, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
-  }), [total, cart, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
+    total, cart, apiConfigured: client.isConfigured, prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
+  }), [total, cart, prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
 
   return (
     <CheckoutContext.Provider value={checkoutValue}>
@@ -850,6 +858,7 @@ export function PosProvider({
         resetCart,
         beginCheckout,
         revalidateCart,
+        prepareCheckout,
         replaceCartLines,
         updateProduct,
         createProduct,

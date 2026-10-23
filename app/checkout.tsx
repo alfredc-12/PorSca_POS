@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/components/Screen';
@@ -7,6 +7,7 @@ import { AppButton } from '@/src/components/AppButton';
 import { FailureNotice } from '@/src/components/FailureNotice';
 import { CheckoutOrderSummary } from '@/src/components/CheckoutOrderSummary';
 import { QrPaymentCode } from '@/src/components/QrPaymentCode';
+import { QrExpiryCountdown } from '@/src/components/QrExpiryCountdown';
 import { ApiClientError, Payment } from '@/src/api/client';
 import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
@@ -15,6 +16,7 @@ import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
 import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
+import { canSafelyAbandonCheckout } from '@/src/domain/checkoutCancellation';
 import { isDefinitiveQrRejection, saleFailureCopy } from '@/src/domain/checkout';
 import { DescribedFailure, localFailure } from '@/src/domain/userFacingError';
 import { describeAndRecordFailure } from '@/src/observability/diagnostics';
@@ -76,17 +78,18 @@ export default function CheckoutScreen() {
     if (navigatedDone.current) acknowledgeCheckout?.();
   }, [acknowledgeCheckout]);
   const alertCompletion = useCallback((sale: Sale) => {
-    if (!visibleRef.current || handledPaidPayment.current === sale.id) return;
+    if (!visibleRef.current || AppState.currentState !== 'active' || handledPaidPayment.current === sale.id) return;
     if (claimCheckoutCompletionAlert && !claimCheckoutCompletionAlert(sale.id)) return;
     handledPaidPayment.current = sale.id;
     Alert.alert('Payment completed', receiptText(sale), [{ text: 'Done', onPress: done }]);
   }, [done, claimCheckoutCompletionAlert]);
 
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
+  const [cancellationComplete, setCancellationComplete] = useState(false);
 
   // A cancelled purchase is terminal, so it never offers the changed-basket
   // recovery or cancellation controls.
-  const purchaseCancelled = checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
+  const purchaseCancelled = cancellationComplete || checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
   const dueAmountCentavos = purchaseCancelled ? Math.round(total * 100) : authorityCheckout?.amountCentavos ?? Math.round(total * 100);
   const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
   const cashFeedback = cashResult.kind === 'insufficient'
@@ -125,6 +128,8 @@ export default function CheckoutScreen() {
     operation: cashSubmitting ? 'cash' : qrStatus === 'creating' ? 'qr-create' : recoveryBusy ? 'recover' : qrBusy ? 'check' : undefined,
     receipt: receiptRefresh, verificationFailed: qrStatus === 'verification', configured: apiConfigured, method: selectedMode });
   const administratorRequired = Boolean(guidance?.admin);
+  const safeCancellationAvailable = !administratorRequired && !purchaseCancelled && !checkoutProgress?.uncertainTender
+    && canSafelyAbandonCheckout(authorityCheckout, checkoutMachine);
   // A changed basket is not payment uncertainty: no tender was sent for it.
   const basketDiverged = Boolean(checkoutProgress?.basketDiverged) && !purchaseCancelled;
   const cancellationFailed = Boolean(checkoutProgress?.cancellationFailed) && !purchaseCancelled;
@@ -132,10 +137,12 @@ export default function CheckoutScreen() {
   // when the changed guidance itself is the active explanation.
   const changedBasketActive = basketDiverged && guidance?.category === 'changed';
   const cancellationUnconfirmed = cancellationFailed && guidance?.headline === cancellationFailedCopy.headline;
-  const cancelRetryAvailable = changedBasketActive || cancellationUnconfirmed;
   const tenderLocked = authorityTenderLocked || Boolean(guidance?.locked) || qrBusy || cashSubmitting || recoveryBusy;
   const operationBusy = qrBusy || cashSubmitting || recoveryBusy;
   const activeAttempt = checkoutMachine?.attempts[checkoutMachine.attempts.length - 1];
+  const qrExpiresAt = qrPayment
+    ? authorityCheckout?.attempts.find(attempt => attempt.method === 'qrph' && String(attempt.id) === qrPayment.id)?.qrExpiresAt
+    : null;
   // Recovery/deep links must display the retained tender, not a route default.
   const mode = checkoutProgress?.uncertainTender ?? (authorityTenderLocked && activeAttempt
     ? activeAttempt.method === 'qr' ? 'qrph' : 'cash'
@@ -358,12 +365,12 @@ export default function CheckoutScreen() {
     router.back();
   }, []);
 
-  const { checkNow: checkQrPayment, visible } = useCheckoutPaymentPolling({
+  const { checkNow: checkQrPayment, visible, focused } = useCheckoutPaymentPolling({
     identity: qrPayment ? `${authorityCheckout?.id ?? checkoutMachine?.id}:${qrPayment.id}` : undefined,
     eligible: mode === 'qrph' && qrStatus === 'pending' && activeAttempt?.payment === 'pending' && !activeAttempt.finalEvidence && !terminalLocked && !guidance?.admin && receiptRefresh !== 'running' && receiptRefresh !== 'failed',
     busy: operationBusy, check: performQrCheck,
   });
-  useLayoutEffect(() => { visibleRef.current = visible; return () => { visibleRef.current = false; }; }, [visible]);
+  useLayoutEffect(() => { visibleRef.current = focused; return () => { visibleRef.current = false; }; }, [focused]);
   useEffect(() => { if (visible && checkoutCompletion && !guidance?.admin) alertCompletion(checkoutCompletion.sale); }, [visible, checkoutCompletion, guidance?.admin, alertCompletion]);
 
   if (checkoutCompletion && !guidance?.admin) {
@@ -426,6 +433,7 @@ export default function CheckoutScreen() {
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
         {recoveryError && !guidance?.admin ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
+        {cancellationComplete ? <Text testID="checkout-cancelled-notice" accessibilityLiveRegion="polite">Checkout cancelled. Your cart is unchanged and ready for a new sale.</Text> : null}
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>
@@ -444,14 +452,28 @@ export default function CheckoutScreen() {
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
           {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? changedBasketCopy.helpHint : cancellationUnconfirmed ? cancellationFailedCopy.helpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
+          {!showSaleHelp && safeCancellationAvailable ? <AppButton testID="cancel-sale-entry" label="Cancel this sale" onPress={() => setShowSaleHelp(true)} variant="secondary" /> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
             <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
             <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
-            <Text style={styles.label}>Cancel this sale</Text>
-            <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later.</Text>
-            <TextInput accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} editable={!tenderLocked || cancelRetryAvailable} />
-            <AppButton label="Cancel this sale" onPress={() => void recoveryAction(() => abandonCheckout(abandonReason), cancellationFailedCopy.notice)} disabled={(tenderLocked && !cancelRetryAvailable) || abandonReason.trim().length < 8} variant="secondary" />
+            {safeCancellationAvailable ? <>
+              <Text style={styles.label}>Cancel this sale</Text>
+              <Text style={styles.helper}>This ends the checkout only; it does not cancel a QR payment. Your cart stays as it is.</Text>
+              <Text style={styles.helper}>Tell us briefly what happened so the shop can review it later (8–500 characters).</Text>
+              <TextInput testID="cancel-sale-reason-input" accessibilityLabel="What happened with this sale" placeholder="What happened (at least 8 characters)" value={abandonReason} onChangeText={setAbandonReason} maxLength={500} editable={!operationBusy} />
+              <AppButton testID="confirm-cancel-sale" label="Confirm cancellation" onPress={() => {
+                const reason = abandonReason.trim();
+                if (safeCancellationAvailable && reason.length >= 8 && reason.length <= 500) {
+                  void recoveryAction(async () => {
+                    await abandonCheckout(reason);
+                    setCancellationComplete(true);
+                  }, cancellationFailedCopy.notice);
+                }
+              }} disabled={operationBusy || abandonReason.trim().length < 8 || abandonReason.trim().length > 500} variant="secondary" />
+            </> : !guidance?.admin ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">
+              Cancellation is unavailable while this purchase is unresolved. Use the payment-status or recovery action above, or Leave Payment where shown; do not take another payment.
+            </Text> : null}
           </> : null}
         </View> : null}
 
@@ -516,8 +538,9 @@ export default function CheckoutScreen() {
                   <Ionicons name="qr-code" size={112} color={colors.text} />
                 </View>
               )}
-              <Text style={styles.qrTitle}>QR Ph practice payment (sandbox)</Text>
-              <Text style={styles.qrBody}>Leaving does not cancel this payment.</Text>
+              <Text style={styles.qrTitle}>Practice QR — not payable</Text>
+              <Text testID="qr-practice-notice" style={styles.qrBody}>Practice display only — not payable. Do not scan this QR to pay. Its image or expiry does not confirm payment; check the payment status. Leaving does not cancel an attempt.</Text>
+              <QrExpiryCountdown key={`${qrPayment?.id ?? 'no-attempt'}:${qrExpiresAt ?? ''}`} expiresAt={qrExpiresAt} />
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
                   {receiptRefresh === 'running' ? 'Payment pending…' : qrStatusText(qrStatus)}

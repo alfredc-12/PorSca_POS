@@ -34,6 +34,22 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('prepares a server-backed open checkout without starting a tender and preserves the cart', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await expect(result.current.prepareCheckout()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.authorityCheckout).toEqual(open);
+    expect(result.current.checkoutMachine?.state).toBe('open');
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
   it('keeps a replacement purchase recoverable when an unmounted provider receives an old cash response', async () => {
     const { wrapper, client, handle } = fixture();
     const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };

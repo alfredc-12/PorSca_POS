@@ -33,6 +33,8 @@ export default function PosScreen() {
     clearCart,
     undoClearCart,
     beginCheckout,
+    prepareCheckout,
+    authorityCheckout,
     revalidateCart,
     replaceCartLines,
     demoCatalogEnabled,
@@ -84,10 +86,19 @@ export default function PosScreen() {
     return result.ok;
   }, [incrementProduct]);
 
-  const openCheckout = useCallback(() => {
+  const openCheckout = useCallback(async () => {
     beginCheckout();
-    router.push({ pathname: '/checkout', params: { method } });
-  }, [beginCheckout, method]);
+    try {
+      await prepareCheckout();
+      router.push({ pathname: '/checkout', params: { method } });
+    } catch {
+      // If a retained server purchase exists, checkout owns its recovery UI.
+      // Otherwise keep the cart here and invite a safe retry without exposing
+      // an unprepared cancellation or payment action.
+      if (authorityCheckout) router.push({ pathname: '/checkout', params: { method } });
+      else setCartNotice('We could not prepare this sale with the shop server. Your cart is unchanged. Try again before taking payment.');
+    }
+  }, [authorityCheckout, beginCheckout, method, prepareCheckout]);
 
   /**
    * Proceed re-reads the cart against the catalog first. A clean cart goes
@@ -106,7 +117,7 @@ export default function PosScreen() {
     try {
       const result = await revalidateCart();
       if (result.status === 'ready') {
-        openCheckout();
+        await openCheckout();
         return;
       }
       if (result.status === 'offline' || result.status === 'unavailable') {
@@ -119,7 +130,7 @@ export default function PosScreen() {
     }
   }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
 
-  const applyReview = useCallback(() => {
+  const applyReview = useCallback(async () => {
     if (!review) return;
     // The cart can be edited while the review sheet is open, and the revalidation
     // result only describes the cart it read. A stale review must never overwrite
@@ -131,7 +142,12 @@ export default function PosScreen() {
     }
     replaceCartLines(review.appliedLines);
     setReview(undefined);
-    openCheckout();
+    setCheckingPrices(true);
+    try {
+      await openCheckout();
+    } finally {
+      setCheckingPrices(false);
+    }
   }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);

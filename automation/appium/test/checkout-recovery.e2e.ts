@@ -23,7 +23,16 @@ async function assertUnresolvedQrAttemptIsLocked() {
   if (await byId('retry-qr-payment').isDisplayed().catch(() => false)) {
     throw new Error('An unresolved or reconciliation-locked QR attempt must not offer a new payment.');
   }
+  if (await byId('cancel-sale-entry').isDisplayed().catch(() => false)
+    || await byId('confirm-cancel-sale').isDisplayed().catch(() => false)) {
+    throw new Error('An unresolved or reconciliation-locked QR attempt must not offer checkout cancellation.');
+  }
   await expect(byId('checkout-payment-cash')).toBeDisabled();
+  const providerImageVisible = await byId('qr-payment-image').isDisplayed().catch(() => false);
+  const generatedSymbolVisible = await byId('qr-payment-code').isDisplayed().catch(() => false);
+  if (!providerImageVisible && !generatedSymbolVisible) throw new Error('The server-returned QR image or symbol is not visible on Android.');
+  await expect(byId('qr-expiry-countdown')).toBeDisplayed();
+  expect((await byId('qr-practice-notice').getText()).toLowerCase()).toContain('not payable');
 }
 
 async function cartSnapshot() {
