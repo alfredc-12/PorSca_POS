@@ -129,9 +129,12 @@ export default function PosScreen() {
   }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, retainedCheckoutId]);
 
   /**
-   * Proceed re-reads the cart against the catalog first. A clean cart goes
-   * straight to checkout; anything that changed is shown in the review sheet so
-   * the cashier sees the delta before Laravel recomputes the charge.
+   * Proceed refuses a cart that diverged from the device's saved purchase and
+   * routes the cashier to the conflict screen, so a second payable checkout
+   * cannot be started for the same goods. Otherwise it re-reads the cart
+   * against the catalog: a clean cart goes straight to checkout, and anything
+   * that changed is shown in the review sheet so the cashier sees the delta
+   * before Laravel recomputes the charge.
    */
   const proceed = useCallback(async () => {
     if (checkoutProgress?.basketDiverged) {

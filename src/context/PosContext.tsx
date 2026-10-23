@@ -833,7 +833,8 @@ export function PosProvider({
         // Cancelling ends the retained purchase, not the cashier's basket. Retire
         // the device handle and drop the retained display state, but leave the
         // draft cart (and any Clear All undo) untouched so it can be rung up as a
-        // new sale. Only a completed sale clears the cart.
+        // new sale. A completed sale, a successful park, or Clear All is what
+        // clears the cart, never cancellation.
         const result = await authority.abandon(reason);
         if (result.state === 'abandoned') {
           setAuthorityCheckout(undefined);

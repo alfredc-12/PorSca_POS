@@ -21,6 +21,8 @@ app/
   login.tsx
   scanner.tsx
   checkout.tsx
+  checkout-conflict.tsx  # explicit basket conflict resolution for a retained purchase
+  device-storage-recovery.tsx  # server discovery before unreadable local identity is discarded
   product-form.tsx
   users.tsx           # admin-only cashier account management
   diagnostics.tsx     # admin support-code lookup from failure records
@@ -30,6 +32,7 @@ app/
     pos.tsx
     inventory.tsx
     transactions.tsx
+    sales-holds.tsx   # saved purchases: resume, status check, cancellation, clear cancelled
 src/
   api/client.ts       # the single network boundary with runtime token setter
   auth/tokenStore.ts  # native SecureStore; memory-only web development
@@ -37,7 +40,7 @@ src/
   config/             # offline policy and its environment flag
   context/            # authentication + POS state and the cart reducer host
   data/               # seeded local demonstration data and barcode fixtures
-  domain/             # behavior rules: cart, barcode, revalidation, checkout and money
+  domain/             # behavior rules: cart, barcode, revalidation, checkout, saved purchases and money
   hooks/              # scan session, debounce, responsive metrics
   theme/
   types/
@@ -51,9 +54,17 @@ machine owns pure UI tender-lock transitions and cash grammar, not network,
 persistence, sales, or inventory effects. Money uses integer centavos with
 strict cash parsing and pure formatting; the QR minimum is explicitly
 staging-provisional. See [API-CONTRACT.md](API-CONTRACT.md#durable-checkout-lifecycle-v3)
-for the authoritative lifecycle and recovery rules.
+for the authoritative lifecycle and recovery rules, including park/hold semantics and
+the unreadable-identity discard precondition.
 
-`AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, and checkout closed until a validated session exists; the product form and Users screen also require admin. Admin navigation exposes Users while cashier navigation does not. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Users actions stay inside the single API client; cashier permissions remain fixed by role, and cashiers read all sales without per-cashier scoping.
+Parking keeps the checkout open in Laravel while the device releases its active
+creation and tender identity, so the next cart starts a new purchase and a parked
+sale is never auto-restored over it. `PosProvider` owns the discovered saved-purchase
+list and active count that the Sales/Holds tab and POS status card read. A saved
+purchase is resumed or cancelled only through explicit actions on Sales/Holds or the
+conflict screen, never by opening the POS.
+
+`AuthProvider` owns authentication: login, native secure token persistence, `/auth/me` restoration, logout, and current-session 401 invalidation. Expo Router protected groups keep entry, tabs, scanner, checkout, checkout conflict, device storage recovery, and transaction detail closed until a validated session exists; the product form and Users screen also require admin. Admin navigation exposes Users while cashier navigation does not. `PosProvider` mounts only while signed in and is unmounted on sign-out/401, so carts, cached inventory/history, and pending-payment state never leak to the next user. UI role checks hide write controls, but Laravel authorizes every write. Users actions stay inside the single API client; cashier permissions remain fixed by role, and cashiers read all sales without per-cashier scoping.
 
 `PosProvider` owns the signed-in POS state. Cart state is a single pure reducer
 (`src/domain/cart.ts`); every add, quantity change, clear, undo and

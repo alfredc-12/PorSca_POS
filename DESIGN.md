@@ -4,13 +4,14 @@
 
 The September 5 mockups are now the visual authority for the mobile application. PorSca is a task-first cashier tool, but it should feel like a warm neighborhood retail product rather than a plain CRUD utility: cream surfaces, fresh botanical green, restrained organic background shapes, generous rounded corners, soft depth, and dark navy typography.
 
-The three primary tab views must read as one system:
+The four primary tab views must read as one system:
 
 - **POS** — search/scan, online status, cart, totals, payment selection, and checkout action.
 - **Inventory** — the same PorSca header/search language, inventory health summary, product rows, stock states, and an admin-only Add Product action. Cashiers see read-only inventory.
 - **Transactions** — the same header language, search/filter tools, sales summary, payment filters, and receipt-style transaction rows.
+- **Sales/Holds** — the same header language, saved-purchase cards with a server status badge, item preview, server total, and guarded resume, status-check, cancellation, and clear-cancelled actions.
 
-The bottom navigation is intentionally identical across all three screens. It has exactly three destinations — POS, Inventory, Transactions — and the selected destination sits inside a pale-green rounded rectangular highlight.
+The bottom navigation is intentionally identical across all four screens. It has exactly four destinations — POS, Inventory, Transactions, Sales/Holds — and the selected destination sits inside a pale-green rounded rectangular highlight. The Sales/Holds tab carries a live count badge for open saved purchases; no separate count pill is added to the shared header.
 
 ## Visual language
 
@@ -47,8 +48,7 @@ Core values:
 `src/components/Screen.tsx` owns the common PorSca visual shell:
 
 - PorSca POS mark and tagline: **Good Products • Brighter Days**.
-- Main Store selector.
-- Cashier avatar/status marker.
+- Back affordance on stacked routes, with an optional confirm before discarding a draft.
 - Warm botanical background texture.
 - Consistent page spacing and safe-area behavior.
 - One keyboard-avoiding wrapper for every screen, so content stays visible while the software keyboard is open. The keyboard is dismissed only by dragging it away; there is no Done accessory above it.
@@ -77,12 +77,15 @@ Login uses the same cream/green PorSca shell, labeled email/password inputs, a m
 
 The cashier workflow is intentionally linear: search/scan → cart → total → payment method → proceed. Search results only appear while searching so the cart stays dominant. POS initially shows five matches with a match count; **Show more** reveals another five at a time until every match is reachable. Editing or clearing the query resets the compact view, and selecting a product uses the same guarded cart-add flow. The cart provides quantity controls, stock visibility, subtotal/total, and a secure payment handoff.
 
-Cart states added in week 6:
+Cart and saved-purchase states:
 
 - **Stock limit** — a rejected "+" raises an amber notice inside the cart card naming the product, the available stock, and the quantity already in the cart. No dialog.
 - **Clear with undo** — Clear All clears immediately and shows a dark snackbar in the cart card naming the line count with an **Undo** action, valid for five seconds. There is no confirmation dialog.
 - **Pre-checkout review** — Proceed first re-reads the cart. If anything changed, a sheet lists each price change, stock change, or removed product with the previous and current values, and applies the reconciliation only when the cashier accepts it. A blocked cart cannot reach checkout.
 - **Offline** — when Laravel is not configured, the payment card states that a sale cannot be completed, the Proceed action is unavailable, and the cart stays editable.
+- **Park Sale** — a cart action beside Clear All. It asks for confirmation, then keeps the cart until the shop server has saved the hold; only a successful park clears the cart for the next customer. A parked sale is never auto-restored over the next cart.
+- **Sales/Holds status card** — a compact card above search states the active saved-purchase count, or that none are active, and opens Sales/Holds. Proceed and Park Sale route a changed basket to the conflict screen instead of starting a second payable purchase.
+- **Device storage recovery** — when local checkout identity is unreadable, an amber card replaces the recovery prompt and opens the recovery screen, where server discovery must find no open checkout before the cashier can enter a reason and discard the identity.
 
 ### Inventory
 
@@ -95,6 +98,14 @@ Search/filter sits above a summary for sales amount, completed sales, cash count
 ### Checkout
 
 Checkout inherits the same cream/green visual system. It presents amount due, order summary, Cash / QR Ph selection, cash received/change handling, or the QR Ph sandbox state. Cash entry stays inline: strict two-decimal input with in-place shortfall or format feedback, and Cash confirmation disabled until the received amount covers the amount due; presets offer the exact amount plus only denominations that cover it. Invalid or insufficient cash never opens a dialog or records a sale. While payment is processing or unresolved, keep its tender selected, disable the opposite tender and cash confirmation, and explain the lock; only a verified non-payable QR result permits a new tender. If a provider-rendered QR image fails to load, show an in-panel recovery message rather than a blank box; this is not a payment outcome. Stock changes only after successful completion.
+
+### Sales/Holds
+
+Saved-purchase cards use the same cream/green shell: a short checkout reference, an optional **Parked** badge, a server status badge (ready for tender, payment waiting, payment interrupted, admin review, cancelled, completed), the first few items, the server total, and a locked-payment line when payment is unresolved. Each card offers **Check status**; only an open purchase offers **Resume sale**, only a tenderable open or ready purchase offers **Cancel sale** with an attributed reason, and **Clear cancelled** appears only when this device holds that purchase's local marker. A footer repeats that the shop server is the authority and shows the active saved-purchase count.
+
+### Basket conflict and device storage recovery
+
+Both screens continue the same shell rather than introducing a new visual language. The conflict screen compares the kept cart with the saved basket and offers explicit resume or attributed cancellation, never a silent overwrite. The storage-recovery screen shows what server discovery returned, keeps the unreadable identity until discovery finds no open checkout, and requires an attributed reason before discard.
 
 ### Product editor
 
