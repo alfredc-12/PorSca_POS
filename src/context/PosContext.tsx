@@ -601,6 +601,7 @@ export function PosProvider({
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     const checkout = await authority.recover(id);
     if (!checkout) return;
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     if (checkout.sale) reads.observeSale(String(checkout.sale.id));
     if (automatic && !cartUnchanged()) throw new ApiClientError('The cart changed while checkout recovery was in progress. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
     if (checkout.state === 'abandoned') {
@@ -833,7 +834,10 @@ export function PosProvider({
         // draft cart (and any Clear All undo) untouched so it can be rung up as a
         // new sale. Only a completed sale clears the cart.
         const result = await authority.abandon(reason);
-        if (result.state === 'abandoned') setAuthorityCheckout(undefined);
+        if (result.state === 'abandoned') {
+          setAuthorityCheckout(undefined);
+          setRecoverableCheckouts(current => mergeCheckouts(current, [result]));
+        }
         return result;
       });
     } catch (error) {
@@ -860,6 +864,7 @@ export function PosProvider({
       await authority.retire();
       retired = true;
       setAuthorityCheckout(undefined);
+      setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
       if (cartSignature(lines) === cartSignature(cartRef.current.lines)) commitCart({ type: 'reset' });
     } catch (error) { describeAndRecordFailure({ message: error instanceof Error ? error.message : 'Receipt retirement failed' }, { screen: 'cash-sale' }); }
     const generation = reads.generation;
@@ -918,6 +923,7 @@ export function PosProvider({
     reads.markHistoryReady(reads.generation, String(checkout.sale.id));
     setCheckoutCompletion({ checkoutId: checkout.id, sale });
     setAuthorityCheckout(undefined);
+    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
     if (matches && cartUnchanged()) commitCart({ type: 'reset' });
     return sale;
   }), [reads, exclusive, authority, commitCart, refreshInventory, refreshSales]);

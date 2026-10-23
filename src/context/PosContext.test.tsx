@@ -318,6 +318,35 @@ describe('POS durable checkout integration', () => {
     expect(handle()).toMatchObject({ parkedId: 'durable-uuid' });
   });
 
+  it('drops a device-settled cash checkout from the live active count', async () => {
+    const { wrapper } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+
+    await act(async () => { await result.current.completeCashSale('100'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
+  });
+
+  it('drops a device-cancelled checkout from the live active count', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    client.recoverCheckout.mockResolvedValue(open);
+    expect(result.current.activeCheckoutCount).toBe(1);
+
+    await act(async () => { await result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+
   it('checks a waiting payment through the authoritative provider-verification endpoint', async () => {
     const { wrapper, client } = fixture();
     client.getCheckout.mockResolvedValue(pending);
