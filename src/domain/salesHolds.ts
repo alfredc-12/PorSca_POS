@@ -59,17 +59,7 @@ export function elapsedCheckoutTime(checkout: AuthorityCheckout, now = Date.now(
 }
 
 function checkoutTimestamp(checkout: AuthorityCheckout) {
-  const raw = checkout as AuthorityCheckout & { createdAt?: unknown; created_at?: unknown; history?: unknown[] };
-  const direct = parseTimestamp(raw.createdAt) ?? parseTimestamp(raw.created_at);
-  if (direct !== undefined) return direct;
-  const history = raw.history ?? [];
-  const timestamps = history.flatMap(event => {
-    if (!event || typeof event !== 'object') return [];
-    const record = event as { createdAt?: unknown; created_at?: unknown; occurredAt?: unknown; occurred_at?: unknown };
-    const value = parseTimestamp(record.createdAt) ?? parseTimestamp(record.created_at) ?? parseTimestamp(record.occurredAt) ?? parseTimestamp(record.occurred_at);
-    return value === undefined ? [] : [value];
-  });
-  return timestamps.length ? Math.min(...timestamps) : undefined;
+  return parseTimestamp(checkout.createdAt);
 }
 
 function parseTimestamp(value: unknown) {

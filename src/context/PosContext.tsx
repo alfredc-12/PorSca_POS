@@ -95,7 +95,6 @@ type PosContextValue = {
   clearCancelledCheckout: (id: string) => Promise<AuthorityCheckout>;
   discardCorruptCheckout: (reason: string) => Promise<string>;
   recoverCheckout: (id?: string) => Promise<void>;
-  discoverCheckouts: () => Promise<AuthorityCheckout[]>;
   revalidateCheckout: () => Promise<void>;
   /** Returns the authoritative result; only `abandoned` means the purchase is terminal. */
   abandonCheckout: (reason: string) => Promise<AuthorityCheckout>;
@@ -638,14 +637,22 @@ export function PosProvider({
     setCheckoutRecoveryError(undefined);
   }, [recoverCheckoutInternal]);
 
-  const discoverCheckouts = useCallback(async () => {
-    const items: AuthorityCheckout[] = [];
+  const discoverLiveCheckouts = useCallback(async () => {
+    const discovered: AuthorityCheckout[] = [];
     for (let page = 1; ; page++) {
       const result = await client.listCheckouts(page);
-      items.push(...result.items);
-      if (page >= result.pagination.last_page) return items;
+      discovered.push(...result.items);
+      if (page >= result.pagination.last_page) break;
     }
-  }, [client]);
+    const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
+    const parked = await authority.hasParkedCheckout();
+    const retainedId = authority.retainedCheckoutId;
+    if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
+      const retained = await client.getCheckout(retainedId).catch(() => undefined);
+      if (retained) live.push(retained);
+    }
+    return { live, parked };
+  }, [authority, client]);
 
   const refreshCheckouts = useCallback(async () => {
     try { setHasUnreadableCheckoutIdentity(await authority.hasCorruptStorage()); }
@@ -658,14 +665,7 @@ export function PosProvider({
     setCheckoutListState('loading');
     setCheckoutListError(undefined);
     try {
-      const discovered = await discoverCheckouts();
-      const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
-      await authority.hasParkedCheckout();
-      const retainedId = authority.retainedCheckoutId;
-      if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
-        const retained = await client.getCheckout(retainedId).catch(() => undefined);
-        if (retained) live.push(retained);
-      }
+      const { live } = await discoverLiveCheckouts();
       setStoredCheckoutProgress(authority.progress);
       setRecoverableCheckouts(live);
       setCheckoutListState('ready');
@@ -676,7 +676,7 @@ export function PosProvider({
       setCheckoutListError('Saved purchases could not be refreshed from the shop server. Retry when the connection is available.');
       return false;
     }
-  }, [client, discoverCheckouts, authority]);
+  }, [client, discoverLiveCheckouts, authority]);
 
   const openPosCheckouts = useCallback(async () => {
     let corruptLocalStorage = false;
@@ -700,14 +700,7 @@ export function PosProvider({
     const automatic = { revision: initialRevision, signature: initialCart };
     const cartUnchanged = () => cartRevision.current === initialRevision && cartSignature(cartRef.current.lines) === initialCart;
     try {
-      const discovered = await discoverCheckouts();
-      const live = await Promise.all(discovered.map(checkout => client.getCheckout(checkout.id)));
-      const parked = await authority.hasParkedCheckout();
-      const retainedId = authority.retainedCheckoutId;
-      if (retainedId && !live.some(checkout => checkout.id === retainedId)) {
-        const retained = await client.getCheckout(retainedId).catch(() => undefined);
-        if (retained) live.push(retained);
-      }
+      const { live, parked } = await discoverLiveCheckouts();
       discoveryCompleted = true;
       setRecoverableCheckouts(live);
       setCheckoutListState('ready');
@@ -732,7 +725,7 @@ export function PosProvider({
         ? changedBasketCopy.autoRecoveryNotice(!emptyDiscovery)
         : 'Checkout recovery is unavailable or the retained purchase has no authority record. Nothing is paid locally. Retry recovery before taking payment.');
     }
-  }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
+  }, [authority, client, discoverLiveCheckouts, recoverCheckoutInternal]);
 
   const parkSale = useCallback(async () => {
     const outcome = await exclusive(async () => {
@@ -1057,7 +1050,6 @@ export function PosProvider({
         clearCancelledCheckout,
         discardCorruptCheckout,
         recoverCheckout,
-        discoverCheckouts,
         revalidateCheckout,
         abandonCheckout,
         apiConfigured: client.isConfigured,
@@ -1144,8 +1136,8 @@ function mergeCheckouts(current: AuthorityCheckout[], incoming: AuthorityCheckou
   const merged = new Map(current.map(checkout => [checkout.id, checkout]));
   incoming.forEach(checkout => merged.set(checkout.id, checkout));
   return [...merged.values()].sort((a, b) => {
-    const aDate = Date.parse(a.createdAt ?? a.created_at ?? '') || 0;
-    const bDate = Date.parse(b.createdAt ?? b.created_at ?? '') || 0;
+    const aDate = Date.parse(a.createdAt ?? '') || 0;
+    const bDate = Date.parse(b.createdAt ?? '') || 0;
     return bDate - aDate;
   });
 }

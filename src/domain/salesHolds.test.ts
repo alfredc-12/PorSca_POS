@@ -30,7 +30,8 @@ it('allows cancellation only for open or ready server checkouts with no payment 
 
 it('formats a short id and elapsed time from the server creation timestamp', () => {
   expect(shortCheckoutId(base.id)).toBe('87CBFA19');
-  expect(elapsedCheckoutTime({ ...base, created_at: '2026-10-23T11:00:00.000Z' }, Date.parse('2026-10-23T12:06:00.000Z'))).toBe('1h 6m');
+  expect(elapsedCheckoutTime({ ...base, createdAt: '2026-10-23T11:00:00.000Z' }, Date.parse('2026-10-23T12:06:00.000Z'))).toBe('1h 6m');
   expect(elapsedCheckoutTime({ ...base, createdAt: '1970-01-01T00:00:00.000Z' }, 0)).toBe('Less than 1m');
+  expect(elapsedCheckoutTime({ ...base, history: [{ createdAt: '2026-10-23T11:00:00.000Z' }] }, Date.parse('2026-10-23T12:06:00.000Z'))).toBe('Elapsed time unavailable');
   expect(elapsedCheckoutTime(base, Date.now())).toBe('Elapsed time unavailable');
 });
