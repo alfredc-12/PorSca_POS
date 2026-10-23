@@ -52,6 +52,20 @@ review:
 
 test:
   instructions: |
+    Critical-path proof authority (checkout/payment, stock/transaction,
+    or API-contract behavior): only tests already blessed by secondmate or
+    owned by a human count as proof. Worker-written tests are supplemental
+    proposals, not proof, until secondmate or a human blesses them.
+
+    The golden checkout suites `checkoutMachine`, `durableCheckout`,
+    `checkoutGuidance`, and `moneyBounds` were frozen by [merged PR 107](https://github.com/alfredc-12/PorSca_POS/pull/107).
+    Do not edit, weaken, remove, rename, relocate, or duplicate these suites
+    or their assertions without explicit captain sign-off. If required work
+    would touch one, stop and escalate; do not work around it.
+
+    Practice payment payloads must remain non-payable; never simulate their
+    payment as paid or infer a paid state from client/test-only data.
+
     Route validation by change tier (T0-T3). Run only the tier
     matching the change scope; each higher tier subsumes the lower ones.
 
