@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
+import { useOptionalPos } from '@/src/context/PosContext';
 import TabsLayout from '@/app/(tabs)/_layout';
 
 jest.mock('expo-router', () => {
@@ -11,8 +12,8 @@ jest.mock('expo-router', () => {
     function Tabs({ children }: { children: React.ReactNode }) {
       return React.createElement(View, { testID: 'tabs' }, children);
     },
-    { Screen: function TabScreen({ name, options }: { name: string; options: { title: string } }) {
-      return React.createElement(Text, { testID: `tab-${name}` }, options.title);
+    { Screen: function TabScreen({ name, options }: { name: string; options: { title: string; tabBarBadge?: number | string } }) {
+      return React.createElement(Text, { testID: `tab-${name}` }, `${options.title}${options.tabBarBadge ? ` (${options.tabBarBadge})` : ''}`);
     } },
   );
   function Redirect() { return null; }
@@ -20,6 +21,7 @@ jest.mock('expo-router', () => {
 });
 
 jest.mock('@/src/context/AuthContext', () => ({ useAuth: jest.fn() }));
+jest.mock('@/src/context/PosContext', () => ({ useOptionalPos: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => {
   const React = jest.requireActual<typeof import('react')>('react');
   const { View } = jest.requireActual<typeof import('react-native')>('react-native');
@@ -31,10 +33,12 @@ jest.mock('react-native-safe-area-context', () => {
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 const useAuthMock = useAuth as jest.Mock;
+const useOptionalPosMock = useOptionalPos as jest.Mock;
 const signedIn = { status: 'signed-in', user: { id: 1, name: 'Store Admin', email: 'admin@example.test', role: 'admin', is_active: true }, isAdmin: true, signOut: jest.fn() };
 
 beforeEach(() => {
   jest.clearAllMocks();
+  useOptionalPosMock.mockReturnValue({ activeCheckoutCount: 0 });
 });
 
 describe('admin Users navigation', () => {
@@ -56,5 +60,21 @@ describe('admin Users navigation', () => {
     const screen = render(<TabsLayout />);
 
     expect(screen.queryByRole('button', { name: 'Manage users' })).toBeNull();
+  });
+
+  it('shows the live active sales count on the Sales/Holds tab', () => {
+    useAuthMock.mockReturnValue(signedIn);
+    useOptionalPosMock.mockReturnValue({ activeCheckoutCount: 3 });
+    const screen = render(<TabsLayout />);
+
+    expect(screen.getByTestId('tab-sales-holds')).toHaveTextContent('Sales/Holds (3)');
+  });
+
+  it('hides the Sales/Holds tab badge when there are no active sales', () => {
+    useAuthMock.mockReturnValue(signedIn);
+    const screen = render(<TabsLayout />);
+
+    expect(screen.getByTestId('tab-sales-holds')).toHaveTextContent('Sales/Holds');
+    expect(screen.getByTestId('tab-sales-holds')).not.toHaveTextContent('(');
   });
 });

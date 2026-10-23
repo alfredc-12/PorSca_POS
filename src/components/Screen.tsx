@@ -3,9 +3,8 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleProp
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { colors, spacing, typography, radius } from '@/src/theme/tokens';
+import { colors, spacing, typography } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
-import { useOptionalPos } from '@/src/context/PosContext';
 
 type Props = {
   title?: string;
@@ -20,7 +19,6 @@ type Props = {
 
 export function Screen({ title, subtitle, children, scroll = true, back = false, backConfirm, contentStyle }: Props) {
   const responsive = useResponsive();
-  const pos = useOptionalPos();
 
   const body = (
     <View
@@ -35,7 +33,7 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
         contentStyle,
       ]}
     >
-      <BrandHeader back={back} backConfirm={backConfirm} activeCheckoutCount={pos?.activeCheckoutCount} />
+      <BrandHeader back={back} backConfirm={backConfirm} />
       {title ? (
         <View style={styles.localHeader}>
           <Text style={[styles.title, { fontSize: responsive.font(typography.display) }]}>{title}</Text>
@@ -75,7 +73,7 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
   );
 }
 
-function BrandHeader({ back, backConfirm, activeCheckoutCount }: { back: boolean; backConfirm?: Props['backConfirm']; activeCheckoutCount?: number }) {
+function BrandHeader({ back, backConfirm }: { back: boolean; backConfirm?: Props['backConfirm'] }) {
   const confirmBack = () => {
     if (backConfirm?.when) {
       Alert.alert(backConfirm.title, backConfirm.message, [
@@ -125,18 +123,6 @@ function BrandHeader({ back, backConfirm, activeCheckoutCount }: { back: boolean
           </Text>
         ) : null}
       </View>
-      {activeCheckoutCount !== undefined ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${activeCheckoutCount} active sales or holds`}
-          onPress={() => router.push('/sales-holds')}
-          style={styles.salesHoldsPill}
-        >
-          <Ionicons name="archive-outline" size={16} color={colors.primary} />
-          {!responsive.veryNarrow ? <Text style={styles.salesHoldsLabel}>Sales/Holds</Text> : null}
-          <Text accessibilityLiveRegion="polite" style={styles.salesHoldsCount}>{activeCheckoutCount}</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -159,9 +145,6 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1 },
   content: { flex: 1, width: '100%', alignSelf: 'center' },
   brandRow: { flexDirection: 'row', alignItems: 'center' },
-  salesHoldsPill: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.surface },
-  salesHoldsLabel: { color: colors.primary, fontSize: 11, fontWeight: '800' },
-  salesHoldsCount: { minWidth: 20, overflow: 'hidden', borderRadius: radius.pill, backgroundColor: colors.primarySoft, color: colors.primary, fontSize: 11, fontWeight: '900', textAlign: 'center', paddingHorizontal: 5, paddingVertical: 2 },
   backButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outline },
   logo: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   brandCopy: { flex: 1, minWidth: 0 },

@@ -612,7 +612,6 @@ export function PosProvider({
       setAuthorityCheckout(undefined);
       return;
     }
-    if (automatic === undefined) await authority.resumeParkedCheckout();
     await applyCheckout(checkout, automatic ? cartUnchanged : undefined);
     // A lost cash response may already have committed a receipt. Resolve that
     // identity instead of stranding the device on a completed, untenderable cart.
@@ -667,6 +666,7 @@ export function PosProvider({
       setStoredCheckoutProgress(authority.progress);
       setRecoverableCheckouts(live);
       setCheckoutListState('ready');
+      setCheckoutRecoveryError(undefined);
       return true;
     } catch {
       setCheckoutListState('unavailable');
@@ -712,8 +712,8 @@ export function PosProvider({
         setCanDiscardCorruptCheckout(corruptLocalStorage);
       }
       setStoredCheckoutProgress(authority.progress);
+      if (parked && !(await authority.hasActiveCheckoutIdentity())) return;
       if (initialCart !== '' || !cartUnchanged()) throw new ApiClientError('Automatic checkout recovery stopped because the cart is not empty. Recover or abandon the listed checkout.', 409, 'checkout_basket_diverged');
-      if (parked) return;
       await recoverCheckoutInternal(undefined, automatic);
     } catch (error) {
       if (!discoveryCompleted) {
@@ -729,7 +729,7 @@ export function PosProvider({
   }, [authority, client, discoverCheckouts, recoverCheckoutInternal]);
 
   const parkSale = useCallback(async (customerReference?: string) => {
-    const checkout = await exclusive(async () => {
+    const outcome = await exclusive(async () => {
       if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
       const lines = cartRef.current.lines;
       if (!lines.length) throw new ApiClientError('Add products to the cart before parking this sale.');
@@ -740,17 +740,16 @@ export function PosProvider({
         throw new ApiClientError('The POS cart changed while this sale was being saved. Review both baskets before continuing.', 409, 'checkout_basket_diverged');
       }
       await authority.park(customerReference);
-      if (cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature) {
-        throw new ApiClientError('The POS cart changed while this sale was being saved. Review both baskets before continuing.', 409, 'checkout_basket_diverged');
-      }
-      commitCart({ type: 'reset' });
-      return authority.current ?? created;
-    });
-    setRecoverableCheckouts(current => mergeCheckouts(current, [checkout]));
+      const diverged = cartRevision.current !== revision || cartSignature(cartRef.current.lines) !== signature;
+      if (!diverged) commitCart({ type: 'reset' });
+      return { checkout: authority.current ?? created, diverged };
+    }, { financial: false });
+    setRecoverableCheckouts(current => mergeCheckouts(current, [outcome.checkout]));
     setCheckoutListState('ready');
     setCheckoutListError(undefined);
     setCheckoutRecoveryError(undefined);
-    return checkout;
+    if (outcome.diverged) throw new ApiClientError('The sale was parked but the POS cart changed while it was being saved. The edited cart was kept.', 409, 'checkout_parked_basket_diverged');
+    return outcome.checkout;
   }, [exclusive, client, authority, commitCart]);
 
   const checkCheckoutStatus = useCallback(async (id: string) => {

@@ -6,14 +6,18 @@ import { CheckoutHandle, CheckoutIdentityError, CheckoutStorage, CheckoutStorage
 function isCheckoutHandle(value: unknown): value is CheckoutHandle {
   if (!value || typeof value !== 'object') return false;
   const handle = value as Partial<CheckoutHandle>;
-  if (typeof handle.key !== 'string' || !handle.key || typeof handle.signature !== 'string') return false;
+  const activeIdentity = handle.key !== undefined || handle.signature !== undefined;
+  if (activeIdentity && (typeof handle.key !== 'string' || !handle.key || typeof handle.signature !== 'string')) return false;
+  if (!activeIdentity && (typeof handle.parkedId !== 'string' || !handle.parkedId)) return false;
   if (handle.id !== undefined && (typeof handle.id !== 'string' || !handle.id)) return false;
-  if (handle.parked !== undefined && typeof handle.parked !== 'boolean') return false;
+  if (handle.parkedId !== undefined && (typeof handle.parkedId !== 'string' || !handle.parkedId)) return false;
   if (handle.customerReference !== undefined && (typeof handle.customerReference !== 'string' || handle.customerReference.length > 80)) return false;
   if (handle.tender !== undefined && (!handle.tender || typeof handle.tender.key !== 'string' || !handle.tender.key || typeof handle.tender.signature !== 'string')) return false;
   if (handle.tender?.attemptId !== undefined && (!Number.isSafeInteger(handle.tender.attemptId) || handle.tender.attemptId <= 0)) return false;
   if (handle.tender?.previousAttemptIds !== undefined && (!Array.isArray(handle.tender.previousAttemptIds) || handle.tender.previousAttemptIds.some(id => !Number.isSafeInteger(id) || id <= 0)
     || new Set(handle.tender.previousAttemptIds).size !== handle.tender.previousAttemptIds.length || (handle.tender.attemptId !== undefined && handle.tender.previousAttemptIds.includes(handle.tender.attemptId)))) return false;
+  if (!activeIdentity) return true;
+  if (typeof handle.signature !== 'string') return false;
   try {
     const items: unknown = JSON.parse(handle.signature);
     return Array.isArray(items) && items.every(item => Array.isArray(item) && item.length === 2 && Number.isSafeInteger(item[0]) && item[0] > 0 && Number.isSafeInteger(item[1]) && item[1] > 0);

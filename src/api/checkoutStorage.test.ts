@@ -53,8 +53,14 @@ describe.each(['ios', 'web'])('checkout identity storage on %s', os => {
     await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
   });
 
-  it('persists parked state and the optional local customer reference without altering checkout identity fields', async () => {
-    const handle = { ...first, parked: true, customerReference: 'Order A-17' };
+  it('persists a parked marker with the optional local customer reference without altering checkout identity fields', async () => {
+    const handle = { ...first, parkedId: 'parked-checkout', customerReference: 'Order A-17' };
+    await checkoutStorage(url).save(handle);
+    await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
+  });
+
+  it('loads a parked marker that no longer carries an active device identity', async () => {
+    const handle = { parkedId: 'parked-checkout', customerReference: 'Order A-17' };
     await checkoutStorage(url).save(handle);
     await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
   });

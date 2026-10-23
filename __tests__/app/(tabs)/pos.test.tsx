@@ -92,10 +92,43 @@ describe('POS cart consistency', () => {
     } as unknown as ApiClient;
     const view = render(<PosProvider client={posClient}><PosScreen /></PosProvider>);
     await waitFor(() => expect(view.getByTestId('pos-sales-holds-card')).toHaveTextContent(/2 active purchases/));
-    expect(view.getByLabelText('2 active sales or holds')).toBeTruthy();
+    expect(view.queryByLabelText('2 active sales or holds')).toBeNull();
     expect(view.queryByTestId('pos-resume-sale-hold-one')).toBeNull();
     fireEvent.press(view.getByTestId('pos-sales-holds-card'));
     expect(router.push).toHaveBeenCalledWith('/sales-holds');
+  });
+
+  it('reports the parked sale and keeps the edited cart when the cart changes during parking', async () => {
+    const parked: AuthorityCheckout = { id: 'parked-one', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2200, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 1, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
+    const parkingClient = {
+      isConfigured: true,
+      createCheckout: jest.fn().mockResolvedValue(parked),
+    } as unknown as ApiClient;
+    let finishParkedWrite!: () => void;
+    const store: CheckoutStorage = {
+      load: async () => null,
+      save: async value => { if (value?.parkedId) await new Promise<void>(resolve => { finishParkedWrite = resolve; }); },
+    };
+    const view = render(
+      <PosProvider client={parkingClient} checkoutStore={store}>
+        <PosScreen />
+        <SeedButton product={single} label="seed-single" />
+        <SeedButton product={plenty} label="seed-plenty" />
+      </PosProvider>,
+    );
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    fireEvent.press(view.getByTestId('pos-park-sale'));
+    act(() => { fireEvent.press(view.getByTestId('confirm-park-sale')); });
+    await waitFor(() => expect(finishParkedWrite).toBeDefined());
+
+    fireEvent.press(view.getByLabelText('seed-plenty'));
+    await act(async () => { finishParkedWrite(); });
+
+    await waitFor(() => expect(view.getByTestId('cart-limit-notice')).toHaveTextContent(/sale was parked with the shop server/));
+    expect(view.queryByTestId('confirm-park-sale')).toBeNull();
+    expect(view.getByText('(2 items)')).toBeTruthy();
+    await waitFor(() => expect(view.getByTestId('pos-sales-holds-card')).toHaveTextContent(/1 active purchase/));
   });
 
   it('describes each recoverable sale by its basket and amount while recovering its internal identity', async () => {

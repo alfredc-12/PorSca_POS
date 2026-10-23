@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, radius } from '@/src/theme/tokens';
 import { useResponsive } from '@/src/hooks/useResponsive';
 import { useAuth } from '@/src/context/AuthContext';
+import { useOptionalPos } from '@/src/context/PosContext';
 import { SessionLoading } from '@/src/components/SessionLoading';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -12,6 +13,8 @@ export default function TabsLayout() {
   const responsive = useResponsive();
   const iconSize = responsive.s(responsive.short ? 21 : 23);
   const { status, user, isAdmin, signOut } = useAuth();
+  const pos = useOptionalPos();
+  const activeCheckoutCount = pos?.activeCheckoutCount ?? 0;
   if (status === 'loading') return <SessionLoading />;
   if (status !== 'signed-in') return <Redirect href="/login" />;
 
@@ -78,6 +81,7 @@ export default function TabsLayout() {
         options={{
           title: 'Sales/Holds',
           tabBarButtonTestID: 'tab-sales-holds',
+          tabBarBadge: activeCheckoutCount > 0 ? activeCheckoutCount : undefined,
           tabBarIcon: ({ color }) => <Ionicons name="archive-outline" color={color} size={iconSize} />,
         }}
       />

@@ -117,12 +117,19 @@ export default function PosScreen() {
       setCustomerReference('');
       setCartNotice('Sale parked with the shop server. The POS cart is ready for the next customer.');
     } catch (error) {
-      if (error instanceof ApiClientError && error.code === 'checkout_basket_diverged') openConflictResolver();
-      else setCartNotice('The sale could not be parked with the shop server. The cart was kept; check Sales/Holds before taking payment.');
+      if (error instanceof ApiClientError && error.code === 'checkout_parked_basket_diverged') {
+        setShowParkPrompt(false);
+        setCustomerReference('');
+        setCartNotice('The sale was parked with the shop server. The edited cart was kept; review Sales/Holds before taking payment.');
+      } else if (error instanceof ApiClientError && error.code === 'checkout_basket_diverged') {
+        setShowParkPrompt(false);
+        if (retainedCheckoutId) openConflictResolver();
+        else setCartNotice('The cart changed while the sale was being saved. Review Sales/Holds before taking payment.');
+      } else setCartNotice('The sale could not be parked with the shop server. The cart was kept; check Sales/Holds before taking payment.');
     } finally {
       setParkingSale(false);
     }
-  }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, customerReference]);
+  }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, customerReference, retainedCheckoutId]);
 
   /**
    * Proceed re-reads the cart against the catalog first. A clean cart goes
