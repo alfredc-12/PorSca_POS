@@ -50,6 +50,34 @@ describe('POS durable checkout integration', () => {
     expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
   });
 
+  it('prepares the cancellation option lazily on the checkout screen without starting a tender', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.checkout.authorityCheckout).toEqual(open);
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('surfaces the authoritative abandoned result of a cancellation', async () => {
+    const { wrapper, client } = fixture();
+    const pos = renderHook(() => usePos(), { wrapper });
+    await add(pos.result);
+    await act(async () => { await pos.result.current.prepareCheckout(); });
+
+    let abandoned: AuthorityCheckout | undefined;
+    await act(async () => { abandoned = await pos.result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(client.abandonCheckout).toHaveBeenCalledWith(open.id, 'Customer changed their mind');
+    expect(abandoned?.state).toBe('abandoned');
+    expect(pos.result.current.authorityCheckout).toBeUndefined();
+  });
+
   it('keeps a replacement purchase recoverable when an unmounted provider receives an old cash response', async () => {
     const { wrapper, client, handle } = fixture();
     const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };

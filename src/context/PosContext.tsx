@@ -85,7 +85,8 @@ type PosContextValue = {
   recoverCheckout: (id?: string) => Promise<void>;
   discoverCheckouts: () => Promise<AuthorityCheckout[]>;
   revalidateCheckout: () => Promise<void>;
-  abandonCheckout: (reason: string) => Promise<void>;
+  /** Returns the authoritative result; only `abandoned` means the purchase is terminal. */
+  abandonCheckout: (reason: string) => Promise<AuthorityCheckout>;
   apiConfigured: boolean;
   searchProducts: (query: string) => Promise<void>;
   refreshProducts: () => Promise<boolean>;
@@ -100,7 +101,10 @@ type PosContextValue = {
   unresolvedQrPayment: () => Payment | undefined;
 };
 
-type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'prepareCheckout' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'claimCheckoutCompletionAlert' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'>;
+type CheckoutContextValue = Pick<PosContextValue, 'total' | 'cart' | 'apiConfigured' | 'completeCashSale' | 'startQrPhPayment' | 'refreshQrPhPayment' | 'confirmQrPhPayment' | 'unresolvedQrPayment' | 'authorityCheckout' | 'checkoutMachine' | 'checkoutProgress' | 'checkoutCompletion' | 'acknowledgeCheckout' | 'claimCheckoutCompletionAlert' | 'recoverCheckout' | 'revalidateCheckout' | 'abandonCheckout'> & {
+  /** The checkout screen's sale-help/cancel option creates or observes its open checkout here. */
+  prepareCancellation: () => Promise<AuthorityCheckout>;
+};
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
 const PosContext = createContext<PosContextValue | null>(null);
 export function useCheckout() {
@@ -678,13 +682,14 @@ export function PosProvider({
 
   const abandonCheckout = useCallback(async (reason: string) => {
     try {
-      await exclusive(async () => {
+      return await exclusive(async () => {
         // Cancelling ends the retained purchase, not the cashier's basket. Retire
         // the device handle and drop the retained display state, but leave the
         // draft cart (and any Clear All undo) untouched so it can be rung up as a
         // new sale. Only a completed sale clears the cart.
-        await authority.abandon(reason);
-        setAuthorityCheckout(undefined);
+        const result = await authority.abandon(reason);
+        if (result.state === 'abandoned') setAuthorityCheckout(undefined);
+        return result;
       });
     } catch (error) {
       setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
@@ -825,7 +830,7 @@ export function PosProvider({
       : storedCheckoutProgress
   ), [authority, cart, storedCheckoutProgress]);
   const checkoutValue = useMemo<CheckoutContextValue>(() => ({
-    total, cart, apiConfigured: client.isConfigured, prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
+    total, cart, apiConfigured: client.isConfigured, prepareCancellation: prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout
   }), [total, cart, prepareCheckout, completeCashSale, startQrPhPayment, refreshQrPhPayment, confirmQrPhPayment, unresolvedQrPayment, authorityCheckout, checkoutMachine, checkoutProgress, checkoutCompletion, acknowledgeCheckout, claimCheckoutCompletionAlert, recoverCheckout, revalidateCheckout, abandonCheckout, client.isConfigured]);
 
   return (

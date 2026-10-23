@@ -14,6 +14,7 @@ Both environments run the same Appium smoke suite, fixture variables, and assert
 | Build API URL | LAN URL of the development API | Stable staging API URL |
 | `APPIUM_LOGIN_EMAIL` / `APPIUM_LOGIN_PASSWORD` | Active development ADMIN account | Active staging admin account for the full suite; cashier is sufficient for cashier-only smoke cases |
 | `APPIUM_QR_EXPECTED_STATUS` | `pending` for the keyless local API; its automatic 2.5 s poll can advance the attempt to `unknown`, rendered as `Payment interrupted` | `paid` for the approved sandbox success flow; the matching value for other approved outcomes |
+| `APPIUM_QR_EXPIRY_EXPECTED` | `countdown` when the fixture attempt carries a server `qrExpiresAt`; `unavailable` only for a fixture that omits it | `countdown` for the approved sandbox attempt; `unavailable` only when that fixture omits `qrExpiresAt` |
 | `APPIUM_DEV_SERVER_URL` | Set to Metro LAN URL (for example `http://192.168.100.84:8081`) | Unset |
 
 Everything else remains identical: Appium smoke suite, device setup, fixture variables and values, and assertions. The fixture data must be prepared on the backend under test; defaults below reflect the shared `qa-baseline-2026-10` catalog seed.
@@ -36,6 +37,7 @@ APPIUM_CASH_AMOUNT=400 \
 APPIUM_STOCK_SEARCH="Sinandomeng Rice" \
 APPIUM_STOCK_ATTEMPTS=25 \
 APPIUM_QR_EXPECTED_STATUS=pending \
+APPIUM_QR_EXPIRY_EXPECTED=countdown \
 npm run smoke
 ```
 
@@ -54,6 +56,7 @@ APPIUM_CASH_AMOUNT=400 \
 APPIUM_STOCK_SEARCH="Sinandomeng Rice" \
 APPIUM_STOCK_ATTEMPTS=25 \
 APPIUM_QR_EXPECTED_STATUS=paid \
+APPIUM_QR_EXPIRY_EXPECTED=countdown \
 npm run smoke
 ```
 
@@ -74,17 +77,19 @@ The physical-label case in `test/smoke.e2e.ts` opens the native camera and waits
 
 The focused specs in `test/` share session, locator, scrolling, and fixture helpers from `test/support/` and run under the same existing `APPIUM_*` environment contract:
 
-- `checkout-cancellation.e2e.ts` uses the selected backend's seeded product to create a server-backed open checkout, rejects a reason shorter than eight characters, submits an attributed reason to `/abandon`, and verifies no receipt plus unchanged cart quantity/line total/total. It creates no payment attempt, does not reset backend data, and needs no provider outcome fixture;
+- `checkout-cancellation.e2e.ts` uses the selected backend's seeded product to create a server-backed open checkout when the cashier opens the cancellation option, rejects a reason shorter than eight characters, submits an attributed reason to `/abandon`, and verifies no receipt plus unchanged cart quantity/line total/total. It creates no payment attempt, does not reset backend data, and needs no provider outcome fixture;
 - `cart-totals.e2e.ts` checks line totals, subtotal, and total after quantity increment/decrement;
 - `inventory-admin.e2e.ts` checks admin product controls and changes/restores the selected fixture's stock;
 - `stock-deduction.e2e.ts` checks exactly one unit is deducted after repeated cash confirmation and no deduction after insufficient cash;
-- `checkout-recovery.e2e.ts` checks that an unresolved server-backed QR attempt displays its provider image or generated symbol and read-only expiry label, keeps Cash/cancellation locked, and survives an Android process restart without clearing app data. A provider-confirmed `paid` outcome is terminal and ends at its receipt instead;
+- `checkout-recovery.e2e.ts` checks that an unresolved server-backed QR attempt displays its provider image or generated symbol and the configured read-only expiry branch, keeps Cash/cancellation locked, and survives an Android process restart without clearing app data. A provider-confirmed `paid` outcome is terminal and ends at its receipt instead;
 - `history-filters.e2e.ts` filters a newly recorded cash receipt by tender and searches for its receipt ID; and
 - `barcode-fixture.e2e.ts` types `APPIUM_BARCODE_FIXTURE` into POS search to exercise deterministic exact-barcode lookup without camera input. It does not claim native camera/decoder coverage; the human-held physical-label case remains in `smoke.e2e.ts`.
 
-The shared setup signs in after app reset, handles the optional development-client launcher, and grants camera access. `APPIUM_RESET_APP` clears the app between cases but does not reset the backend. Cash-sale cases and the recovery case create backend records; safe cancellation creates and abandons one server-backed open checkout. Prepare the approved API fixture before a run and use the recorded QA procedure to reconcile/reset data between runs; this suite does not reset backend data. **Cancel this sale** is available only for an authoritative open/ready checkout with no unresolved or received payment. Leaving a pending/unknown QR attempt does not cancel or resolve it, and checkout cancellation is unavailable until Laravel confirms a terminal non-payable outcome; do not start another payment. WDIO runs `checkout-recovery.e2e.ts` last because a pending attempt is intentionally retained rather than unsafely cancelled.
+The shared setup signs in after app reset, handles the optional development-client launcher, and grants camera access. `APPIUM_RESET_APP` clears the app between cases but does not reset the backend. Cash-sale cases and the recovery case create backend records; safe cancellation creates and abandons one server-backed open checkout when the cashier opens the cancellation option. Prepare the approved API fixture before a run and use the recorded QA procedure to reconcile/reset data between runs; this suite does not reset backend data. **Cancel this sale** is available only for an authoritative open/ready checkout with no unresolved or received payment, and it prepares that checkout lazily instead of on Proceed. Leaving a pending/unknown QR attempt does not cancel or resolve it, and checkout cancellation is unavailable until Laravel confirms a terminal non-payable outcome; do not start another payment. WDIO runs `checkout-recovery.e2e.ts` last because a pending attempt is intentionally retained rather than unsafely cancelled.
 
 The smoke cases retained in `test/smoke.e2e.ts` cover search → cash checkout, the physical barcode scan → cash checkout, insufficient-stock and insufficient-cash rejection, successful cash history, and one visible history row after repeated cash confirmation. QR image/symbol visibility, the expiry display, unresolved-state cancellation lock, status actions, and restart recovery are covered by `checkout-recovery.e2e.ts`. The safe open-checkout cancellation case is `checkout-cancellation.e2e.ts`. Server-side inventory exactness across a retry/duplicate is also covered by the API `Idempotency-Key` contract and mobile provider tests.
+
+`APPIUM_QR_EXPIRY_EXPECTED` selects the branch the native case asserts: `countdown` requires the rendered `Time remaining: MM:SS` from the server `qrExpiresAt`, while `unavailable` requires the exact `Expiry time unavailable` fallback. Any other value fails fast at module load. The approved fixture must set it to the branch its attempt actually produces; neither branch is claimed as executed until a device run is recorded.
 
 `APPIUM_QR_EXPECTED_STATUS` accepts `pending` for the stable no-credential fixture on the backend under test, or `paid`, `paid_unfulfilled`, `unknown`, `failed`, `cancelled`, or `expired` when the approved sandbox flow supplies that result; any other value fails fast at module load. The keyless Development fixture starts at `pending`, but the checkout's automatic 2500 ms poll can move that same attempt to `unknown`, which renders `Payment interrupted`; recovery accepts either unresolved state and asserts the locked tender rather than an exact status string. For non-`paid` outcomes the test leaves the payment and asserts the return to the POS with the cart kept; for `pending`, `unknown`, and `paid_unfulfilled` it additionally asserts that the tender stays locked (no new payment is offered, cash tendering is disabled). The test never simulates a provider result in the mobile app.
 

@@ -10,7 +10,9 @@
  *
  * Every surface that explains divergence (checkout guidance, the cash-sale
  * failure card, the tender lock reason, sale help, and the POS recovery
- * notice) renders these strings so wording cannot drift from behavior.
+ * notice) renders these strings so wording cannot drift from behavior. A
+ * retained earlier basket with no observed checkout uses the recovery-only
+ * `unobservedBasketCopy` instead, because cancellation is not available yet.
  */
 
 const noPayment = 'No payment was taken for this cart.';
@@ -30,6 +32,21 @@ export const changedBasketCopy = {
   autoRecoveryNotice: (retainedListed: boolean) => retainedListed
     ? 'Automatic checkout recovery paused because the cart was not empty. This cart was not replaced. The retained purchase is listed below. Recovering an open purchase replaces this cart with its earlier basket. An already-cancelled purchase cannot be recovered.'
     : 'Automatic checkout recovery paused because the cart was not empty. No retained purchase was found in checkout discovery, and this cart was not replaced.',
+} as const;
+
+/**
+ * A retained earlier basket with no observed checkout. Recovery is the only
+ * real action; cancellation is not offered because no open purchase is behind
+ * the retained device identity yet.
+ */
+export const unobservedBasketCopy = {
+  headline: 'The cart changed',
+  body: 'The cart changed after checkout preparation began. No payment was taken for this cart, and this phone has no confirmed open purchase to cancel.',
+  safety: 'Recover the earlier basket to replace this cart and pay for it. Do not take payment for this cart until that device purchase is resolved.',
+  recover: 'Recover the earlier basket',
+  tenderLock: 'No payment was taken for this cart. Recover the earlier basket before taking payment.',
+  helpHint: 'Open help to recover the earlier basket. This phone has no confirmed purchase that can be cancelled yet.',
+  helpUnavailable: 'This phone has no confirmed open purchase to cancel. Recover the earlier basket, then cancel it or pay for it; do not take payment for this cart yet.',
 } as const;
 
 export const cancelledPurchaseCopy = {

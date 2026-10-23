@@ -67,6 +67,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
     checkoutMachine: openCheckout('test-checkout', 3500),
     authorityCheckout: undefined as AuthorityCheckout | undefined,
     checkoutProgress: undefined as CheckoutProgress | undefined,
+    prepareCancellation: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   const observe = (state: CheckoutMachine['state']) => {
@@ -563,8 +564,31 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(recoverCheckout).toHaveBeenCalledTimes(1); expect(completeCashSale).not.toHaveBeenCalled();
   });
 
+  it('prepares the checkout only when the cashier opens cancellation, not on arrival', async () => {
+    const prepareCancellation = jest.fn();
+    const context = setContext({ prepareCancellation, checkoutMachine: undefined }) as unknown as {
+      prepareCancellation: jest.Mock;
+      authorityCheckout?: AuthorityCheckout;
+      checkoutMachine?: CheckoutMachine;
+    };
+    context.prepareCancellation.mockImplementation(async () => {
+      const checkout = safeOpenCheckout();
+      context.authorityCheckout = checkout;
+      context.checkoutMachine = authorityObservation(checkout);
+      return checkout;
+    });
+    const view = render(<CheckoutScreen />);
+
+    expect(prepareCancellation).not.toHaveBeenCalled();
+    expect(view.getByTestId('cancel-sale-entry')).toBeTruthy();
+    await act(async () => { fireEvent.press(view.getByTestId('cancel-sale-entry')); });
+
+    expect(prepareCancellation).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('cancel-sale-reason-input')).toBeTruthy();
+  });
+
   it('makes a safe open-checkout cancellation discoverable and validates an attributed 8–500 character reason', async () => {
-    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
     const completeCashSale = jest.fn();
     const context = setContext({ authorityCheckout: safeOpenCheckout(), abandonCheckout, completeCashSale });
     const view = render(<CheckoutScreen />);
@@ -589,10 +613,61 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(completeCashSale).not.toHaveBeenCalled();
   });
 
+  it('shows the cancelled state only when the authority reports the purchase abandoned', async () => {
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'payment_unresolved' });
+    setContext({ abandonCheckout, authorityCheckout: safeOpenCheckout() });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Cashier changed their mind');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
+
+    expect(abandonCheckout).toHaveBeenCalledWith('Cashier changed their mind');
+    expect(view.queryByTestId('checkout-cancelled-notice')).toBeNull();
+  });
+
+  it('clears the cancelled state when a new tender starts', async () => {
+    const completeCashSale = jest.fn().mockResolvedValue(sale);
+    const context = setContext({ completeCashSale, authorityCheckout: safeOpenCheckout() }) as unknown as {
+      abandonCheckout: jest.Mock;
+      authorityCheckout?: AuthorityCheckout;
+      checkoutMachine?: CheckoutMachine;
+    };
+    context.abandonCheckout = jest.fn(async () => {
+      context.authorityCheckout = undefined;
+      context.checkoutMachine = undefined;
+      return { ...safeOpenCheckout(), state: 'abandoned' };
+    });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
+    expect(view.getByTestId('checkout-cancelled-notice')).toBeTruthy();
+
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(completeCashSale).toHaveBeenCalledWith('100');
+    expect(view.queryByTestId('checkout-cancelled-notice')).toBeNull();
+  });
+
+  it('does not promise cancellation for a changed basket with no observed checkout', () => {
+    setContext({ checkoutMachine: undefined, checkoutProgress: { basketDiverged: true } });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The cart changed after checkout preparation began/);
+    expect(view.getByTestId('checkout-guidance')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+    expect(view.queryByTestId('cancel-sale-entry')).toBeNull();
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    expect(view.getByTestId('cancel-sale-unavailable')).toHaveTextContent(/no confirmed open purchase to cancel/i);
+    expect(view.queryByTestId('confirm-cancel-sale')).toBeNull();
+  });
+
   it('tells the cashier a changed cart needs recovery or cancellation instead of a payment-in-progress warning', async () => {
     const completeCashSale = jest.fn();
     const recoverCheckout = jest.fn().mockResolvedValue(undefined);
-    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
     setContext({ completeCashSale, recoverCheckout, abandonCheckout, authorityCheckout: safeOpenCheckout(), checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' } });
     const view = render(<CheckoutScreen />);
 
@@ -622,7 +697,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
   });
 
   it('reports an unconfirmed cancellation and allows trying to cancel again', async () => {
-    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
     setContext({
       abandonCheckout,
       authorityCheckout: safeOpenCheckout(),

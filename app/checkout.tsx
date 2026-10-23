@@ -13,7 +13,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { canSafelyAbandonCheckout } from '@/src/domain/checkoutCancellation';
@@ -46,6 +46,7 @@ export default function CheckoutScreen() {
     recoverCheckout,
     revalidateCheckout,
     abandonCheckout,
+    prepareCancellation,
   } = useCheckout();
   const [retainedPayment] = useState(() => unresolvedQrPayment());
   const [selectedMode, setMode] = useState<'cash' | 'qrph'>(() => retainedPayment || method === 'qrph' ? 'qrph' : 'cash');
@@ -88,11 +89,14 @@ export default function CheckoutScreen() {
   }, [done, claimCheckoutCompletionAlert, modalAllowed]);
 
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
-  const [cancellationComplete, setCancellationComplete] = useState(false);
+  const [cancelledCheckoutId, setCancelledCheckoutId] = useState<string>();
+  const authorityObserved = Boolean(authorityCheckout || checkoutMachine);
+  const basketCopy = authorityObserved ? changedBasketCopy : unobservedBasketCopy;
 
-  // A cancelled purchase is terminal, so it never offers the changed-basket
-  // recovery or cancellation controls.
-  const purchaseCancelled = cancellationComplete || checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
+  // A cancelled purchase is terminal until another checkout is observed or a
+  // new tender starts; only that local acknowledgement belongs to this screen.
+  const cancelledPurchase = cancelledCheckoutId !== undefined && (!authorityCheckout || authorityCheckout.id === cancelledCheckoutId);
+  const purchaseCancelled = cancelledPurchase || checkoutMachine?.state === 'abandoned' || authorityCheckout?.state === 'abandoned';
   const dueAmountCentavos = purchaseCancelled ? Math.round(total * 100) : authorityCheckout?.amountCentavos ?? Math.round(total * 100);
   const cashResult = useMemo(() => checkoutCashTender(cash, dueAmountCentavos), [cash, dueAmountCentavos]);
   const cashFeedback = cashResult.kind === 'insufficient'
@@ -157,10 +161,25 @@ export default function CheckoutScreen() {
   const tenderLockReason = terminalLocked
     ? 'This purchase is locked. Do not take another payment.'
     : changedBasketActive
-      ? changedBasketCopy.tenderLock
+      ? basketCopy.tenderLock
       : cancellationUnconfirmed
         ? cancellationFailedCopy.tenderLock
         : 'Do not take another payment while this payment is waiting.';
+  const cancellationPreparable = !authorityObserved && !guidance && !administratorRequired && !purchaseCancelled
+    && !checkoutProgress?.uncertainTender && !terminalLocked;
+  const cancellationEntryAvailable = safeCancellationAvailable || cancellationPreparable;
+  const requestCancellation = async () => {
+    if (!cancellationPreparable || operationRef.current || administratorRequired) return;
+    operationRef.current = true;
+    setRecoveryBusy(true);
+    setRecoveryError(undefined);
+    try { await prepareCancellation(); }
+    catch (error) {
+      const apiError = error instanceof ApiClientError ? error : undefined;
+      if (apiError?.code !== 'checkout_basket_diverged') setRecoveryError('We could not prepare this sale for cancellation. Your cart is unchanged. Try again before taking payment.');
+    }
+    finally { operationRef.current = false; setRecoveryBusy(false); }
+  };
 
   const checkoutItems = purchaseCancelled ? undefined : authorityCheckout?.items;
   const authoritativeCart = useMemo(() => checkoutItems?.map(item => ({
@@ -210,6 +229,7 @@ export default function CheckoutScreen() {
     if (cashBusyRef.current) return;
     cashBusyRef.current = true;
     operationRef.current = true;
+    setCancelledCheckoutId(undefined);
     setCashSubmitting(true);
     try {
       const sale = await completeCashSale(cash);
@@ -314,6 +334,7 @@ export default function CheckoutScreen() {
     if (operationRef.current || administratorRequired) return;
     operationRef.current = true;
     qrBusyRef.current = true;
+    setCancelledCheckoutId(undefined);
     setQrBusy(true);
     setQrStatus('creating');
     setQrError(undefined);
@@ -436,7 +457,7 @@ export default function CheckoutScreen() {
           {qrError?.reference || qrFailure?.reference || cashError?.reference ? <Text>Support code: {qrError?.reference ?? qrFailure?.reference ?? cashError?.reference}</Text> : null}
         </View> : null}
         {recoveryError && !guidance?.admin ? <Text accessibilityRole="alert">{recoveryError}</Text> : null}
-        {cancellationComplete ? <Text testID="checkout-cancelled-notice" accessibilityLiveRegion="polite">Checkout cancelled. Your cart is unchanged and ready for a new sale.</Text> : null}
+        {cancelledPurchase ? <Text testID="checkout-cancelled-notice" accessibilityLiveRegion="polite">Checkout cancelled. Your cart is unchanged and ready for a new sale.</Text> : null}
         <View style={styles.dueCard}>
           <View>
             <Text style={styles.dueLabel}>Amount due</Text>
@@ -450,16 +471,22 @@ export default function CheckoutScreen() {
           <CheckoutOrderSummary cart={displayedCart} />
         </View>
 
-        {!purchaseCancelled && (guidance?.category === 'interrupted' || guidance?.category === 'changed' || (authorityCheckout && !guidance)) ? <View style={styles.orderCard}>
-          <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => setShowSaleHelp(value => !value)}>
+        {!purchaseCancelled && (guidance?.category === 'interrupted' || guidance?.category === 'changed' || !guidance) ? <View style={styles.orderCard}>
+          <Pressable testID="sale-help-toggle" accessibilityRole="button" onPress={() => {
+            const opening = !showSaleHelp;
+            setShowSaleHelp(opening);
+            if (opening) void requestCancellation();
+          }}>
             <Text style={styles.sectionTitle}>{showSaleHelp ? 'Hide sale help' : 'Need help with this sale?'}</Text>
           </Pressable>
-          {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? changedBasketCopy.helpHint : cancellationUnconfirmed ? cancellationFailedCopy.helpHint : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
-          {!showSaleHelp && safeCancellationAvailable ? <AppButton testID="cancel-sale-entry" label="Cancel this sale" onPress={() => setShowSaleHelp(true)} variant="secondary" /> : null}
+          {!showSaleHelp ? <Text style={styles.helper}>{changedBasketActive ? basketCopy.helpHint : cancellationUnconfirmed ? cancellationFailedCopy.helpHint : !guidance && !safeCancellationAvailable ? 'Open help to prepare this sale for safe cancellation or recovery. Nothing is cancelled until you confirm a reason.' : 'This sale needs attention. Open help only if the payment was interrupted.'}</Text> : null}
+          {!showSaleHelp && cancellationEntryAvailable ? <AppButton testID="cancel-sale-entry" label="Cancel this sale" onPress={() => { setShowSaleHelp(true); void requestCancellation(); }} variant="secondary" /> : null}
           {showSaleHelp ? <>
             <Text style={styles.helper}>These steps keep this sale safe. They never take another payment.</Text>
-            <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
-            <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
+            {guidance || authorityCheckout ? <>
+              <AppButton label="Check the current price" onPress={() => void recoveryAction(() => revalidateCheckout())} disabled={tenderLocked} variant="secondary" />
+              <AppButton label="Try recovering this sale" onPress={() => void recoveryAction(() => recoverCheckout())} disabled={operationBusy} variant="secondary" />
+            </> : null}
             {safeCancellationAvailable ? <>
               <Text style={styles.label}>Cancel this sale</Text>
               <Text style={styles.helper}>This ends the checkout only; it does not cancel a QR payment. Your cart stays as it is.</Text>
@@ -469,14 +496,17 @@ export default function CheckoutScreen() {
                 const reason = abandonReason.trim();
                 if (safeCancellationAvailable && reason.length >= 8 && reason.length <= 500) {
                   void recoveryAction(async () => {
-                    await abandonCheckout(reason);
-                    setCancellationComplete(true);
+                    const abandoned = await abandonCheckout(reason);
+                    if (abandoned.state === 'abandoned') setCancelledCheckoutId(abandoned.id);
                   }, cancellationFailedCopy.notice);
                 }
               }} disabled={operationBusy || abandonReason.trim().length < 8 || abandonReason.trim().length > 500} variant="secondary" />
-            </> : !guidance?.admin ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">
-              Cancellation is unavailable while this purchase is unresolved. Use the payment-status or recovery action above, or Leave Payment where shown; do not take another payment.
-            </Text> : null}
+            </> : recoveryBusy && cancellationPreparable ? <Text testID="cancel-sale-preparing" accessibilityLiveRegion="polite">Preparing this sale for safe cancellation…</Text>
+              : basketDiverged && !authorityObserved ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">{unobservedBasketCopy.helpUnavailable}</Text>
+                : cancellationPreparable ? null
+                  : !guidance?.admin ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">
+                    Cancellation is unavailable while this purchase is unresolved. Use the payment-status or recovery action above, or Leave Payment where shown; do not take another payment.
+                  </Text> : null}
           </> : null}
         </View> : null}
 

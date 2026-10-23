@@ -1,5 +1,5 @@
 import { checkoutGuidance } from './checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from './checkoutDivergenceCopy';
 import { CheckoutMachine, openCheckout } from './checkoutMachine';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 const base = openCheckout('c', 2500);
@@ -51,6 +51,15 @@ describe('cashier guidance from trusted truth', () => {
     expect(text).toMatch(/keep this cart/);
     expect(text).toMatch(/cancelled purchase cannot be recovered/);
     expect(text).not.toMatch(/could not confirm|may already be recorded|may still be charged|Do not take another payment/);
+  });
+  it('offers only recovery for a changed basket with no observed checkout', () => {
+    const guidance = checkoutGuidance({ progress: { basketDiverged: true } });
+    expect(guidance).toMatchObject({ category: 'changed', headline: unobservedBasketCopy.headline, action: 'recover', label: unobservedBasketCopy.recover, locked: true, admin: false });
+    const text = `${guidance!.body} ${guidance!.safety}`;
+    expect(text).toMatch(/No payment was taken for this cart/);
+    expect(text).toMatch(/Recover the earlier basket/);
+    expect(text).toMatch(/no confirmed open purchase to cancel/);
+    expect(text).not.toMatch(/or cancel this purchase|keep this cart/);
   });
   it('keeps unconfirmed money and a live tender ahead of a changed basket', () => {
     expect(checkoutGuidance({ machine: { ...pending, attempts: [{ ...pending.attempts[0], payment: 'unknown' }] }, progress: { basketDiverged: true } })).toMatchObject({ category: 'interrupted' });

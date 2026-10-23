@@ -1,6 +1,6 @@
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CheckoutMachine } from './checkoutMachine';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from './checkoutDivergenceCopy';
 
 export type CheckoutProgress = {
   uncertainTender?: 'cash' | 'qrph';
@@ -24,6 +24,7 @@ export function checkoutGuidance(input: {
   receipt?: 'running' | 'failed' | 'ready'; verificationFailed?: boolean; configured?: boolean; method?: 'cash' | 'qrph';
 }): CheckoutGuidance | undefined {
   const { authority, machine, progress = {}, operation, receipt } = input;
+  const observed = Boolean(authority || machine);
   const active = machine?.attempts[machine.attempts.length - 1];
   const qr = progress.uncertainTender ? progress.uncertainTender === 'qrph' : active ? active.method === 'qr' : input.method === 'qrph';
   const make = (category: CheckoutGuidance['category'], body: string, safety: string, action: GuidanceAction, label: string, headline?: string): CheckoutGuidance => ({
@@ -73,6 +74,9 @@ export function checkoutGuidance(input: {
   // recover or cancel the retained purchase rather than to guard against lost
   // money. Cancelling keeps this cart; recovering an open purchase replaces it
   // with the earlier basket, which the copy states explicitly.
-  if (progress.basketDiverged) return make('changed', changedBasketCopy.body, changedBasketCopy.safety, 'recover', changedBasketCopy.recover);
+  if (progress.basketDiverged) {
+    const copy = observed ? changedBasketCopy : unobservedBasketCopy;
+    return make('changed', copy.body, copy.safety, 'recover', copy.recover, copy.headline);
+  }
   return undefined;
 }

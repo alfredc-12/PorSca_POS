@@ -8,7 +8,6 @@ import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
 import { CartReviewSheet } from '@/src/components/CartReviewSheet';
 import { CartRevalidation, cartSignature } from '@/src/domain/revalidation';
-import { needsCheckoutRecovery } from '@/src/domain/durableCheckout';
 import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
@@ -34,8 +33,6 @@ export default function PosScreen() {
     clearCart,
     undoClearCart,
     beginCheckout,
-    prepareCheckout,
-    authorityCheckout,
     revalidateCart,
     replaceCartLines,
     demoCatalogEnabled,
@@ -87,19 +84,10 @@ export default function PosScreen() {
     return result.ok;
   }, [incrementProduct]);
 
-  const openCheckout = useCallback(async () => {
+  const openCheckout = useCallback(() => {
     beginCheckout();
-    try {
-      await prepareCheckout();
-      router.push({ pathname: '/checkout', params: { method } });
-    } catch (error) {
-      // A retained server purchase, or a failure only the checkout screen can
-      // explain, is routed there. A transport failure keeps the cart here so a
-      // retry is safe without exposing an unprepared payment action.
-      if (authorityCheckout || needsCheckoutRecovery(error)) router.push({ pathname: '/checkout', params: { method } });
-      else setCartNotice('We could not prepare this sale with the shop server. Your cart is unchanged. Try again before taking payment.');
-    }
-  }, [authorityCheckout, beginCheckout, method, prepareCheckout]);
+    router.push({ pathname: '/checkout', params: { method } });
+  }, [beginCheckout, method]);
 
   /**
    * Proceed re-reads the cart against the catalog first. A clean cart goes
@@ -118,7 +106,7 @@ export default function PosScreen() {
     try {
       const result = await revalidateCart();
       if (result.status === 'ready') {
-        await openCheckout();
+        openCheckout();
         return;
       }
       if (result.status === 'offline' || result.status === 'unavailable') {
@@ -131,7 +119,7 @@ export default function PosScreen() {
     }
   }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
 
-  const applyReview = useCallback(async () => {
+  const applyReview = useCallback(() => {
     if (!review) return;
     // The cart can be edited while the review sheet is open, and the revalidation
     // result only describes the cart it read. A stale review must never overwrite
@@ -143,12 +131,7 @@ export default function PosScreen() {
     }
     replaceCartLines(review.appliedLines);
     setReview(undefined);
-    setCheckingPrices(true);
-    try {
-      await openCheckout();
-    } finally {
-      setCheckingPrices(false);
-    }
+    openCheckout();
   }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);

@@ -247,10 +247,11 @@ describe('checkout remount with durable machine state', () => {
     expect(view.queryByTestId('qr-payment-code-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
   it.each([false, true])('retains a paid status returned in the background when receipt reads fail: %s', async failReads => {
-    let changeState!: (state: AppStateStatus) => void;
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const changeState = (state: AppStateStatus) => { listeners.forEach(listener => listener(state)); };
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
-      changeState = listener;
-      return { remove: jest.fn() };
+      listeners.push(listener);
+      return { remove: () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); } };
     });
     const { tree, client, setCheckout, handle } = fixture();
     const view = render(tree); await start(view);
@@ -276,23 +277,20 @@ describe('checkout remount with durable machine state', () => {
       expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
       expect(view.getByTestId('retry-qr-verification')).toHaveTextContent('Retry receipt refresh');
       await act(async () => { fireEvent.press(view.getByTestId('retry-qr-verification')); });
-      expect(Alert.alert).toHaveBeenCalledTimes(1);
-    } else {
-      // The paid receipt is already displayed after resuming, so a modal would
-      // obscure it and ask for a second acknowledgement.
-      expect(Alert.alert).not.toHaveBeenCalled();
     }
     expect(view.getByTestId('checkout-completed-receipt')).toHaveTextContent(/Receipt 9/);
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
     expect(handle()).toBeNull();
     expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
     expect(client.createCheckoutAttempt).toHaveBeenCalledTimes(1);
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('keeps receipt failures that arrive after backgrounding available for retry', async () => {
-    let changeState!: (state: AppStateStatus) => void;
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const changeState = (state: AppStateStatus) => { listeners.forEach(listener => listener(state)); };
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
-      changeState = listener;
-      return { remove: jest.fn() };
+      listeners.push(listener);
+      return { remove: () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); } };
     });
     const { tree, client, setCheckout } = fixture();
     const view = render(tree); await start(view);
