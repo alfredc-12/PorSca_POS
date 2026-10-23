@@ -574,7 +574,7 @@ export default function CheckoutScreen() {
               )}
               <Text style={styles.qrTitle}>Practice QR — not payable</Text>
               <Text testID="qr-practice-notice" style={styles.qrBody}>Practice display only — not payable. Do not scan this QR to pay. Its image or expiry does not confirm payment; check the payment status. Leaving does not cancel an attempt.</Text>
-              <QrExpiryCountdown key={`${qrPayment?.id ?? 'no-attempt'}:${qrExpiresAt ?? ''}`} expiresAt={qrExpiresAt} />
+              {qrPayment ? <QrExpiryCountdown key={`${qrPayment.id}:${qrExpiresAt ?? ''}`} expiresAt={qrExpiresAt} /> : null}
               {qrStatus !== 'idle' ? (
                 <Text testID="qr-payment-status" accessibilityLiveRegion="polite" style={[styles.qrStatus, qrStatus === 'paid' ? styles.qrStatusPaid : qrStatus === 'paid_unfulfilled' ? styles.qrStatusReconcile : qrStatus === 'verification' ? styles.qrStatusVerification : styles.qrStatusError]}>
                   {receiptRefresh === 'running' ? 'Payment pending…' : qrStatusText(qrStatus)}

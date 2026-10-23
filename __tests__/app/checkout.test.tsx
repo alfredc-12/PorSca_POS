@@ -298,6 +298,18 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     return view;
   }
 
+  it('shows the read-only expiry countdown only after a server QR attempt exists', async () => {
+    setContext();
+    const view = render(<CheckoutScreen />);
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+
+    expect(view.queryByTestId('qr-expiry-countdown')).toBeNull();
+
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    expect(view.getByTestId('qr-expiry-countdown')).toHaveTextContent('Expiry time unavailable');
+  });
+
   it('creates a Laravel payment, displays the returned QR payload, and remains pending', async () => {
     const startQrPhPayment = jest.fn().mockResolvedValue(pendingQrPayment);
     setContext({ startQrPhPayment });

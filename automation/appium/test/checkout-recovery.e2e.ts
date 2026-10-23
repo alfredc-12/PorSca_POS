@@ -33,14 +33,13 @@ async function assertUnresolvedQrAttemptIsLocked() {
     const generatedSymbolVisible = await byId('qr-payment-code').isDisplayed().catch(() => false);
     if (!providerImageVisible && !generatedSymbolVisible) throw new Error('The server-returned QR image or symbol is not visible on Android.');
   }
-  await expect(byId('qr-expiry-countdown')).toBeDisplayed();
   const expiry = await visibleText(byId('qr-expiry-countdown'));
   if (qrExpiryExpectation === 'countdown') {
     if (!/^Time remaining: \d{2}:\d{2}$/.test(expiry)) throw new Error(`The configured fixture should show a server-backed QR countdown, saw: ${expiry}`);
   } else if (expiry !== 'Expiry time unavailable') {
     throw new Error(`The configured fixture should show the unavailable expiry fallback, saw: ${expiry}`);
   }
-  expect((await byId('qr-practice-notice').getText()).toLowerCase()).toContain('not payable');
+  expect((await visibleText(byId('qr-practice-notice'))).toLowerCase()).toContain('not payable');
 }
 
 async function cartSnapshot() {
