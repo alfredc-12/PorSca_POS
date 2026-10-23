@@ -6,6 +6,7 @@ import {
   byId,
   expect,
   prepareAppiumCase,
+  reveal,
   searchAndSelect,
   tap,
   visibleText,
@@ -28,9 +29,9 @@ describe('safe server-backed checkout cancellation', () => {
     const before = await cartSnapshot();
     await tap('proceed-to-payment');
 
-    await byId('cancel-sale-entry').waitForDisplayed();
+    await (await reveal(byId('cancel-sale-entry'))).waitForDisplayed();
     await tap('cancel-sale-entry');
-    const reason = byId('cancel-sale-reason-input');
+    const reason = await reveal(byId('cancel-sale-reason-input'));
     await reason.waitForDisplayed();
     await reason.setValue('short');
     const confirm = byId('confirm-cancel-sale');
@@ -42,7 +43,7 @@ describe('safe server-backed checkout cancellation', () => {
     await expect(confirm).toBeEnabled();
     await tap('confirm-cancel-sale');
 
-    const cancelledNotice = byId('checkout-cancelled-notice');
+    const cancelledNotice = await reveal(byId('checkout-cancelled-notice'));
     await cancelledNotice.waitForDisplayed();
     expect((await cancelledNotice.getText()).toLowerCase()).toContain('cart is unchanged');
     expect(await byId('checkout-completed-receipt').isDisplayed().catch(() => false)).toBe(false);

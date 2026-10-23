@@ -30,7 +30,6 @@ export const changedBasketCopy = {
   recover: 'Recover the earlier basket',
   tenderLock: `${noPayment} ${replaceOrKeep}`,
   helpHint: 'Open help to recover the earlier basket, or to cancel that purchase and keep this cart.',
-  helpUnavailable: 'Cancellation is not available for this purchase. Use the payment-status or recovery action above; do not take another payment for this cart.',
   failureTitle: 'The cart changed after checkout started',
   failureBody: `${noPayment} ${replaceOrKeep} ${alreadyCancelled}`,
   failureActionLabel: 'Recover the earlier basket',
@@ -79,6 +78,11 @@ export const blockedBasketCopy = {
 /** Selects the divergence wording the screen can actually back up. */
 export function basketDivergenceCopy(state: BasketDivergenceState) {
   return state === 'safe' ? changedBasketCopy : state === 'blocked' ? blockedBasketCopy : unobservedBasketCopy;
+}
+
+/** Recovery-only wording for a divergence that cannot offer cancellation now. */
+export function recoveryOnlyBasketCopy(state: Exclude<BasketDivergenceState, 'safe'>) {
+  return state === 'blocked' ? blockedBasketCopy : unobservedBasketCopy;
 }
 
 export const cancelledPurchaseCopy = {

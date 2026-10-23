@@ -13,7 +13,7 @@ import { useCheckout } from '@/src/context/PosContext';
 import { paymentError } from '@/src/domain/pos';
 import { cashTenderPresets, formatCheckoutMoney } from '@/src/domain/checkoutMoney';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
-import { BasketDivergenceState, basketDivergenceCopy, cancellationFailedCopy, cancelledPurchaseCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { BasketDivergenceState, basketDivergenceCopy, cancellationFailedCopy, cancelledPurchaseCopy, recoveryOnlyBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { useCheckoutPaymentPolling } from '@/src/hooks/useCheckoutPaymentPolling';
 import { canAcceptCheckoutTender, checkoutCashTender } from '@/src/domain/checkoutMachine';
 import { canSafelyAbandonCheckout } from '@/src/domain/checkoutCancellation';
@@ -503,7 +503,7 @@ export default function CheckoutScreen() {
                 }
               }} disabled={operationBusy || abandonReason.trim().length < 8 || abandonReason.trim().length > 500} variant="secondary" />
             </> : recoveryBusy && cancellationPreparable ? <Text testID="cancel-sale-preparing" accessibilityLiveRegion="polite">Preparing this sale for safe cancellation…</Text>
-              : basketDiverged && divergenceState !== 'safe' ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">{basketCopy.helpUnavailable}</Text>
+              : basketDiverged && divergenceState !== 'safe' ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">{recoveryOnlyBasketCopy(divergenceState).helpUnavailable}</Text>
                 : cancellationPreparable ? null
                   : !guidance?.admin ? <Text testID="cancel-sale-unavailable" accessibilityRole="text">
                     Cancellation is unavailable while this purchase is unresolved. Use the payment-status or recovery action above, or Leave Payment where shown; do not take another payment.
