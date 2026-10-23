@@ -9,6 +9,17 @@ import { CheckoutProgress } from './checkoutGuidance';
 export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
 
+/**
+ * A failure that leaves authoritative checkout state on the device, where a
+ * retry cannot clear it: the checkout screen owns the recovery guidance for it.
+ * Only failures the shop server has answered, or an unreadable identity/observation,
+ * qualify; a transport failure is retried at the POS with the cart untouched.
+ */
+export function needsCheckoutRecovery(error: unknown) {
+  if (error instanceof CheckoutIdentityError || error instanceof CheckoutObservationError) return true;
+  return error instanceof ApiClientError && (error.status !== undefined || error.code !== undefined);
+}
+
 export type CheckoutHandle = { key: string; signature: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number } };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
 export class CheckoutStorageCorruptionError extends Error {}

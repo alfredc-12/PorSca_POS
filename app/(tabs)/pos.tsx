@@ -8,6 +8,7 @@ import { usePos } from '@/src/context/PosContext';
 import { DataState } from '@/src/components/DataState';
 import { CartReviewSheet } from '@/src/components/CartReviewSheet';
 import { CartRevalidation, cartSignature } from '@/src/domain/revalidation';
+import { needsCheckoutRecovery } from '@/src/domain/durableCheckout';
 import { OFFLINE_COPY } from '@/src/config/offline';
 import { PaymentMethod } from '@/src/types';
 import { colors, radius, spacing, typography } from '@/src/theme/tokens';
@@ -91,11 +92,11 @@ export default function PosScreen() {
     try {
       await prepareCheckout();
       router.push({ pathname: '/checkout', params: { method } });
-    } catch {
-      // If a retained server purchase exists, checkout owns its recovery UI.
-      // Otherwise keep the cart here and invite a safe retry without exposing
-      // an unprepared cancellation or payment action.
-      if (authorityCheckout) router.push({ pathname: '/checkout', params: { method } });
+    } catch (error) {
+      // A retained server purchase, or a failure only the checkout screen can
+      // explain, is routed there. A transport failure keeps the cart here so a
+      // retry is safe without exposing an unprepared payment action.
+      if (authorityCheckout || needsCheckoutRecovery(error)) router.push({ pathname: '/checkout', params: { method } });
       else setCartNotice('We could not prepare this sale with the shop server. Your cart is unchanged. Try again before taking payment.');
     }
   }, [authorityCheckout, beginCheckout, method, prepareCheckout]);

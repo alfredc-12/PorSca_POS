@@ -482,6 +482,21 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
     expect(alertSpy).toHaveBeenCalledWith('Administrator required', expect.stringContaining('Call the shop administrator now.'));
   });
+
+  it('keeps the paid_unfulfilled modal off a backgrounded app', async () => {
+    const unfulfilled = { ...pendingQrPayment, status: 'paid_unfulfilled' as const };
+    const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
+    setContext({ refreshQrPhPayment: jest.fn().mockResolvedValue(unfulfilled), confirmQrPhPayment });
+    const view = await openQrCheckout();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background' });
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+
+    expect(confirmQrPhPayment).toHaveBeenCalledWith(unfulfilled);
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
     const confirmQrPhPayment = jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph' });

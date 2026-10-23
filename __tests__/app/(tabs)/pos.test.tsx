@@ -60,8 +60,8 @@ function catalogClient({ products }: { products: Product[] }) {
   } as unknown as ApiClient;
 }
 
-function renderPos(posClient: ApiClient = client) {
-  let handle: CheckoutHandle | null = null;
+function renderPos(posClient: ApiClient = client, retained?: CheckoutHandle) {
+  let handle: CheckoutHandle | null = retained ?? null;
   const checkoutStore: CheckoutStorage = { load: async () => handle, save: async value => { handle = value; } };
   return render(
     <PosProvider client={posClient} checkoutStore={checkoutStore}>
@@ -383,6 +383,43 @@ describe('POS pre-checkout revalidation', () => {
     expect(createCheckout).toHaveBeenCalledTimes(1);
     expect(createCheckout.mock.invocationCallOrder[0]).toBeLessThan(router.push.mock.invocationCallOrder[0]);
     expect(view.queryByTestId('cart-review-sheet')).toBeNull();
+  });
+
+  it('routes a retained checkout the server no longer knows to its recovery guidance', async () => {
+    const posClient = {
+      isConfigured: true,
+      getProduct: jest.fn(async () => single),
+      getCheckout: jest.fn().mockRejectedValue(new ApiClientError('Retained checkout was not found.', 404)),
+      listCheckouts: jest.fn().mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }),
+      recoverCheckout: jest.fn().mockRejectedValue(new ApiClientError('Retained checkout was not found.', 404)),
+    } as unknown as ApiClient;
+    const view = renderPos(posClient, { key: 'retained-key', signature: JSON.stringify([[1, 1]]), id: 'missing-checkout' });
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    // The device identity outlived the backend record, so only the checkout
+    // screen's guidance can resolve it; a generic "try again" is a dead end.
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));
+    expect(view.queryByText(/could not prepare this sale/)).toBeNull();
+  });
+
+  it('keeps the cart at POS with a retry notice when preparation cannot reach the server', async () => {
+    const posClient = {
+      isConfigured: true,
+      getProduct: jest.fn(async () => single),
+      createCheckout: jest.fn().mockRejectedValue(new ApiClientError('Unable to reach PorSca API: timeout')),
+    } as unknown as ApiClient;
+    const view = renderPos(posClient);
+
+    fireEvent.press(view.getByLabelText('seed-single'));
+    await waitFor(() => expect(view.getByText('Sardines 155g')).toBeTruthy());
+    fireEvent.press(view.getByTestId('proceed-to-payment'));
+
+    await waitFor(() => expect(view.getByTestId('cart-limit-notice')).toHaveTextContent(/could not prepare this sale/));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(view.getByText('Sardines 155g')).toBeTruthy();
   });
 
   it('shows a price change and applies the authoritative price before checkout', async () => {

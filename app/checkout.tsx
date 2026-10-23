@@ -77,12 +77,15 @@ export default function CheckoutScreen() {
   useEffect(() => () => {
     if (navigatedDone.current) acknowledgeCheckout?.();
   }, [acknowledgeCheckout]);
+  // A blocking modal is only ever raised while this screen is focused and the
+  // app is in the foreground; a background result stays in the screen state.
+  const modalAllowed = useCallback(() => visibleRef.current && AppState.currentState === 'active', []);
   const alertCompletion = useCallback((sale: Sale) => {
-    if (!visibleRef.current || AppState.currentState !== 'active' || handledPaidPayment.current === sale.id) return;
+    if (!modalAllowed() || handledPaidPayment.current === sale.id) return;
     if (claimCheckoutCompletionAlert && !claimCheckoutCompletionAlert(sale.id)) return;
     handledPaidPayment.current = sale.id;
     Alert.alert('Payment completed', receiptText(sale), [{ text: 'Done', onPress: done }]);
-  }, [done, claimCheckoutCompletionAlert]);
+  }, [done, claimCheckoutCompletionAlert, modalAllowed]);
 
   const recordedTerminalStatus = useRef<string | undefined>(undefined);
   const [cancellationComplete, setCancellationComplete] = useState(false);
@@ -213,7 +216,7 @@ export default function CheckoutScreen() {
       if (!sale) {
         const failure = localFailure('The sale was not saved', 'The cart is empty. Return to the POS and add a product before trying again.', { action: 'retry', actionLabel: 'Try again' });
         setCashError(failure);
-        Alert.alert(failure.title, failure.body);
+        if (modalAllowed()) Alert.alert(failure.title, failure.body);
         return;
       }
       alertCompletion(sale);
@@ -228,7 +231,7 @@ export default function CheckoutScreen() {
         details: apiError?.details,
       });
       setCashError(failure);
-      Alert.alert(failure.title, alertBody(failure));
+      if (modalAllowed()) Alert.alert(failure.title, alertBody(failure));
     } finally {
       cashBusyRef.current = false;
       operationRef.current = false;
@@ -253,7 +256,7 @@ export default function CheckoutScreen() {
       try {
         await confirmQrPhPayment(payment);
         setQrStatus('paid_unfulfilled');
-        if (visibleRef.current && handledPaidPayment.current !== payment.id) {
+        if (modalAllowed() && handledPaidPayment.current !== payment.id) {
           handledPaidPayment.current = payment.id;
           Alert.alert(failure.title, alertBody(failure));
         }
@@ -278,7 +281,7 @@ export default function CheckoutScreen() {
       setQrStatus('verification');
       setQrError(describeQrVerification(error));
     }
-  }, [confirmQrPhPayment, alertCompletion]);
+  }, [confirmQrPhPayment, alertCompletion, modalAllowed]);
 
   const [authorityViewInputs, setAuthorityViewInputs] = useState<{
     authorityCheckout: typeof authorityCheckout;
