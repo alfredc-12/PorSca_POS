@@ -1,7 +1,16 @@
 # PROJECT_CHECKS.md
 
 Per-repo tier command mapping for adaptive no-mistakes validation
-(Phase 1; `.no-mistakes.yaml` `test:` block routes T0-T3).
+(Phase 2; `.no-mistakes.yaml` `test:` block routes T0-T3 and defines
+critical-path test authority).
+
+## Frozen checkout golden matrix
+
+The frozen matrix for `checkoutMachine`, `durableCheckout`,
+`checkoutGuidance`, and `moneyBounds`, including coverage, test-file mapping,
+and frozen commit SHAs, is recorded in [merged PR 107](https://github.com/alfredc-12/PorSca_POS/pull/107).
+Its authority and no-edit rules live in `.no-mistakes.yaml` under
+`test.instructions`.
 
 ## Tier commands (PorSca_POS)
 
