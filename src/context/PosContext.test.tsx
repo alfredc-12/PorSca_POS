@@ -687,6 +687,24 @@ describe('POS durable checkout integration', () => {
     expect(result.current.activeCheckoutCount).toBe(0);
     expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
   });
+  it('keeps the current purchase observation when clearing a cancelled parked marker fails', async () => {
+    const { wrapper, client, store } = fixture();
+    const second: AuthorityCheckout = { ...open, id: 'second-uuid' };
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'second-uuid', parkedId: 'durable-uuid' });
+    client.getCheckout.mockResolvedValue(second);
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    expect(result.current.authorityCheckout?.id).toBe('second-uuid');
+    store.save = async () => { throw new Error('storage unavailable'); };
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+
+    expect(result.current.authorityCheckout?.id).toBe('second-uuid');
+    expect(result.current.checkoutMachine?.id).toBe('second-uuid');
+    expect(result.current.recoverableCheckouts.find(item => item.id === 'durable-uuid')?.state).toBe('abandoned');
+    expect(result.current.activeCheckoutCount).toBe(1);
+  });
   it('publishes discovered purchases even when the retained checkout cannot be read', async () => {
     const { wrapper, client, store } = fixture();
     await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'retained-missing' });

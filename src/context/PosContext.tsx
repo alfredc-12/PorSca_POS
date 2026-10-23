@@ -795,8 +795,9 @@ export function PosProvider({
       if (authority.retainedCheckoutId === id || authority.current?.id === id) {
         setStoredCheckoutProgress({ ...authority.progress, cancellationFailed: true });
       }
-      const cancelled = authority.current;
-      if (cancelled?.state === 'abandoned' && cancelled.id === id) setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
+      const observed = authority.current;
+      const cancelled = authority.cancelledCheckout ?? (observed?.state === 'abandoned' && observed.id === id ? observed : undefined);
+      if (cancelled) setRecoverableCheckouts(current => mergeCheckouts(current, [cancelled]));
       throw error;
     }
   }, [exclusive, authority]);

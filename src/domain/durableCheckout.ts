@@ -40,8 +40,10 @@ function checkoutItems(lines: CartLine[]) {
 /** A single device purchase handle; all financial state is read from Laravel. */
 export class DurableCheckout {
   private observed?: AuthorityCheckout;
+  private confirmedCancellation?: AuthorityCheckout;
   machine?: CheckoutMachine;
   get current() { return this.observed; }
+  get cancelledCheckout() { return this.confirmedCancellation; }
   get retainedCheckoutId() { return this.handle?.id; }
   get parkedCheckoutId() { return this.handle?.parkedId; }
   private set current(checkout: AuthorityCheckout | undefined) {
@@ -371,6 +373,7 @@ export class DurableCheckout {
     return this.current;
   }
   async abandon(reason: string) {
+    this.confirmedCancellation = undefined;
     const attributedReason = reason.trim();
     if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
     await this.recover();
@@ -384,6 +387,7 @@ export class DurableCheckout {
     return abandoned;
   }
   async abandonDiscovered(id: string, reason: string) {
+    this.confirmedCancellation = undefined;
     const attributedReason = reason.trim();
     if (attributedReason.length < 8 || attributedReason.length > 500) throw new ApiClientError('Enter a reason between 8 and 500 characters.');
     await this.load();
@@ -396,18 +400,18 @@ export class DurableCheckout {
       throw new ApiClientError('This purchase is locked or unresolved and cannot be cancelled. Check its status before continuing.', 409, 'checkout_recovery_required');
     }
     const result = await this.client.abandonCheckout(id, attributedReason);
+    if (this.handle?.parkedId !== id) return result;
     const previous = this.current;
-    this.current = result;
-    if (this.handle?.parkedId !== id) {
-      this.current = previous;
-      return result;
-    }
     const wasCurrent = previous?.id === id;
     const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
     if (candidate) delete candidate.parkedId;
-    await this.replaceHandle(candidate, this.handle.key);
-    this.current = wasCurrent ? undefined : previous;
-    if (wasCurrent) this.unresolvedCashRefusal = false;
+    try {
+      await this.replaceHandle(candidate, this.handle.key);
+    } catch (error) {
+      this.confirmedCancellation = result;
+      throw error;
+    }
+    if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     return result;
   }
   async clearCancelledCheckout(id: string) {
