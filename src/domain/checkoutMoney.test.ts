@@ -24,6 +24,14 @@ describe('strict cash grammar and integer centavos', () => {
     expect(validateCashTender('90071992547409.92', 0)).toEqual({ kind: 'invalid' });
     expect(formatCheckoutMoney(Number.MAX_SAFE_INTEGER)).toBe('₱90071992547409.91');
   });
+  it('represents the unsigned 32-bit centavo maximum exactly', () => {
+    const maximum = 4_294_967_295;
+    expect(isCentavos(maximum)).toBe(true);
+    expect(validateCashTender('42949672.95', maximum)).toEqual({
+      kind: 'sufficient', amountCentavos: maximum, changeCentavos: 0,
+    });
+    expect(formatCheckoutMoney(maximum)).toBe('₱42949672.95');
+  });
   it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects unsafe money %s', (amount) => {
     expect(isCentavos(amount)).toBe(false);
     expect(() => formatCheckoutMoney(amount)).toThrow(RangeError);

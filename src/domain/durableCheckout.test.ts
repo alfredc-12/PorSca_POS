@@ -232,6 +232,33 @@ describe('durable authority workflow and machine integration', () => {
     await expect(authority.tender(lines, 'cash', input)).rejects.toThrow();
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
+  it('enforces the unsigned 32-bit cash boundary at the Laravel payload', async () => {
+    const maximum = fixture();
+    await maximum.authority.tender(lines, 'cash', '42949672.95');
+    expect(maximum.client.checkoutCash).toHaveBeenCalledWith('server-uuid', {
+      revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 4_294_967_295,
+    }, expect.any(String));
+    expect(maximum.saved()?.tender?.signature).toBe(JSON.stringify(['cash', {
+      revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 4_294_967_295,
+    }]));
+
+    const overflow = fixture();
+    await expect(overflow.authority.tender(lines, 'cash', '42949672.96')).rejects.toThrow('Enter valid, sufficient cash.');
+    expect(overflow.client.checkoutCash).not.toHaveBeenCalled();
+    expect(overflow.saved()?.tender).toBeUndefined();
+  });
+  it('rounds a fractional peso quote to integer centavos before tender matching', async () => {
+    const fractionalCentavoLine = [{ ...lines[0], product: { ...lines[0].product, price: 10.105 } }];
+    const { authority, client } = fixture();
+    client.createCheckout.mockResolvedValue({
+      ...open, amountCentavos: 1011,
+      items: [{ ...open.items[0], unitPriceCentavos: 1011 }],
+    });
+    await authority.tender(fractionalCentavoLine, 'cash', '20.00');
+    expect(client.checkoutCash).toHaveBeenCalledWith('server-uuid', {
+      revision: 1, acceptedAmountCentavos: 1011, cashReceivedCentavos: 2000,
+    }, expect.any(String));
+  });
   it('recovers an ambiguous QR create by stored checkout id, without a duplicate attempt', async () => {
     const { authority, client, saved } = fixture();
     client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('lost response'));
@@ -395,8 +422,9 @@ describe('durable authority workflow and machine integration', () => {
     expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
   });
   it('refuses a basket changed after checkout opened with its own code instead of payment uncertainty', async () => {
-    const { authority, client } = fixture();
+    const { authority, client, saved } = fixture();
     await authority.prepare(lines);
+    const retainedHandle = JSON.parse(JSON.stringify(saved()));
     expect(client.checkoutCash).not.toHaveBeenCalled();
     // The cashier edits the cart after the durable checkout was opened, before
     // any tender exists. The refusal must not read as "money may be recorded".
@@ -406,12 +434,14 @@ describe('durable authority workflow and machine integration', () => {
     expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(authority.progress.recoveryFailure).toBeUndefined();
     expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(saved()).toEqual(retainedHandle);
     expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
     // The retained basket is still the one the purchase was opened for, and it
     // stays recoverable: going back to the original basket clears the refusal.
     await authority.prepare(lines);
     expect(authority.basketDivergedFrom(lines)).toBe(false);
+    expect(saved()).toEqual(retainedHandle);
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
   });
   it('reports a changed basket for a live cart that cannot be validated', async () => {
