@@ -8,6 +8,11 @@ import { CheckoutProgress } from './checkoutGuidance';
 
 export class CheckoutIdentityError extends ApiClientError {}
 export class CheckoutObservationError extends ApiClientError {}
+export class CancellationMarkerUnclearedError extends ApiClientError {
+  constructor() {
+    super('Cancellation was accepted by the shop server, but this device could not clear its local marker.', 409, 'checkout_cancelled_marker_uncleared');
+  }
+}
 
 export type CheckoutHandle = { key?: string; signature?: string; id?: string; tender?: { key: string; signature: string; previousAttemptIds?: number[]; attemptId?: number }; parkedId?: string };
 export type CheckoutStorage = { load(): Promise<CheckoutHandle | null>; save(handle: CheckoutHandle | null, expectedKey?: string): Promise<void> };
@@ -383,7 +388,10 @@ export class DurableCheckout {
     if ((this.current.state !== 'open' && this.current.state !== 'ready_for_attempt') || !canAcceptCheckoutTender(this.machine) || hasPaymentInFlight(this.current)) throw new ApiClientError('Only an open or ready checkout without an in-flight payment can be cancelled.', 409, 'checkout_recovery_required');
     this.current = await this.client.abandonCheckout(this.current.id, attributedReason);
     const abandoned = this.current;
-    if (abandoned.state === 'abandoned') await this.retire();
+    if (abandoned.state === 'abandoned') {
+      try { await this.retire(); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
+    }
     return abandoned;
   }
   async abandonDiscovered(id: string, reason: string) {
@@ -409,7 +417,8 @@ export class DurableCheckout {
       await this.replaceHandle(candidate, this.handle.key);
     } catch (error) {
       this.confirmedCancellation = result;
-      throw error;
+      if (error instanceof CheckoutIdentityError) throw error;
+      throw new CancellationMarkerUnclearedError();
     }
     if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     return result;
@@ -420,12 +429,14 @@ export class DurableCheckout {
     if (checkout.state !== 'abandoned') throw new ApiClientError('This purchase is not marked cancelled by the shop server.', 409, 'checkout_recovery_required');
     if (this.handle?.id === id) {
       this.current = checkout;
-      await this.retire();
+      try { await this.retire(); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
     } else if (this.handle?.parkedId === id) {
       const wasCurrent = this.current?.id === id;
       const candidate = this.handle.key && this.handle.signature ? { ...this.handle } : undefined;
       if (candidate) delete candidate.parkedId;
-      await this.replaceHandle(candidate, this.handle.key);
+      try { await this.replaceHandle(candidate, this.handle.key); }
+      catch (error) { if (error instanceof CheckoutIdentityError) throw error; throw new CancellationMarkerUnclearedError(); }
       if (wasCurrent) { this.current = undefined; this.unresolvedCashRefusal = false; }
     }
     return checkout;

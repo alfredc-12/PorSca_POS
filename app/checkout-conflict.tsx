@@ -6,7 +6,8 @@ import { CheckoutReasonModal } from '@/src/components/CheckoutReasonModal';
 import { DataState } from '@/src/components/DataState';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
-import { canCancelCheckout, checkoutBadge, isOpenCheckout } from '@/src/domain/salesHolds';
+import { canCancelCheckout, cancellationMarkerUnclearedNotice, checkoutBadge, isOpenCheckout } from '@/src/domain/salesHolds';
+import { CancellationMarkerUnclearedError } from '@/src/domain/durableCheckout';
 import { colors, radius, spacing } from '@/src/theme/tokens';
 
 export default function CheckoutConflictScreen() {
@@ -65,8 +66,14 @@ export default function CheckoutConflictScreen() {
       setShowCancel(false);
       setReason('');
       router.replace('/pos');
-    } catch {
-      setNotice('The shop server did not confirm cancellation. The current cart was kept; check the earlier purchase status before continuing.');
+    } catch (error) {
+      if (error instanceof CancellationMarkerUnclearedError) {
+        setShowCancel(false);
+        setReason('');
+        setNotice(cancellationMarkerUnclearedNotice);
+      } else {
+        setNotice('The shop server did not confirm cancellation. The current cart was kept; check the earlier purchase status before continuing.');
+      }
     } finally {
       setBusy(false);
     }
@@ -79,8 +86,10 @@ export default function CheckoutConflictScreen() {
     try {
       await clearCancelledCheckout(checkout.id);
       router.replace('/pos');
-    } catch {
-      setNotice('The shop server has not confirmed that this purchase is cancelled. Nothing was cleared.');
+    } catch (error) {
+      setNotice(error instanceof CancellationMarkerUnclearedError
+        ? cancellationMarkerUnclearedNotice
+        : 'The shop server has not confirmed that this purchase is cancelled. Nothing was cleared.');
     } finally {
       setBusy(false);
     }

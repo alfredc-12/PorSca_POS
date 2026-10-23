@@ -7,7 +7,8 @@ import { CheckoutReasonModal } from '@/src/components/CheckoutReasonModal';
 import { DataState } from '@/src/components/DataState';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
-import { canCancelCheckout, checkoutBadge, elapsedCheckoutTime, isOpenCheckout, isPaymentLocked, shortCheckoutId } from '@/src/domain/salesHolds';
+import { canCancelCheckout, cancellationMarkerUnclearedNotice, checkoutBadge, elapsedCheckoutTime, isOpenCheckout, isPaymentLocked, shortCheckoutId } from '@/src/domain/salesHolds';
+import { CancellationMarkerUnclearedError } from '@/src/domain/durableCheckout';
 import { colors, radius, spacing } from '@/src/theme/tokens';
 import { CartLine } from '@/src/types';
 
@@ -86,8 +87,14 @@ export default function SalesHoldsScreen() {
       setCancelTarget(undefined);
       setCancelReason('');
       setNotice(`Cancellation was accepted by the shop server for ${shortCheckoutId(target.id)}. The current POS cart was kept.`);
-    } catch {
-      setNotice('The shop server did not confirm cancellation. The purchase may still be open; check status before continuing.');
+    } catch (error) {
+      if (error instanceof CancellationMarkerUnclearedError) {
+        setCancelTarget(undefined);
+        setCancelReason('');
+        setNotice(cancellationMarkerUnclearedNotice);
+      } else {
+        setNotice('The shop server did not confirm cancellation. The purchase may still be open; check status before continuing.');
+      }
     } finally {
       setBusyId(undefined);
     }
@@ -99,8 +106,10 @@ export default function SalesHoldsScreen() {
     try {
       await clearCancelledCheckout(checkout.id);
       setNotice(`Cancelled purchase ${shortCheckoutId(checkout.id)} was cleared from this device list. No payment outcome was inferred.`);
-    } catch {
-      setNotice('The shop server did not confirm that this purchase was cancelled. Nothing was cleared.');
+    } catch (error) {
+      setNotice(error instanceof CancellationMarkerUnclearedError
+        ? cancellationMarkerUnclearedNotice
+        : 'The shop server did not confirm that this purchase was cancelled. Nothing was cleared.');
     } finally {
       setBusyId(undefined);
     }

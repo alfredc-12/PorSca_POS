@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos, useCheckout } from './PosContext';
-import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
+import { CancellationMarkerUnclearedError, CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
 import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
@@ -668,7 +668,7 @@ describe('POS durable checkout integration', () => {
     const original = store.save;
     store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
 
-    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
 
     expect(result.current.activeCheckoutCount).toBe(0);
     expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
@@ -682,7 +682,7 @@ describe('POS durable checkout integration', () => {
     const original = store.save;
     store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
 
-    await act(async () => { await expect(result.current.cancelDiscoveredCheckout(open.id, 'Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout(open.id, 'Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
 
     expect(result.current.activeCheckoutCount).toBe(0);
     expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
@@ -698,7 +698,7 @@ describe('POS durable checkout integration', () => {
     expect(result.current.authorityCheckout?.id).toBe('second-uuid');
     store.save = async () => { throw new Error('storage unavailable'); };
 
-    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer changed their mind')).rejects.toThrow('storage unavailable'); });
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
 
     expect(result.current.authorityCheckout?.id).toBe('second-uuid');
     expect(result.current.checkoutMachine?.id).toBe('second-uuid');

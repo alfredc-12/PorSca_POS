@@ -4,6 +4,8 @@ import { canAcceptCheckoutTender } from './checkoutMachine';
 
 export type CheckoutBadge = 'Ready for tender' | 'Payment waiting' | 'Payment interrupted' | 'Admin review' | 'Cancelled' | 'Completed';
 
+export const cancellationMarkerUnclearedNotice = 'Cancellation was accepted by the shop server, but this device could not clear its local marker. Do not take another payment for this sale.';
+
 export function checkoutBadge(checkout: AuthorityCheckout): CheckoutBadge {
   const completedSale = checkout.state === 'completed' && Boolean(checkout.sale);
   const paymentStillUnresolved = checkout.attempts.some(attempt => attempt.status === 'pending' || attempt.status === 'unknown');

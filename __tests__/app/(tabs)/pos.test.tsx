@@ -3,6 +3,7 @@ import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
 import SalesHoldsScreen from '@/app/(tabs)/sales-holds';
+import CheckoutConflictScreen from '@/app/checkout-conflict';
 import DeviceStorageRecoveryScreen from '@/app/device-storage-recovery';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
@@ -13,12 +14,12 @@ import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from 
 
 jest.mock('expo-router', () => ({
   __esModule: true,
-  router: { push: jest.fn(), back: jest.fn() },
+  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
   useLocalSearchParams: () => ({}),
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
-const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock; replace: jest.Mock } };
 
 const single: Product = { id: '1', barcode: '4800000000019', name: 'Sardines 155g', price: 22, stock: 1, category: 'Snacks' };
 const plenty: Product = { id: '2', barcode: '4800000000026', name: 'Instant Coffee 30g', price: 9, stock: 40, category: 'Beverages' };
@@ -277,6 +278,76 @@ describe('POS cart consistency', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('sales holds cancellation marker failures', () => {
+  const hold: AuthorityCheckout = { id: 'hold-one', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2200, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 1, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
+  const cancelled: AuthorityCheckout = { ...hold, state: 'abandoned' };
+  const failureNotice = /Cancellation was accepted by the shop server/;
+
+  function clientFor(checkout: AuthorityCheckout) {
+    return {
+      isConfigured: true,
+      baseUrl: 'https://shop.test/api/v1',
+      listCheckouts: jest.fn().mockResolvedValue({ items: [checkout], pagination: { current_page: 1, last_page: 1, total: 1 } }),
+      getCheckout: jest.fn().mockResolvedValue(checkout),
+      abandonCheckout: jest.fn().mockResolvedValue({ ...checkout, state: 'abandoned' }),
+    } as unknown as ApiClient;
+  }
+
+  const unwritableStore: CheckoutStorage = {
+    load: async () => ({ parkedId: hold.id }),
+    save: async () => { throw new Error('storage unavailable'); },
+  };
+
+  beforeEach(() => {
+    router.push.mockReset();
+    router.replace.mockReset();
+  });
+
+  it('reports a server-confirmed cancellation whose local marker could not be cleared', async () => {
+    const view = render(<PosProvider client={clientFor(hold)} checkoutStore={unwritableStore}><SalesHoldsScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId(`cancel-${hold.id}`)).toBeTruthy());
+
+    fireEvent.press(view.getByTestId(`cancel-${hold.id}`));
+    fireEvent.changeText(view.getByLabelText('Cancellation reason'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Send cancellation' })); });
+
+    await waitFor(() => expect(view.getByText(failureNotice)).toBeTruthy());
+    expect(view.getByLabelText('Status: Cancelled')).toBeTruthy();
+    expect(view.getByText('0 active sales or holds')).toBeTruthy();
+  });
+
+  it('reports a clear-cancelled failure that only affected the local marker', async () => {
+    const view = render(<PosProvider client={clientFor(cancelled)} checkoutStore={unwritableStore}><SalesHoldsScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId(`clear-cancelled-${cancelled.id}`)).toBeTruthy());
+
+    fireEvent.press(view.getByTestId(`clear-cancelled-${cancelled.id}`));
+
+    await waitFor(() => expect(view.getByText(failureNotice)).toBeTruthy());
+  });
+
+  it('reports a server-confirmed conflict cancellation whose local marker could not be cleared', async () => {
+    const view = render(<PosProvider client={clientFor(hold)} checkoutStore={unwritableStore}><CheckoutConflictScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('cancel-earlier-keep-cart')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('cancel-earlier-keep-cart'));
+    fireEvent.changeText(view.getByLabelText('Cancellation reason'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel earlier purchase' })); });
+
+    await waitFor(() => expect(view.getByText(failureNotice)).toBeTruthy());
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('reports a conflict clear-cancelled failure that only affected the local marker', async () => {
+    const view = render(<PosProvider client={clientFor(cancelled)} checkoutStore={unwritableStore}><CheckoutConflictScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('clear-cancelled-purchase')).toBeTruthy());
+
+    fireEvent.press(view.getByTestId('clear-cancelled-purchase'));
+
+    await waitFor(() => expect(view.getByText(failureNotice)).toBeTruthy());
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
 
