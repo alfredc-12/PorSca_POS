@@ -47,6 +47,9 @@ export const unobservedBasketCopy = {
   tenderLock: 'No payment was taken for this cart. Recover the earlier basket before taking payment.',
   helpHint: 'Open help to recover the earlier basket. This phone has no confirmed purchase that can be cancelled yet.',
   helpUnavailable: 'This phone has no confirmed open purchase to cancel. Recover the earlier basket, then cancel it or pay for it; do not take payment for this cart yet.',
+  failureTitle: 'The cart changed after checkout started',
+  failureBody: `${noPayment} This phone has no confirmed open purchase to cancel. Recover the earlier basket to replace this cart and pay for it.`,
+  failureActionLabel: 'Recover the earlier basket',
 } as const;
 
 export const cancelledPurchaseCopy = {

@@ -1,5 +1,5 @@
 import { describeFailure, newReference, supportCodeLine } from '@/src/domain/userFacingError';
-import { cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 const RAW = {
   message: 'Illuminate\\Database\\QueryException: SQLSTATE[23000] (fetch failed at https://api.example.test)',
@@ -8,8 +8,8 @@ const RAW = {
 
 const FORBIDDEN = /SQLSTATE|Illuminate|QueryException|Exception|fetch|EXPO_PUBLIC_|Laravel|https?:\/\//i;
 
-function described(screen: Parameters<typeof describeFailure>[1]['screen'], failure: Parameters<typeof describeFailure>[0] = RAW) {
-  const result = describeFailure(failure, { screen });
+function described(screen: Parameters<typeof describeFailure>[1]['screen'], failure: Parameters<typeof describeFailure>[0] = RAW, basketObserved?: boolean) {
+  const result = describeFailure(failure, { screen, basketObserved });
   return result;
 }
 
@@ -47,7 +47,7 @@ describe('describeFailure', () => {
   });
 
   it('describes a changed basket without claiming money may already be recorded', () => {
-    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' });
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, true);
     expect(failure).toMatchObject({ title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel });
     expect(failure.body).toMatch(/No payment was taken/);
     expect(failure.body).toMatch(/Recover the earlier basket/);
@@ -55,6 +55,15 @@ describe('describeFailure', () => {
     expect(failure.body).toMatch(/keep this cart/);
     expect(failure.body).toMatch(/already-cancelled purchase cannot be recovered/);
     expect(`${failure.title} ${failure.body}`).not.toMatch(/ring up|ringing up|already being saved|may already be recorded|could not confirm|Check Transactions/i);
+  });
+
+  it('describes an unobserved changed basket without promising a cancellation', () => {
+    const failure = described('cash-sale', { status: 409, code: 'checkout_basket_diverged' }, false);
+    expect(failure).toMatchObject({ title: unobservedBasketCopy.failureTitle, body: unobservedBasketCopy.failureBody, actionLabel: unobservedBasketCopy.failureActionLabel });
+    expect(failure.body).toMatch(/No payment was taken/);
+    expect(failure.body).toMatch(/no confirmed open purchase to cancel/);
+    expect(failure.body).toMatch(/Recover the earlier basket/);
+    expect(failure.body).not.toMatch(/or cancel this purchase|keep this cart/);
   });
 
   it('describes a cancelled purchase without payment uncertainty', () => {

@@ -14,11 +14,11 @@ export type CheckoutFailure = DescribedFailure;
 
 export type ApiFailure = Failure;
 
-export function saleFailureCopy(error: ApiFailure): CheckoutFailure {
+export function saleFailureCopy(error: ApiFailure, basketObserved?: boolean): CheckoutFailure {
   // A cart line whose product disappeared is a distinct recovery from a plain
   // validation rejection, so it gets its own class before the shared mapping.
   const failure = hasMissingProductDetail(error.details) ? { ...error, code: 'product_missing' } : error;
-  return describeAndRecordFailure(failure, { screen: 'cash-sale' });
+  return describeAndRecordFailure(failure, { screen: 'cash-sale', basketObserved });
 }
 
 /**

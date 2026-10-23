@@ -249,7 +249,7 @@ export default function CheckoutScreen() {
         code: apiError?.code,
         message: apiError?.message,
         details: apiError?.details,
-      });
+      }, authorityObserved);
       setCashError(failure);
       if (modalAllowed()) Alert.alert(failure.title, alertBody(failure));
     } finally {
@@ -346,7 +346,7 @@ export default function CheckoutScreen() {
     } catch (error) {
       if (surfaceRetainedQrAttempt(error)) return;
       if (error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged')) setShowSaleHelp(true);
-      const startFailure = qrStartFailure(error);
+      const startFailure = qrStartFailure(error, authorityObserved);
       setQrStatus(startFailure.status);
       setQrError(startFailure.failure);
     } finally {
@@ -354,7 +354,7 @@ export default function CheckoutScreen() {
       qrBusyRef.current = false;
       setQrBusy(false);
     }
-  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired]);
+  }, [showQrPayment, startQrPhPayment, surfaceRetainedQrAttempt, administratorRequired, authorityObserved]);
 
   const performQrCheck = useCallback(async () => {
     if (!qrPayment || operationRef.current || administratorRequired) return;
@@ -662,14 +662,14 @@ function describeQrVerification(error: unknown): DescribedFailure {
  * no QR attempt, so they return the panel to idle instead of inventing a QR
  * verification state; a transport or server outcome stays unresolved.
  */
-function qrStartFailure(error: unknown): { status: QrViewStatus; failure: DescribedFailure } {
+function qrStartFailure(error: unknown, basketObserved?: boolean): { status: QrViewStatus; failure: DescribedFailure } {
   const apiError = error instanceof ApiClientError ? error : undefined;
   if (apiError?.code === 'cash_attempt_unresolved' || apiError?.code === 'revalidation_required' || apiError?.code === 'checkout_basket_diverged' || apiError?.code === 'checkout_purchase_cancelled') {
     return {
       status: 'idle',
       failure: describeAndRecordFailure(
         { status: apiError.status, code: apiError.code, message: apiError.message, details: apiError.details },
-        { screen: 'cash-sale' },
+        { screen: 'cash-sale', basketObserved },
       ),
     };
   }

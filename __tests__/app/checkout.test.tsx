@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -172,6 +172,45 @@ describe('CheckoutScreen cash states', () => {
 
     expect(getByText(/Some items are no longer available/)).toBeTruthy();
     expect(alertSpy).toHaveBeenCalledWith('Stock changed', expect.stringContaining('try again.'));
+  });
+
+  it('keeps unobserved changed-basket cash failures free of cancellation promises', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({ completeCashSale, checkoutMachine: undefined });
+    const { getByTestId } = render(<CheckoutScreen />);
+
+    fireEvent.changeText(getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(getByTestId('confirm-cash-payment')); });
+
+    expect(alertSpy).toHaveBeenCalledWith(unobservedBasketCopy.failureTitle, expect.stringContaining('no confirmed open purchase to cancel'));
+    expect(alertSpy.mock.calls[0][1] as string).not.toMatch(/cancel this purchase|keep this cart/);
+    expect(getByTestId('checkout-cash-error')).toHaveTextContent(/no confirmed open purchase to cancel/);
+    expect(getByTestId('checkout-cash-error')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+  });
+
+  it('keeps observed changed-basket cash failures on the cancellation-capable copy', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({ completeCashSale, authorityCheckout: safeOpenCheckout() });
+    const { getByTestId } = render(<CheckoutScreen />);
+
+    fireEvent.changeText(getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(getByTestId('confirm-cash-payment')); });
+
+    expect(alertSpy).toHaveBeenCalledWith(changedBasketCopy.failureTitle, expect.stringContaining('or cancel this purchase to keep this cart'));
+    expect(getByTestId('checkout-cash-error')).toHaveTextContent(/or cancel this purchase to keep this cart/);
+  });
+
+  it('keeps unobserved changed-basket QR start failures free of cancellation promises', async () => {
+    const startQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 422, 'checkout_basket_diverged'));
+    setContext({ startQrPhPayment, checkoutMachine: undefined });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/no confirmed open purchase to cancel/);
+    expect(view.getByTestId('qr-payment-error')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('records a successful cash response and offers the authoritative history route', async () => {
