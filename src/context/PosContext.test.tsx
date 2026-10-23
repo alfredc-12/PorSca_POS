@@ -34,6 +34,77 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('prepares a server-backed open checkout without starting a tender and preserves the cart', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await expect(result.current.prepareCheckout()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.authorityCheckout).toEqual(open);
+    expect(result.current.checkoutMachine?.state).toBe('open');
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('prepares the cancellation option lazily on the checkout screen without starting a tender', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.checkout.authorityCheckout).toEqual(open);
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('surfaces the authoritative abandoned result of a cancellation', async () => {
+    const { wrapper, client } = fixture();
+    const pos = renderHook(() => usePos(), { wrapper });
+    await add(pos.result);
+    await act(async () => { await pos.result.current.prepareCheckout(); });
+
+    let abandoned: AuthorityCheckout | undefined;
+    await act(async () => { abandoned = await pos.result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(client.abandonCheckout).toHaveBeenCalledWith(open.id, 'Customer changed their mind');
+    expect(abandoned?.state).toBe('abandoned');
+    expect(pos.result.current.authorityCheckout).toBeUndefined();
+  });
+
+  it('keeps a failed cancellation preparation from claiming payment uncertainty', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+    client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.pos.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.pos.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.pos.checkoutMachine).toBeUndefined();
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('keeps a failed quote revalidation from claiming payment uncertainty', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+    client.revalidateCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.revalidateCheckout()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.authorityCheckout?.state).toBe('open');
+  });
+
   it('keeps a replacement purchase recoverable when an unmounted provider receives an old cash response', async () => {
     const { wrapper, client, handle } = fixture();
     const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };

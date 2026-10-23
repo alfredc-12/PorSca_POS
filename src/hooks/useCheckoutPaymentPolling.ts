@@ -55,5 +55,5 @@ export function useCheckoutPaymentPolling({ identity, eligible, busy, check }: {
   useEffect(() => { schedule.current(); return cancel; }, [busy, eligible, cancel]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; cancel(); }; }, [cancel]);
   const checkNow = useCallback(() => run(true), [run]);
-  return { checkNow, visible: focused && active };
+  return { checkNow, visible: focused && active, focused };
 }

@@ -12,7 +12,7 @@ import { isDefinitiveQrRejection } from '@/src/domain/checkout';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { authorityObservation } from '@/src/domain/checkoutAuthorityAdapter';
 import { CheckoutProgress } from '@/src/domain/checkoutGuidance';
-import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
+import { cancellationFailedCopy, cancelledPurchaseCopy, changedBasketCopy, blockedBasketCopy, unobservedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn(), back: jest.fn() },
@@ -41,12 +41,19 @@ const mockReplace = router.replace as jest.Mock;
 const mockUsePos = usePos as jest.Mock;
 
 const pendingQrPayment: Payment = {
-  id: 'pay-1',
+  id: '1',
   status: 'pending',
   amount: 3500,
   qrPayload: 'data:image/png;base64,qr-fixture',
   qrCode: 'data:image/png;base64,qr-fixture',
 };
+
+function safeOpenCheckout(overrides: Partial<AuthorityCheckout> = {}): AuthorityCheckout {
+  return {
+    id: 'test-checkout', storeId: '1', state: 'open', revision: 1, amountCentavos: 3500, currency: 'PHP',
+    items: [], attempts: [], sale: null, exceptions: [], history: [], ...overrides,
+  };
+}
 
 function setContext(overrides: Record<string, unknown> = {}) {
   const context = {
@@ -60,6 +67,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
     checkoutMachine: openCheckout('test-checkout', 3500),
     authorityCheckout: undefined as AuthorityCheckout | undefined,
     checkoutProgress: undefined as CheckoutProgress | undefined,
+    prepareCancellation: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   const observe = (state: CheckoutMachine['state']) => {
@@ -74,7 +82,7 @@ function setContext(overrides: Record<string, unknown> = {}) {
     context.authorityCheckout = {
       id: 'test-checkout', storeId: '1', revision: 1, currency: 'PHP', amountCentavos: 3500, items: [], history: [], exceptions: [],
       state: unpaid ? 'ready_for_attempt' : payment.status === 'paid' ? 'completed' : payment.status === 'paid_unfulfilled' ? 'paid_unfulfilled' : 'payment_unresolved',
-      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: unpaid ? 'non_payable' : paid ? 'paid' : payment.status === 'unknown' ? 'unknown' : 'pending', financialStatus: paid ? payment.status as 'paid' | 'paid_unfulfilled' : unpaid ? 'failed' : 'pending', firstVerifiedOutcome: paid ? 'paid' : unpaid ? 'non_payable' : null, qrPayload: payment.qrPayload ?? null, qrExpiresAt: null, reservation: null }],
+      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: unpaid ? 'non_payable' : paid ? 'paid' : payment.status === 'unknown' ? 'unknown' : 'pending', financialStatus: paid ? payment.status as 'paid' | 'paid_unfulfilled' : unpaid ? 'failed' : 'pending', firstVerifiedOutcome: paid ? 'paid' : unpaid ? 'non_payable' : null, qrPayload: payment.qrPayload ?? null, qrExpiresAt: (overrides.authorityQrExpiresAt as string | null | undefined) ?? null, reservation: null }],
       sale: payment.status === 'paid' ? { id: 42, method: 'qrph', amountCentavos: 3500, cashReceivedCentavos: null, changeAmountCentavos: null, completedAt: sale.createdAt } : null,
     };
     context.checkoutMachine = authorityObservation(context.authorityCheckout);
@@ -166,6 +174,63 @@ describe('CheckoutScreen cash states', () => {
     expect(alertSpy).toHaveBeenCalledWith('Stock changed', expect.stringContaining('try again.'));
   });
 
+  it('keeps unobserved changed-basket cash failures free of cancellation promises', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({ completeCashSale, checkoutMachine: undefined });
+    const { getByTestId } = render(<CheckoutScreen />);
+
+    fireEvent.changeText(getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(getByTestId('confirm-cash-payment')); });
+
+    expect(alertSpy).toHaveBeenCalledWith(unobservedBasketCopy.failureTitle, expect.stringContaining('no confirmed open purchase to cancel'));
+    expect(alertSpy.mock.calls[0][1] as string).not.toMatch(/cancel this purchase|keep this cart/);
+    expect(getByTestId('checkout-cash-error')).toHaveTextContent(/no confirmed open purchase to cancel/);
+    expect(getByTestId('checkout-cash-error')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+  });
+
+  it('keeps observed changed-basket cash failures on the cancellation-capable copy', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({ completeCashSale, authorityCheckout: safeOpenCheckout() });
+    const { getByTestId } = render(<CheckoutScreen />);
+
+    fireEvent.changeText(getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(getByTestId('confirm-cash-payment')); });
+
+    expect(alertSpy).toHaveBeenCalledWith(changedBasketCopy.failureTitle, expect.stringContaining('or cancel this purchase to keep this cart'));
+    expect(getByTestId('checkout-cash-error')).toHaveTextContent(/or cancel this purchase to keep this cart/);
+  });
+
+  it('keeps observed but cancellation-blocked cash failures on recovery-only copy', async () => {
+    const completeCashSale = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 409, 'checkout_basket_diverged'));
+    setContext({
+      completeCashSale,
+      authorityCheckout: safeOpenCheckout(),
+      checkoutProgress: { uncertainTender: 'cash', cashInput: '100.00', basketDiverged: true },
+    });
+    const view = render(<CheckoutScreen />);
+
+    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Retry saving cash payment' })); });
+
+    expect(alertSpy).toHaveBeenCalledWith(blockedBasketCopy.failureTitle, expect.stringContaining('until this purchase is resolved'));
+    const body = alertSpy.mock.calls[0][1] as string;
+    expect(body).not.toMatch(/or cancel this purchase|keep this cart|No payment was taken/);
+    expect(view.getByTestId('cancel-sale-unavailable')).toHaveTextContent(/Cancellation is not available while this purchase has unresolved payment/);
+    expect(view.getByTestId('cancel-sale-unavailable')).not.toHaveTextContent(/No payment was taken/);
+  });
+
+  it('keeps unobserved changed-basket QR start failures free of cancellation promises', async () => {
+    const startQrPhPayment = jest.fn().mockRejectedValue(new ApiClientError('Recover or abandon the original device purchase before changing its basket.', 422, 'checkout_basket_diverged'));
+    setContext({ startQrPhPayment, checkoutMachine: undefined });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    expect(view.getByTestId('qr-payment-error')).toHaveTextContent(/no confirmed open purchase to cancel/);
+    expect(view.getByTestId('qr-payment-error')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
   it('records a successful cash response and offers the authoritative history route', async () => {
     const completeCashSale = jest.fn().mockResolvedValue(sale);
     setContext({ completeCashSale });
@@ -233,6 +298,18 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     return view;
   }
 
+  it('shows the read-only expiry countdown only after a server QR attempt exists', async () => {
+    setContext();
+    const view = render(<CheckoutScreen />);
+    fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+
+    expect(view.queryByTestId('qr-expiry-countdown')).toBeNull();
+
+    await act(async () => { fireEvent.press(view.getByTestId('start-qrph-payment')); });
+
+    expect(view.getByTestId('qr-expiry-countdown')).toHaveTextContent('Expiry time unavailable');
+  });
+
   it('creates a Laravel payment, displays the returned QR payload, and remains pending', async () => {
     const startQrPhPayment = jest.fn().mockResolvedValue(pendingQrPayment);
     setContext({ startQrPhPayment });
@@ -243,7 +320,63 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByText('Payment pending…')).toBeTruthy();
     expect(view.getByTestId('refresh-qr-payment')).toBeTruthy();
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
+    expect(view.getByTestId('qr-expiry-countdown')).toHaveTextContent('Expiry time unavailable');
+    expect(view.getByTestId('qr-practice-notice')).toHaveTextContent(/not payable/i);
+    expect(view.queryByTestId('cancel-sale-entry')).toBeNull();
     expect(view.queryByTestId('retry-qr-payment')).toBeNull();
+  });
+
+  it('keeps payment pending and locked when the read-only countdown reaches zero', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-23T12:00:00.000Z'));
+    const expiry = '2026-10-23T12:00:01.500Z';
+    const refreshQrPhPayment = jest.fn().mockResolvedValue(pendingQrPayment);
+    const abandonCheckout = jest.fn();
+    const resetCart = jest.fn();
+    const context = setContext({ authorityQrExpiresAt: expiry, refreshQrPhPayment, abandonCheckout, resetCart });
+    let view: ReturnType<typeof render> | undefined;
+    try {
+      view = render(<CheckoutScreen />);
+      fireEvent.press(view.getByTestId('checkout-payment-qrph'));
+      await act(async () => { fireEvent.press(view!.getByTestId('start-qrph-payment')); });
+      expect(view.getByTestId('qr-expiry-countdown')).toHaveTextContent('Time remaining: 00:02');
+      expect(context.checkoutMachine.state).toBe('payment-unresolved');
+      expect(context.checkoutMachine.attempts[0].payment).toBe('pending');
+
+      act(() => { jest.advanceTimersByTime(2000); });
+
+      expect(view.getByTestId('qr-expiry-countdown')).toHaveTextContent('Time remaining: 00:00');
+      expect(view.getByTestId('qr-payment-status')).toHaveTextContent('Payment pending…');
+      expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+      expect(context.checkoutMachine.state).toBe('payment-unresolved');
+      expect(context.checkoutMachine.attempts[0].payment).toBe('pending');
+      expect(refreshQrPhPayment).not.toHaveBeenCalled();
+      expect(abandonCheckout).not.toHaveBeenCalled();
+      expect(resetCart).not.toHaveBeenCalled();
+    } finally {
+      view?.unmount();
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps cancellation unavailable for an unknown QR attempt and points to status/recovery actions', () => {
+    const unknownPayment = { ...pendingQrPayment, status: 'unknown' as const };
+    const checkout = safeOpenCheckout({
+      state: 'payment_unresolved',
+      attempts: [{ id: 1, method: 'qrph', amountCentavos: 3500, currency: 'PHP', status: 'unknown', financialStatus: 'pending', firstVerifiedOutcome: null, qrPayload: 'practice-payload', qrExpiresAt: null, reservation: null }],
+    });
+    setContext({ authorityCheckout: checkout, checkoutMachine: authorityObservation(checkout), unresolvedQrPayment: jest.fn(() => unknownPayment) });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
+    expect(view.queryByTestId('cancel-sale-entry')).toBeNull();
+    expect(view.queryByTestId('cancel-sale-reason-input')).toBeNull();
+    expect(view.getByTestId('retry-qr-verification')).toBeTruthy();
+    expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    expect(view.getByTestId('cancel-sale-unavailable')).toHaveTextContent(/payment-status or recovery action above/i);
+    expect(view.queryByTestId('confirm-cancel-sale')).toBeNull();
   });
 
   it('shows only the authoritative basket when the editable cart changes while payment is away', () => {
@@ -419,6 +552,21 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('leave-qr-payment')).toBeTruthy();
     expect(alertSpy).toHaveBeenCalledWith('Administrator required', expect.stringContaining('Call the shop administrator now.'));
   });
+
+  it('keeps the paid_unfulfilled modal off a backgrounded app', async () => {
+    const unfulfilled = { ...pendingQrPayment, status: 'paid_unfulfilled' as const };
+    const confirmQrPhPayment = jest.fn().mockResolvedValue(undefined);
+    setContext({ refreshQrPhPayment: jest.fn().mockResolvedValue(unfulfilled), confirmQrPhPayment });
+    const view = await openQrCheckout();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background' });
+    await act(async () => { fireEvent.press(view.getByTestId('refresh-qr-payment')); });
+
+    expect(confirmQrPhPayment).toHaveBeenCalledWith(unfulfilled);
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
   it('refreshes inventory and history only after Laravel returns paid', async () => {
     const paidPayment = { ...pendingQrPayment, status: 'paid' as const, saleId: 'sale-1' };
     const confirmQrPhPayment = jest.fn().mockResolvedValue({ ...sale, paymentMethod: 'qrph' });
@@ -485,11 +633,111 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(recoverCheckout).toHaveBeenCalledTimes(1); expect(completeCashSale).not.toHaveBeenCalled();
   });
 
+  it('prepares the checkout only when the cashier opens cancellation, not on arrival', async () => {
+    const prepareCancellation = jest.fn();
+    const context = setContext({ prepareCancellation, checkoutMachine: undefined }) as unknown as {
+      prepareCancellation: jest.Mock;
+      authorityCheckout?: AuthorityCheckout;
+      checkoutMachine?: CheckoutMachine;
+    };
+    context.prepareCancellation.mockImplementation(async () => {
+      const checkout = safeOpenCheckout();
+      context.authorityCheckout = checkout;
+      context.checkoutMachine = authorityObservation(checkout);
+      return checkout;
+    });
+    const view = render(<CheckoutScreen />);
+
+    expect(prepareCancellation).not.toHaveBeenCalled();
+    expect(view.getByTestId('cancel-sale-entry')).toBeTruthy();
+    await act(async () => { fireEvent.press(view.getByTestId('cancel-sale-entry')); });
+
+    expect(prepareCancellation).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('cancel-sale-reason-input')).toBeTruthy();
+  });
+
+  it('makes a safe open-checkout cancellation discoverable and validates an attributed 8–500 character reason', async () => {
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
+    const completeCashSale = jest.fn();
+    const context = setContext({ authorityCheckout: safeOpenCheckout(), abandonCheckout, completeCashSale });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('cancel-sale-entry')).toBeTruthy();
+    fireEvent.press(view.getByTestId('cancel-sale-entry'));
+    const reason = view.getByTestId('cancel-sale-reason-input');
+    const confirm = view.getByTestId('confirm-cancel-sale');
+    expect(reason).toHaveProp('maxLength', 500);
+    expect(confirm).toBeDisabled();
+    fireEvent.changeText(reason, '  short  ');
+    expect(confirm).toBeDisabled();
+    fireEvent.changeText(reason, 'x'.repeat(501));
+    expect(confirm).toBeDisabled();
+    fireEvent.changeText(reason, '  Cashier changed their mind  ');
+    expect(confirm).toBeEnabled();
+
+    await act(async () => { fireEvent.press(confirm); });
+    expect(abandonCheckout).toHaveBeenCalledWith('Cashier changed their mind');
+    expect(view.getByTestId('checkout-cancelled-notice')).toHaveTextContent(/cart is unchanged/i);
+    expect(context.cart).toEqual(cart);
+    expect(completeCashSale).not.toHaveBeenCalled();
+  });
+
+  it('shows the cancelled state only when the authority reports the purchase abandoned', async () => {
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'payment_unresolved' });
+    setContext({ abandonCheckout, authorityCheckout: safeOpenCheckout() });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Cashier changed their mind');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
+
+    expect(abandonCheckout).toHaveBeenCalledWith('Cashier changed their mind');
+    expect(view.queryByTestId('checkout-cancelled-notice')).toBeNull();
+  });
+
+  it('clears the cancelled state when a new tender starts', async () => {
+    const completeCashSale = jest.fn().mockResolvedValue(sale);
+    const context = setContext({ completeCashSale, authorityCheckout: safeOpenCheckout() }) as unknown as {
+      abandonCheckout: jest.Mock;
+      authorityCheckout?: AuthorityCheckout;
+      checkoutMachine?: CheckoutMachine;
+    };
+    context.abandonCheckout = jest.fn(async () => {
+      context.authorityCheckout = undefined;
+      context.checkoutMachine = undefined;
+      return { ...safeOpenCheckout(), state: 'abandoned' };
+    });
+    const view = render(<CheckoutScreen />);
+
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
+    expect(view.getByTestId('checkout-cancelled-notice')).toBeTruthy();
+
+    fireEvent.changeText(view.getByTestId('cash-received-input'), '100');
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cash-payment')); });
+
+    expect(completeCashSale).toHaveBeenCalledWith('100');
+    expect(view.queryByTestId('checkout-cancelled-notice')).toBeNull();
+  });
+
+  it('does not promise cancellation for a changed basket with no observed checkout', () => {
+    setContext({ checkoutMachine: undefined, checkoutProgress: { basketDiverged: true } });
+    const view = render(<CheckoutScreen />);
+
+    expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/The cart changed after checkout preparation began/);
+    expect(view.getByTestId('checkout-guidance')).not.toHaveTextContent(/cancel this purchase|keep this cart/);
+    expect(view.queryByTestId('cancel-sale-entry')).toBeNull();
+    fireEvent.press(view.getByTestId('sale-help-toggle'));
+    expect(view.getByTestId('cancel-sale-unavailable')).toHaveTextContent(/no confirmed open purchase to cancel/i);
+    expect(view.queryByTestId('confirm-cancel-sale')).toBeNull();
+  });
+
   it('tells the cashier a changed cart needs recovery or cancellation instead of a payment-in-progress warning', async () => {
     const completeCashSale = jest.fn();
     const recoverCheckout = jest.fn().mockResolvedValue(undefined);
-    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
-    setContext({ completeCashSale, recoverCheckout, abandonCheckout, checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' } });
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
+    setContext({ completeCashSale, recoverCheckout, abandonCheckout, authorityCheckout: safeOpenCheckout(), checkoutProgress: { basketDiverged: true, recoveryFailure: 'interrupted' } });
     const view = render(<CheckoutScreen />);
 
     const guidance = view.getByTestId('checkout-guidance');
@@ -508,20 +756,20 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     // "or abandon": cancellation stays usable while the basket is divergent.
     fireEvent.press(view.getByTestId('sale-help-toggle'));
-    expect(view.getByText('Tell us briefly what happened so the shop can review it later.')).toBeTruthy();
+    expect(view.getByText(/Tell us briefly what happened so the shop can review it later/)).toBeTruthy();
     expect(view.queryByText(/clears this cart|keeps this cart|ring up/)).toBeNull();
     const reason = view.getByLabelText('What happened with this sale');
     expect(reason).toHaveProp('editable', true);
     fireEvent.changeText(reason, 'Cashier added an item');
-    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
     expect(abandonCheckout).toHaveBeenCalledWith('Cashier added an item');
   });
 
   it('reports an unconfirmed cancellation and allows trying to cancel again', async () => {
-    const abandonCheckout = jest.fn().mockResolvedValue(undefined);
+    const abandonCheckout = jest.fn().mockResolvedValue({ ...safeOpenCheckout(), state: 'abandoned' });
     setContext({
       abandonCheckout,
-      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      authorityCheckout: safeOpenCheckout(),
       checkoutProgress: { recoveryFailure: 'interrupted', cancellationFailed: true },
     });
     const view = render(<CheckoutScreen />);
@@ -541,18 +789,18 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     const reason = view.getByLabelText('What happened with this sale');
     expect(reason).toHaveProp('editable', true);
     fireEvent.changeText(reason, 'Customer changed their mind');
-    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
     expect(abandonCheckout).toHaveBeenCalledWith('Customer changed their mind');
   });
 
   it('describes a failed cancellation as unconfirmed instead of a failed recovery', async () => {
     const abandonCheckout = jest.fn().mockRejectedValue(new ApiClientError('network down', 500));
-    setContext({ abandonCheckout, authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] } });
+    setContext({ abandonCheckout, authorityCheckout: safeOpenCheckout() });
     const view = render(<CheckoutScreen />);
 
     fireEvent.press(view.getByTestId('sale-help-toggle'));
     fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
-    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
 
     expect(view.getByText(cancellationFailedCopy.notice)).toBeTruthy();
     expect(view.getByText(/try cancelling again to keep this cart/i)).toBeTruthy();
@@ -562,7 +810,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
   it('hides a failed-cancellation notice when the cancellation requires an administrator', async () => {
     const context = setContext({
       abandonCheckout: jest.fn(),
-      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      authorityCheckout: safeOpenCheckout(),
       checkoutProgress: { recoveryFailure: 'interrupted', cancellationFailed: true },
     }) as unknown as { checkoutProgress?: CheckoutProgress; abandonCheckout: jest.Mock };
     context.abandonCheckout.mockImplementation(async () => {
@@ -573,7 +821,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
     fireEvent.press(view.getByTestId('sale-help-toggle'));
     fireEvent.changeText(view.getByLabelText('What happened with this sale'), 'Customer changed their mind');
-    await act(async () => { fireEvent.press(view.getByRole('button', { name: 'Cancel this sale' })); });
+    await act(async () => { fireEvent.press(view.getByTestId('confirm-cancel-sale')); });
 
     expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Administrator required/);
     expect(view.queryByText(cancellationFailedCopy.notice)).toBeNull();
@@ -581,7 +829,7 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
 
   it('does not offer cancel retry while live payment uncertainty outranks cancellation failure', () => {
     setContext({
-      authorityCheckout: { amountCentavos: 3500, items: [], attempts: [] },
+      authorityCheckout: safeOpenCheckout(),
       checkoutProgress: { basketDiverged: true, cancellationFailed: true, uncertainTender: 'cash', cashInput: '100.00' },
     });
     const view = render(<CheckoutScreen />);
@@ -589,10 +837,8 @@ describe('CheckoutScreen Laravel QR Ph states', () => {
     expect(view.getByTestId('checkout-guidance')).toHaveTextContent(/Payment interrupted/);
     expect(view.queryByText(cancellationFailedCopy.helpHint)).toBeNull();
     fireEvent.press(view.getByTestId('sale-help-toggle'));
-    const reason = view.getByLabelText('What happened with this sale');
-    expect(reason).toHaveProp('editable', false);
-    fireEvent.changeText(reason, 'Customer changed their mind');
-    expect(view.getByRole('button', { name: 'Cancel this sale' })).toBeDisabled();
+    expect(view.queryByTestId('cancel-sale-entry')).toBeNull();
+    expect(view.queryByTestId('cancel-sale-reason-input')).toBeNull();
   });
 
   it('describes a failed clear of the cancelled purchase without recovery copy', async () => {

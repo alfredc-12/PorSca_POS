@@ -8,17 +8,18 @@
  */
 
 import { DescribedFailure, Failure } from '@/src/domain/userFacingError';
+import { BasketDivergenceState } from '@/src/domain/checkoutDivergenceCopy';
 import { describeAndRecordFailure } from '@/src/observability/diagnostics';
 
 export type CheckoutFailure = DescribedFailure;
 
 export type ApiFailure = Failure;
 
-export function saleFailureCopy(error: ApiFailure): CheckoutFailure {
+export function saleFailureCopy(error: ApiFailure, basketDivergence?: BasketDivergenceState): CheckoutFailure {
   // A cart line whose product disappeared is a distinct recovery from a plain
   // validation rejection, so it gets its own class before the shared mapping.
   const failure = hasMissingProductDetail(error.details) ? { ...error, code: 'product_missing' } : error;
-  return describeAndRecordFailure(failure, { screen: 'cash-sale' });
+  return describeAndRecordFailure(failure, { screen: 'cash-sale', basketDivergence });
 }
 
 /**

@@ -13,17 +13,47 @@ import {
   reveal,
   visibleText,
 } from './support/appium';
-import { productSearch, qrExpectedStatus } from './support/fixtures';
+import { productSearch, qrExpectedStatus, qrExpiryExpectation } from './support/fixtures';
 
 beforeEach(prepareAppiumCase);
 
+async function revealQrPresentation() {
+  for (const id of ['qr-payment-image', 'qr-payment-code']) {
+    await scrollToTop();
+    try {
+      const element = await reveal(byId(id));
+      if (await element.isDisplayed().catch(() => false)) return element;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 async function assertUnresolvedQrAttemptIsLocked() {
   if (!['pending', 'unknown', 'paid_unfulfilled'].includes(qrExpectedStatus)) return;
-  await expect(byId('leave-qr-payment')).toBeDisplayed();
+  await expect(byId('checkout-payment-cash')).toBeDisabled();
   if (await byId('retry-qr-payment').isDisplayed().catch(() => false)) {
     throw new Error('An unresolved or reconciliation-locked QR attempt must not offer a new payment.');
   }
-  await expect(byId('checkout-payment-cash')).toBeDisabled();
+  if (await byId('cancel-sale-entry').isDisplayed().catch(() => false)
+    || await byId('confirm-cancel-sale').isDisplayed().catch(() => false)) {
+    throw new Error('An unresolved or reconciliation-locked QR attempt must not offer checkout cancellation.');
+  }
+  await scrollToTop();
+  if (qrExpectedStatus === 'pending' || qrExpectedStatus === 'unknown') {
+    if (!await revealQrPresentation()) throw new Error('The server-returned QR image or symbol is not visible on Android.');
+  }
+  expect((await visibleText(byId('qr-practice-notice'))).toLowerCase()).toContain('not payable');
+  const countdown = await reveal(byId('qr-expiry-countdown'));
+  await countdown.waitForDisplayed();
+  const expiry = await countdown.getText();
+  if (qrExpiryExpectation === 'countdown') {
+    if (!/^Time remaining: \d{2}:\d{2}$/.test(expiry)) throw new Error(`The configured fixture should show a server-backed QR countdown, saw: ${expiry}`);
+  } else if (expiry !== 'Expiry time unavailable') {
+    throw new Error(`The configured fixture should show the unavailable expiry fallback, saw: ${expiry}`);
+  }
+  await (await reveal(byId('leave-qr-payment'))).waitForDisplayed();
 }
 
 async function cartSnapshot() {

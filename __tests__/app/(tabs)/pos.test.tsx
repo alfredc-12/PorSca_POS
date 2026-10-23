@@ -18,8 +18,8 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
 
-const single: Product = { id: 'single', barcode: '4800000000019', name: 'Sardines 155g', price: 22, stock: 1, category: 'Snacks' };
-const plenty: Product = { id: 'plenty', barcode: '4800000000026', name: 'Instant Coffee 30g', price: 9, stock: 40, category: 'Beverages' };
+const single: Product = { id: '1', barcode: '4800000000019', name: 'Sardines 155g', price: 22, stock: 1, category: 'Snacks' };
+const plenty: Product = { id: '2', barcode: '4800000000026', name: 'Instant Coffee 30g', price: 9, stock: 40, category: 'Beverages' };
 
 /** Adds fixtures straight through the guarded context path, not through search. */
 function SeedButton({ product, label }: { product: Product; label: string }) {
@@ -482,14 +482,14 @@ describe('POS pre-checkout revalidation', () => {
     // The first read only describes the pre-edit cart, so it must be discarded
     // rather than used to reach checkout (defect F2).
     await act(async () => {
-      catalog.resolve('plenty', { ...plenty, stock: 40 });
+      catalog.resolve(plenty.id, { ...plenty, stock: 40 });
     });
     expect(router.push).not.toHaveBeenCalled();
 
     // The edited cart is re-read before anything is handed to checkout.
     await waitFor(() => expect(catalog.getProduct).toHaveBeenCalledTimes(2));
     await act(async () => {
-      catalog.resolve('plenty', { ...plenty, stock: 40 });
+      catalog.resolve(plenty.id, { ...plenty, stock: 40 });
     });
 
     await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/checkout', params: { method: 'cash' } }));

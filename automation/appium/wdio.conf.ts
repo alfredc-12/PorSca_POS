@@ -10,6 +10,7 @@ export const config = {
     './test/inventory-admin.e2e.ts',
     './test/stock-deduction.e2e.ts',
     './test/smoke.e2e.ts',
+    './test/checkout-cancellation.e2e.ts',
     './test/checkout-recovery.e2e.ts',
   ],
   maxInstances: 1,

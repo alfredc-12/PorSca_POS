@@ -113,7 +113,7 @@ export class DurableCheckout {
     return checkoutPayment(this.observed, this.submittedQrAttempt()?.id);
   }
 
-  async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+  async exclusive<T>(operation: () => Promise<T>, options: { financial?: boolean } = {}): Promise<T> {
     this.assertActive();
     if (this.busy) throw new ApiClientError('Checkout operation is already in progress.');
     this.busy = true;
@@ -124,7 +124,8 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        const next: CheckoutProgress['recoveryFailure'] = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        if (options.financial !== false || next !== 'interrupted') this.recoveryFailure = next;
       }
       throw error;
     } finally { this.busy = false; }
@@ -341,8 +342,10 @@ export class DurableCheckout {
     this.assertReconciliationUnlocked('abandonment');
     if (this.progress.uncertainTender) throw new ApiClientError('Recover the previous payment before abandoning the purchase.', 409, 'checkout_recovery_required');
     if (!this.current) throw new ApiClientError('No checkout to abandon.');
-    this.current = await this.client.abandonCheckout(this.current.id, reason);
-    if (this.current.state === 'abandoned') await this.retire();
+    const result = await this.client.abandonCheckout(this.current.id, reason);
+    this.current = result;
+    if (result.state === 'abandoned') await this.retire();
+    return result;
   }
   async retire() {
     await this.load();
