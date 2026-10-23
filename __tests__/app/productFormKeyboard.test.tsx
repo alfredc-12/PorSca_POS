@@ -9,7 +9,7 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
 }));
 jest.mock('@/src/context/AuthContext', () => ({ useAuth: () => ({ isAdmin: true }) }));
-jest.mock('@/src/context/PosContext', () => ({ usePos: () => ({ products: [], inventoryProducts: [] }) }));
+jest.mock('@/src/context/PosContext', () => ({ usePos: () => ({ products: [], inventoryProducts: [] }), useOptionalPos: () => null }));
 jest.mock('@/src/components/ProductEditor', () => {
   const { View } = jest.requireActual<typeof import('react-native')>('react-native');
   return { ProductEditor: () => <View testID="product-editor" /> };

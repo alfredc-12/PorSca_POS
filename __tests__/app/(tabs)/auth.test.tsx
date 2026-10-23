@@ -13,6 +13,7 @@ jest.mock('@/src/context/AuthContext', () => ({
   useAuth: () => ({ status: mockStatus, isAdmin: mockIsAdmin, user: { name: 'Shop Staff', role: mockIsAdmin ? 'admin' : 'cashier' }, signOut: mockSignOut }),
 }));
 jest.mock('@/src/context/PosContext', () => ({
+  useOptionalPos: () => null,
   usePos: () => ({
     inventoryProducts: [{ id: '1', name: 'Coffee', barcode: '4800000000012', price: 25, stock: 20 }],
     inventoryState: 'ready', inventoryUsingFallback: false, refreshInventory: mockRefreshInventory,
@@ -44,7 +45,7 @@ describe('signed-in tabs and cashier controls', () => {
 
   it('keeps all three tabs visible for cashiers and offers sign out', () => {
     const screen = render(<TabsLayout />);
-    ['pos', 'inventory', 'transactions'].forEach((tab) => expect(screen.getByText(`tab:${tab}`)).toBeTruthy());
+    ['pos', 'inventory', 'transactions', 'sales-holds'].forEach((tab) => expect(screen.getByText(`tab:${tab}`)).toBeTruthy());
     fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });

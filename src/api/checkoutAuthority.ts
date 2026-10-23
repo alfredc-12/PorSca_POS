@@ -13,6 +13,8 @@ export type AuthorityCheckout = {
   items: { productId: number; name: string; quantity: number; unitPriceCentavos: number }[];
   attempts: AuthorityAttempt[];
   sale: null | { id: number; method: 'cash' | 'qrph'; amountCentavos: number; cashReceivedCentavos: number | null; changeAmountCentavos: number | null; completedAt: string };
+  createdAt?: string;
+  created_at?: string;
   exceptions: { caseId: number; reason: string; state: string }[];
   history: unknown[];
 };

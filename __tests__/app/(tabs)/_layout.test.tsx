@@ -48,6 +48,7 @@ describe('admin Users navigation', () => {
     expect(screen.getByTestId('tab-pos')).toBeTruthy();
     expect(screen.getByTestId('tab-inventory')).toBeTruthy();
     expect(screen.getByTestId('tab-transactions')).toBeTruthy();
+    expect(screen.getByTestId('tab-sales-holds')).toBeTruthy();
   });
 
   it('does not expose the Users entry to cashiers', () => {

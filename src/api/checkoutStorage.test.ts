@@ -53,6 +53,12 @@ describe.each(['ios', 'web'])('checkout identity storage on %s', os => {
     await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
   });
 
+  it('persists parked state and the optional local customer reference without altering checkout identity fields', async () => {
+    const handle = { ...first, parked: true, customerReference: 'Order A-17' };
+    await checkoutStorage(url).save(handle);
+    await expect(checkoutStorage(url).load()).resolves.toEqual(handle);
+  });
+
   it.each([
     { previousAttemptIds: null }, { previousAttemptIds: [-1] }, { previousAttemptIds: [7, 7] },
     { attemptId: 0 }, { attemptId: '8' }, { previousAttemptIds: [7], attemptId: 7 },

@@ -2,6 +2,8 @@ import React from 'react';
 import { Pressable, Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import PosScreen, { SEARCH_DEBOUNCE_MS } from '@/app/(tabs)/pos';
+import SalesHoldsScreen from '@/app/(tabs)/sales-holds';
+import DeviceStorageRecoveryScreen from '@/app/device-storage-recovery';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { CLEAR_UNDO_WINDOW_MS } from '@/src/domain/cart';
@@ -81,6 +83,21 @@ describe('POS cart consistency', () => {
     router.push.mockReset();
   });
 
+  it('replaces inline resume links with a live Sales/Holds status card', async () => {
+    const checkout: AuthorityCheckout = { id: 'hold-one', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2200, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 1, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
+    const posClient = {
+      isConfigured: true,
+      listCheckouts: jest.fn().mockResolvedValue({ items: [checkout, { ...checkout, id: 'hold-two' }], pagination: { current_page: 1, last_page: 1, total: 2 } }),
+      getCheckout: jest.fn(async (id: string) => id === checkout.id ? checkout : { ...checkout, id: 'hold-two' }),
+    } as unknown as ApiClient;
+    const view = render(<PosProvider client={posClient}><PosScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('pos-sales-holds-card')).toHaveTextContent(/2 active purchases/));
+    expect(view.getByLabelText('2 active sales or holds')).toBeTruthy();
+    expect(view.queryByTestId('pos-resume-sale-hold-one')).toBeNull();
+    fireEvent.press(view.getByTestId('pos-sales-holds-card'));
+    expect(router.push).toHaveBeenCalledWith('/sales-holds');
+  });
+
   it('describes each recoverable sale by its basket and amount while recovering its internal identity', async () => {
     const first: AuthorityCheckout = { id: 'internal-uuid-one', storeId: 'shop', state: 'payment_unresolved', revision: 1, amountCentavos: 4400, currency: 'PHP', items: [{ productId: 1, name: single.name, quantity: 2, unitPriceCentavos: 2200 }], attempts: [], sale: null, exceptions: [], history: [] };
     const second: AuthorityCheckout = { ...first, id: 'internal-uuid-two', state: 'ready_for_attempt', amountCentavos: 900, items: [{ productId: 2, name: plenty.name, quantity: 1, unitPriceCentavos: 900 }] };
@@ -95,11 +112,12 @@ describe('POS cart consistency', () => {
       listProducts: jest.fn().mockResolvedValue([]),
     } as unknown as ApiClient;
     const checkoutStore: CheckoutStorage = { load: async () => null, save: async () => undefined };
-    const view = render(<PosProvider client={recoveryClient} checkoutStore={checkoutStore}><PosScreen /></PosProvider>);
-    await waitFor(() => expect(view.getByRole('button', { name: `Resume sale • ${single.name} × 2 • ₱44.00` })).toBeTruthy());
-    const entry = view.getByRole('button', { name: `Resume sale • ${plenty.name} × 1 • ₱9.00` });
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={checkoutStore}><SalesHoldsScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId(`checkout-card-${first.id}`)).toBeTruthy());
+    expect(view.getByTestId(`resume-${second.id}`)).toBeTruthy();
+    expect(view.getByTestId(`resume-${first.id}`)).toBeTruthy();
     expect(view.queryByText(/internal-uuid|payment_unresolved|ready_for_attempt/)).toBeNull();
-    await act(async () => { fireEvent.press(entry); });
+    await act(async () => { fireEvent.press(view.getByTestId(`resume-${second.id}`)); });
     expect(recoverCheckout).toHaveBeenCalledTimes(1);
     expect(recoverCheckout).toHaveBeenCalledWith(second.id);
     expect(router.push).toHaveBeenCalledWith('/checkout');
@@ -115,16 +133,16 @@ describe('POS cart consistency', () => {
       baseUrl: 'https://shop.test/api/v1',
       listCheckouts: jest.fn().mockResolvedValue({ items: [], pagination: { current_page: 1, last_page: 1, total: 0 } }),
     } as unknown as ApiClient;
-    const view = render(<PosProvider client={recoveryClient} checkoutStore={store}><PosScreen /></PosProvider>);
-    await waitFor(() => expect(view.getByTestId('review-corrupt-checkout-discard')).toBeTruthy());
-    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
-    expect(view.queryByTestId('confirm-corrupt-checkout-discard')).toBeNull();
-    fireEvent.changeText(view.getByTestId('corrupt-checkout-discard-reason'), 'Operator approved discard');
-    fireEvent.press(view.getByTestId('review-corrupt-checkout-discard'));
-    fireEvent.press(view.getByTestId('confirm-corrupt-checkout-discard'));
+    const view = render(<PosProvider client={recoveryClient} checkoutStore={store}><DeviceStorageRecoveryScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId('review-storage-discard')).toBeTruthy());
+    fireEvent.press(view.getByTestId('review-storage-discard'));
+    expect(view.queryByTestId('confirm-storage-discard')).toBeNull();
+    fireEvent.changeText(view.getByTestId('storage-discard-reason'), 'Operator approved discard');
+    fireEvent.press(view.getByTestId('review-storage-discard'));
+    fireEvent.press(view.getByTestId('confirm-storage-discard'));
     await waitFor(() => expect(store.save).toHaveBeenCalledWith(null));
-    expect(view.getByText(/Reason: Operator approved discard/)).toBeTruthy();
-    expect(view.getByText(/Payment was not confirmed/)).toBeTruthy();
+    expect(view.getByText(/Reason provided: Operator approved discard/)).toBeTruthy();
+    expect(view.getByText(/does not confirm whether money was collected/)).toBeTruthy();
   });
 
   it('shows accurate subtotal and total without an unsupported discount row', async () => {

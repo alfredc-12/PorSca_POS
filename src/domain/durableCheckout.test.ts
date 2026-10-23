@@ -176,6 +176,21 @@ describe('durable authority workflow and machine integration', () => {
     await expect(authority.prepare(lines)).resolves.toEqual(open);
     expect(authority.current?.sale).toBeNull();
   });
+  it('allows corrupt identity discard when discovery contains only terminal checkouts', async () => {
+    const storage: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('invalid')),
+      save: jest.fn(),
+    };
+    const { client } = fixture();
+    client.listCheckouts.mockResolvedValue({ items: [{ ...open, state: 'abandoned' }, { ...open, id: 'completed', state: 'completed', sale: { id: 10, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } }], pagination: { current_page: 1, last_page: 1, total: 2 } });
+    const authority = new DurableCheckout(client as unknown as ApiClient, storage);
+    await authority.hasCorruptStorage();
+
+    await expect(authority.discardCorruptIdentity('Operator reviewed terminal records')).resolves.toBe('Operator reviewed terminal records');
+    expect(storage.save).toHaveBeenCalledWith(null);
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+  });
+
   it('keeps a corrupt stored identity unresolved until a discovered checkout is explicitly reattached', async () => {
     let saved: CheckoutHandle | null = null;
     const storage: CheckoutStorage = {
@@ -663,6 +678,7 @@ describe('durable authority workflow and machine integration', () => {
     const { authority, client, saved } = fixture();
     await authority.prepare(lines);
     const oldKey = saved()?.key;
+    client.recoverCheckout.mockResolvedValue(open);
     await authority.abandon('Customer declined purchase');
     expect(client.abandonCheckout).toHaveBeenCalledWith('server-uuid', 'Customer declined purchase');
     expect(saved()).toBeNull();

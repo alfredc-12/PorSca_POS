@@ -140,6 +140,114 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(restarted.result.current.completeCashSale('100')).rejects.toThrow(/unresolved or checkout is locked/); });
     expect(client.checkoutCash).toHaveBeenCalledTimes(1);
   });
+  it('surfaces unreadable local identity while the server is offline without allowing discard', async () => {
+    const { wrapper, client, store } = fixture();
+    client.isConfigured = false;
+    store.load = async () => { throw new CheckoutStorageCorruptionError('legacy checkout identity'); };
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.openPosCheckouts(); });
+
+    expect(result.current.hasUnreadableCheckoutIdentity).toBe(true);
+    expect(result.current.checkoutListState).toBe('unavailable');
+    expect(result.current.canDiscardCorruptCheckout).toBe(false);
+  });
+
+  it('parks a sale on the Laravel authority and resets the POS cart only after creation succeeds', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await result.current.parkSale('Order A-17'); });
+
+    expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
+    expect(handle()).toMatchObject({ id: 'durable-uuid', parked: true, customerReference: 'Order A-17' });
+    expect(result.current.cart).toHaveLength(0);
+    expect(result.current.parkedCheckoutId).toBe('durable-uuid');
+    expect(result.current.parkedCustomerReference).toBe('Order A-17');
+    expect(result.current.activeCheckoutCount).toBe(1);
+  });
+
+  it('keeps cart edits made while a parked marker is being persisted', async () => {
+    const { wrapper, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    const save = store.save.bind(store);
+    let finishParkedWrite!: () => void;
+    store.save = async value => {
+      if (value?.parked) await new Promise<void>(resolve => { finishParkedWrite = resolve; });
+      await save(value);
+    };
+
+    let parking!: Promise<unknown>;
+    act(() => { parking = result.current.parkSale(); });
+    await waitFor(() => expect(finishParkedWrite).toBeDefined());
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    await act(async () => {
+      finishParkedWrite();
+      await expect(parking).rejects.toMatchObject({ code: 'checkout_basket_diverged' });
+    });
+
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2']);
+    expect(handle()?.parked).toBe(true);
+  });
+
+  it('does not automatically restore a parked purchase over the next customer cart after restart', async () => {
+    const { wrapper, client, handle } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.parkSale(); });
+    first.unmount();
+    client.recoverCheckout.mockClear();
+
+    const restarted = renderHook(() => usePos(), { wrapper });
+    await act(async () => { await restarted.result.current.openPosCheckouts(); });
+
+    expect(restarted.result.current.cart).toHaveLength(0);
+    expect(restarted.result.current.parkedCheckoutId).toBe('durable-uuid');
+    expect(restarted.result.current.recoverableCheckouts.map(checkout => checkout.id)).toContain('durable-uuid');
+    expect(client.recoverCheckout).not.toHaveBeenCalled();
+    expect(handle()?.parked).toBe(true);
+  });
+
+  it('checks a waiting payment through the authoritative provider-verification endpoint', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockResolvedValue(pending);
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.checkCheckoutStatus('durable-uuid'); });
+
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledWith('durable-uuid', 7);
+    expect(result.current.recoverableCheckouts[0].state).toBe('payment_unresolved');
+  });
+
+  it('cancels a diverged earlier checkout through the server while keeping the current cart', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    client.recoverCheckout.mockResolvedValue(open);
+    client.abandonCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+
+    await act(async () => { await result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer chose the new basket'); });
+
+    expect(client.abandonCheckout).toHaveBeenCalledWith('durable-uuid', 'Customer chose the new basket');
+    expect(handle()).toBeNull();
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2']);
+    expect(result.current.activeCheckoutCount).toBe(0);
+  });
+
+  it('keeps server-discovered unresolved payments locked against cancellation', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockResolvedValue(pending);
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer no longer wants this sale')).rejects.toThrow(/locked or unresolved/); });
+
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+  });
+
   it('keeps a cash-unresolved refusal recovery-only even when a stale open read has no attempt', async () => {
     const { wrapper, client } = fixture(); const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('cash still pending', 409, 'cash_attempt_unresolved'));

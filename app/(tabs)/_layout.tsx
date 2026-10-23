@@ -73,6 +73,14 @@ export default function TabsLayout() {
           tabBarIcon: ({ color }) => <Ionicons name="receipt-outline" color={color} size={iconSize} />,
         }}
       />
+      <Tabs.Screen
+        name="sales-holds"
+        options={{
+          title: 'Sales/Holds',
+          tabBarButtonTestID: 'tab-sales-holds',
+          tabBarIcon: ({ color }) => <Ionicons name="archive-outline" color={color} size={iconSize} />,
+        }}
+      />
     </Tabs>
     </View>
   );

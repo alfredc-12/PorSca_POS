@@ -8,7 +8,7 @@ jest.mock('expo-router', () => ({
   router: { back: jest.fn(), replace: jest.fn() },
   useLocalSearchParams: () => ({}),
 }));
-jest.mock('@/src/context/PosContext', () => ({ useCheckout: jest.fn() }));
+jest.mock('@/src/context/PosContext', () => ({ useCheckout: jest.fn(), useOptionalPos: () => null }));
 jest.mock('@/src/hooks/useCheckoutPaymentPolling', () => ({
   useCheckoutPaymentPolling: () => ({ checkNow: jest.fn(), visible: false }),
 }));
