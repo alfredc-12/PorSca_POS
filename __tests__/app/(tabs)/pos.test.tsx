@@ -349,6 +349,24 @@ describe('sales holds cancellation marker failures', () => {
     await waitFor(() => expect(view.getByText(failureNotice)).toBeTruthy());
     expect(router.replace).not.toHaveBeenCalled();
   });
+
+  it('does not offer Clear cancelled for a cancelled purchase this device does not own', async () => {
+    const store: CheckoutStorage = { load: async () => null, save: async () => undefined };
+    const view = render(<PosProvider client={clientFor(cancelled)} checkoutStore={store}><SalesHoldsScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByTestId(`checkout-card-${cancelled.id}`)).toBeTruthy());
+
+    expect(view.queryByTestId(`clear-cancelled-${cancelled.id}`)).toBeNull();
+    expect(view.getByLabelText('Status: Cancelled')).toBeTruthy();
+  });
+
+  it('does not offer clearing a cancelled purchase the conflict screen does not own', async () => {
+    const store: CheckoutStorage = { load: async () => null, save: async () => undefined };
+    const view = render(<PosProvider client={clientFor(cancelled)} checkoutStore={store}><CheckoutConflictScreen /></PosProvider>);
+    await waitFor(() => expect(view.getByText('This purchase cannot be resumed here.')).toBeTruthy());
+
+    expect(view.queryByTestId('clear-cancelled-purchase')).toBeNull();
+    expect(view.getByRole('button', { name: 'Back to Sales/Holds' })).toBeTruthy();
+  });
 });
 
 describe('POS search', () => {

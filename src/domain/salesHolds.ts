@@ -45,27 +45,3 @@ export function canCancelCheckout(checkout: AuthorityCheckout) {
 export function shortCheckoutId(id: string) {
   return id.replace(/-/g, '').slice(0, 8).toUpperCase();
 }
-
-export function elapsedCheckoutTime(checkout: AuthorityCheckout, now = Date.now()) {
-  const timestamp = checkoutTimestamp(checkout);
-  if (timestamp === undefined) return 'Elapsed time unavailable';
-  const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60_000));
-  if (elapsedMinutes < 1) return 'Less than 1m';
-  if (elapsedMinutes < 60) return `${elapsedMinutes}m`;
-  const hours = Math.floor(elapsedMinutes / 60);
-  const minutes = elapsedMinutes % 60;
-  if (hours < 24) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-  return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
-}
-
-function checkoutTimestamp(checkout: AuthorityCheckout) {
-  return parseTimestamp(checkout.createdAt);
-}
-
-function parseTimestamp(value: unknown) {
-  if (typeof value !== 'string' || !value) return undefined;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : undefined;
-}

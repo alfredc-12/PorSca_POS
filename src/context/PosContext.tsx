@@ -1135,11 +1135,7 @@ function mergeSales(current: Sale[], incoming: Sale[]) {
 function mergeCheckouts(current: AuthorityCheckout[], incoming: AuthorityCheckout[]) {
   const merged = new Map(current.map(checkout => [checkout.id, checkout]));
   incoming.forEach(checkout => merged.set(checkout.id, checkout));
-  return [...merged.values()].sort((a, b) => {
-    const aDate = Date.parse(a.createdAt ?? '') || 0;
-    const bDate = Date.parse(b.createdAt ?? '') || 0;
-    return bDate - aDate;
-  });
+  return [...merged.values()];
 }
 
 export function useOptionalPos() {

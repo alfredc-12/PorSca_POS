@@ -7,7 +7,7 @@ import { CheckoutReasonModal } from '@/src/components/CheckoutReasonModal';
 import { DataState } from '@/src/components/DataState';
 import { Screen } from '@/src/components/Screen';
 import { usePos } from '@/src/context/PosContext';
-import { canCancelCheckout, cancellationMarkerUnclearedNotice, checkoutBadge, elapsedCheckoutTime, isOpenCheckout, isPaymentLocked, shortCheckoutId } from '@/src/domain/salesHolds';
+import { canCancelCheckout, cancellationMarkerUnclearedNotice, checkoutBadge, isOpenCheckout, isPaymentLocked, shortCheckoutId } from '@/src/domain/salesHolds';
 import { CancellationMarkerUnclearedError } from '@/src/domain/durableCheckout';
 import { colors, radius, spacing } from '@/src/theme/tokens';
 import { CartLine } from '@/src/types';
@@ -28,19 +28,12 @@ export default function SalesHoldsScreen() {
     cancelDiscoveredCheckout,
     clearCancelledCheckout,
   } = usePos();
-  const [now, setNow] = useState<number>();
   const [notice, setNotice] = useState<string>();
   const [cancelTarget, setCancelTarget] = useState<AuthorityCheckout>();
   const [cancelReason, setCancelReason] = useState('');
   const [busyId, setBusyId] = useState<string>();
 
   useEffect(() => { void refreshCheckouts(); }, [refreshCheckouts]);
-  useEffect(() => {
-    const updateNow = () => setNow(Date.now());
-    updateNow();
-    const timer = setInterval(updateNow, 60_000);
-    return () => clearInterval(timer);
-  }, []);
 
   const resumeSale = useCallback(async (checkout: AuthorityCheckout) => {
     if (!isOpenCheckout(checkout)) return;
@@ -147,8 +140,8 @@ export default function SalesHoldsScreen() {
         const canCancel = canCancelCheckout(checkout);
         const locked = isPaymentLocked(checkout);
         const localParked = checkout.id === parkedCheckoutId;
+        const localMarker = checkout.id === retainedCheckoutId || localParked;
         const busy = busyId === checkout.id;
-        const elapsed = now === undefined ? 'Elapsed time updating…' : elapsedCheckoutTime(checkout, now);
         return (
           <View key={checkout.id} testID={`checkout-card-${checkout.id}`} style={styles.checkoutCard}>
             <View style={styles.cardTop}>
@@ -157,9 +150,6 @@ export default function SalesHoldsScreen() {
                 {localParked ? <View style={styles.parkedBadge}><Text style={styles.parkedBadgeText}>Parked</Text></View> : null}
               </View>
               <StatusBadge label={badge} />
-            </View>
-            <View style={styles.metaRow}>
-              <Text style={styles.elapsed}>{elapsed === 'Elapsed time unavailable' ? elapsed : `${elapsed} elapsed`}</Text>
             </View>
             <View style={styles.itemsPreview}>
               {checkout.items.slice(0, 4).map(item => (
@@ -180,7 +170,7 @@ export default function SalesHoldsScreen() {
               {isOpenCheckout(checkout) ? <ActionButton testID={`resume-${checkout.id}`} label={busy ? 'Working…' : 'Resume sale'} icon="play-circle-outline" onPress={() => void resumeSale(checkout)} disabled={actionsDisabled} /> : null}
               <ActionButton testID={`check-status-${checkout.id}`} label={busy ? 'Checking…' : 'Check status'} icon="refresh-outline" onPress={() => void checkStatus(checkout)} disabled={actionsDisabled} variant="secondary" />
               {canCancel ? <ActionButton testID={`cancel-${checkout.id}`} label="Cancel sale" icon="close-circle-outline" onPress={() => { setCancelTarget(checkout); setCancelReason(''); }} disabled={actionsDisabled} variant="danger" /> : null}
-              {checkout.state === 'abandoned' ? <ActionButton testID={`clear-cancelled-${checkout.id}`} label="Clear cancelled" icon="trash-outline" onPress={() => void clearCancelled(checkout)} disabled={actionsDisabled} variant="secondary" /> : null}
+              {checkout.state === 'abandoned' && localMarker ? <ActionButton testID={`clear-cancelled-${checkout.id}`} label="Clear cancelled" icon="trash-outline" onPress={() => void clearCancelled(checkout)} disabled={actionsDisabled} variant="secondary" /> : null}
             </View>
           </View>
         );
@@ -253,8 +243,6 @@ const styles = StyleSheet.create({
   badgeAdmin: { backgroundColor: colors.dangerSoft, borderColor: '#F3BFC3' },
   badgeCancelled: { backgroundColor: colors.surfaceMuted, borderColor: colors.outline },
   badgeCompleted: { backgroundColor: colors.primaryWash, borderColor: '#B9DEC6' },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm },
-  elapsed: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
   itemsPreview: { gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.background },
   previewRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
   itemName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '600' },

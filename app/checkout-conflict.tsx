@@ -20,6 +20,7 @@ export default function CheckoutConflictScreen() {
     checkoutListState,
     checkoutListError,
     retainedCheckoutId,
+    parkedCheckoutId,
     refreshCheckouts,
     recoverCheckout,
     cancelDiscoveredCheckout,
@@ -96,6 +97,7 @@ export default function CheckoutConflictScreen() {
   };
 
   const loading = !checkout && (checkoutListState === 'idle' || checkoutListState === 'loading');
+  const localMarker = Boolean(checkout && (checkout.id === retainedCheckoutId || checkout.id === parkedCheckoutId));
   const currentSubtotal = cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
 
   return (
@@ -115,7 +117,7 @@ export default function CheckoutConflictScreen() {
             <BasketPanel title="Earlier saved purchase" badge={checkoutBadge(checkout)} amount={checkout.amountCentavos / 100} items={checkout.items.map(item => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPriceCentavos / 100 }))} />
             <BasketPanel title="Current POS cart" badge={`${cart.length} ${cart.length === 1 ? 'line' : 'lines'}`} amount={currentSubtotal} items={cart.map(line => ({ name: line.product.name, quantity: line.quantity, unitPrice: line.product.price }))} emptyLabel="The cart is empty." />
           </View>
-          {checkout.state === 'abandoned' ? (
+          {checkout.state === 'abandoned' && localMarker ? (
             <View style={styles.actionPanel}>
               <Text style={styles.actionTitle}>This earlier purchase is already cancelled.</Text>
               <Text style={styles.actionBody}>Clear its retained identity and keep the current POS cart. The server cancellation remains the only status authority.</Text>
