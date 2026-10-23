@@ -9,7 +9,10 @@ import LoginScreen from '@/app/login';
 import TabsLayout from '@/app/(tabs)/_layout';
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock('@/src/context/PosContext', () => ({ PosProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+jest.mock('@/src/context/PosContext', () => ({
+  PosProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useOptionalPos: () => null,
+}));
 
 const cashier = { id: 2, name: 'Cashier', email: 'cashier@example.test', role: 'cashier', is_active: true };
 function response(body: unknown, status = 200) {
