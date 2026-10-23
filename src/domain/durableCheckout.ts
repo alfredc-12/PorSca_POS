@@ -113,7 +113,7 @@ export class DurableCheckout {
     return checkoutPayment(this.observed, this.submittedQrAttempt()?.id);
   }
 
-  async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+  async exclusive<T>(operation: () => Promise<T>, options: { financial?: boolean } = {}): Promise<T> {
     this.assertActive();
     if (this.busy) throw new ApiClientError('Checkout operation is already in progress.');
     this.busy = true;
@@ -124,7 +124,8 @@ export class DurableCheckout {
     } catch (error) {
       if (error instanceof ApiClientError && error.code === 'cash_attempt_unresolved') this.unresolvedCashRefusal = true;
       if (this.recoveryFailure !== 'inconsistent') {
-        this.recoveryFailure = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        const next: CheckoutProgress['recoveryFailure'] = error instanceof CheckoutIdentityError ? 'identity' : error instanceof ApiClientError && error.status === 403 ? 'permission' : error instanceof ApiClientError && (error.code === 'revalidation_required' || error.code === 'checkout_basket_diverged' || error.code === 'checkout_purchase_cancelled' || isDefinitiveQrRejection(error)) ? undefined : 'interrupted';
+        if (options.financial !== false || next !== 'interrupted') this.recoveryFailure = next;
       }
       throw error;
     } finally { this.busy = false; }

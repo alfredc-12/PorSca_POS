@@ -162,8 +162,8 @@ export function PosProvider({
     return () => authority.setActive(false);
   }, [authority]);
   useEffect(() => () => reads.dispose(), [reads]);
-  const exclusive = useCallback(async <T,>(action: () => Promise<T>): Promise<T> => {
-    try { return await authority.exclusive(action); }
+  const exclusive = useCallback(async <T,>(action: () => Promise<T>, options?: { financial?: boolean }): Promise<T> => {
+    try { return await authority.exclusive(action, options); }
     finally { setAuthorityCheckout(authority.current); setStoredCheckoutProgress(authority.progress); }
   }, [authority]);
   const [recoverableCheckouts, setRecoverableCheckouts] = useState<AuthorityCheckout[]>([]);
@@ -674,11 +674,11 @@ export function PosProvider({
     if (!client.isConfigured) throw new ApiClientError(OFFLINE_COPY.checkoutNotConfigured);
     if (!cartRef.current.lines.length) throw new ApiClientError('Add an item before preparing this checkout.');
     return authority.prepare(cartRef.current.lines);
-  }), [exclusive, authority, client]);
+  }, { financial: false }), [exclusive, authority, client]);
 
   const revalidateCheckout = useCallback(async () => exclusive(async () => {
     await applyCheckout(await authority.revalidate());
-  }), [exclusive, authority, applyCheckout]);
+  }, { financial: false }), [exclusive, authority, applyCheckout]);
 
   const abandonCheckout = useCallback(async (reason: string) => {
     try {

@@ -414,6 +414,25 @@ describe('durable authority workflow and machine integration', () => {
     expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
   });
+  it('keeps non-financial preparation and quote failures out of the interrupted state', async () => {
+    const preparing = fixture();
+    preparing.client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(preparing.authority.exclusive(() => preparing.authority.prepare(lines), { financial: false })).rejects.toThrow(/Unable to reach/);
+    expect(preparing.authority.progress.recoveryFailure).toBeUndefined();
+    expect(preparing.authority.progress.uncertainTender).toBeUndefined();
+
+    const quoting = fixture();
+    await quoting.authority.prepare(lines);
+    quoting.client.revalidateCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(quoting.authority.exclusive(() => quoting.authority.revalidate(), { financial: false })).rejects.toThrow(/Unable to reach/);
+    expect(quoting.authority.progress.recoveryFailure).toBeUndefined();
+    expect(quoting.authority.progress.uncertainTender).toBeUndefined();
+
+    const tendering = fixture();
+    tendering.client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(tendering.authority.exclusive(() => tendering.authority.prepare(lines))).rejects.toThrow(/Unable to reach/);
+    expect(tendering.authority.progress.recoveryFailure).toBe('interrupted');
+  });
   it('reports a changed basket for a live cart that cannot be validated', async () => {
     const { authority } = fixture();
     await authority.prepare(lines);

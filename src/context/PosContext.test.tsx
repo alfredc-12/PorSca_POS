@@ -78,6 +78,33 @@ describe('POS durable checkout integration', () => {
     expect(pos.result.current.authorityCheckout).toBeUndefined();
   });
 
+  it('keeps a failed cancellation preparation from claiming payment uncertainty', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+    client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.pos.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.pos.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.pos.checkoutMachine).toBeUndefined();
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('keeps a failed quote revalidation from claiming payment uncertainty', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+    client.revalidateCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.revalidateCheckout()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.authorityCheckout?.state).toBe('open');
+  });
+
   it('keeps a replacement purchase recoverable when an unmounted provider receives an old cash response', async () => {
     const { wrapper, client, handle } = fixture();
     const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };
