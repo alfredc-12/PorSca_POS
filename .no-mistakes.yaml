@@ -11,61 +11,24 @@ protected_paths:
   - "app.json"
   - ".github/workflows/**"
 
-document:
-  instructions: |
-    README.md owns installation and onboarding.
-    docs/WORKFLOW.md owns delivery and QA procedures.
-    docs/API-CONTRACT.md owns mobile/API integration.
-    docs/ARCHITECTURE.md owns application architecture.
-    docs/DEPLOYMENT.md owns deployment guidance.
-    Keep documentation consistent with the Laravel API.
-    Update authoritative documents instead of duplicating them.
-
 review:
+  conversation: false
   path_instructions:
     - path: "src/domain/**"
-      instructions: |
-        Preserve monetary correctness, checkout state,
-        stock invariants, and transaction consistency.
-        Check rounding, duplicate submissions, and failures.
-
+      instructions: "Check centavo math, checkout transitions, retry safety, and stock invariants."
     - path: "src/api/**"
-      instructions: |
-        Check API contract compatibility, authentication,
-        retries, idempotency, and error handling.
-        Never infer payment success from a client-only state.
-
+      instructions: "Preserve docs/API-CONTRACT.md; only Laravel may confirm payment or sale completion."
     - path: "src/auth/**"
-      instructions: |
-        Check secure token storage, session expiration,
-        logout behavior, and access boundaries.
-
+      instructions: "Check secure token storage, current-session 401 handling, and logout isolation."
     - path: "app/checkout.tsx"
-      instructions: |
-        Check cashier workflow, payment state visibility,
-        confirmation safety, and duplicate-sale prevention.
-
-    - path: "app/scanner.tsx"
-      instructions: |
-        Check barcode interpretation, error handling,
-        product selection, and permission fallbacks.
+      instructions: "Keep tender locks, uncertain-payment recovery, and duplicate-submit protection clear to the cashier."
+commands:
+  test: "npm run test:fast -- --runTestsByPath src/domain/checkoutMachine.test.ts --passWithNoTests=false"
 
 test:
   instructions: |
-    Critical-path proof authority (checkout/payment, stock/transaction,
-    or API-contract behavior): only tests already blessed by secondmate or
-    owned by a human count as proof. Worker-written tests are supplemental
-    proposals, not proof, until secondmate or a human blesses them.
-
-    The golden checkout suites `checkoutMachine`, `durableCheckout`,
-    `checkoutGuidance`, and `moneyBounds` were frozen by [merged PR 107](https://github.com/alfredc-12/PorSca_POS/pull/107).
-    Do not edit, weaken, remove, rename, relocate, or duplicate these suites
-    or their assertions without explicit captain sign-off. If required work
-    would touch one, stop and escalate; do not work around it.
-
-    Practice payment payloads must remain non-payable; never simulate their
-    payment as paid or infer a paid state from client/test-only data.
-
-    Route validation by change tier (T0-T3): PROJECT_CHECKS.md is the
-    single source of truth for the tier command table and standing
-    restrictions; run only the tier matching the change scope.
+    Read AGENTS.md and PROJECT_CHECKS.md; check the selected docs/API-CONTRACT.md header before any API probe.
+    Follow docs/SETUP.md; start Expo Web on a free localhost port and pair only an isolated local API with disposable data.
+    Use chrome-devtools-axi, a unique CHROME_DEVTOOLS_AXI_SESSION, and default isolated Chrome to drive changed cashier flows.
+    Inspect UI and HTTP outcomes; keep practice QR non-payable and follow PROJECT_CHECKS.md safety and proof rules.
+    Report defects as no-go and unsupported/native-only checks as inconclusive with manual steps; stop only run-owned resources.
