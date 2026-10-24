@@ -14,6 +14,25 @@ and frozen commit SHAs, is recorded in [merged PR 107](https://github.com/alfred
 Its authority and no-edit rules live in `.no-mistakes.yaml` under
 `test.instructions`.
 
+## Blessed supplemental proof (test-blessing authority, 2026-10-24)
+
+Admitted by crewmate worker `porsca-proof-adopt-20261024`; evidence in
+`data/porsca-proof-adopt-20261024/report.md`. Scoped as stated there:
+client-side orchestration and wire-shape pins only — never backend
+deduction, which remains API-track proof.
+
+| Suite | File | Mobile rev | sha256 | Tests |
+| --- | --- | --- | --- | --- |
+| `posOrchestration` | `src/context/PosContext.test.tsx` | `bf80023f8196e3af259e91b7885feaee4ece07f8` | `d9c7e644…9349a72b` | 68 |
+| `authorityWire` | `src/api/checkoutAuthority.test.ts` | `bf80023f8196e3af259e91b7885feaee4ece07f8` | `51a98172…89b678776` | 5 |
+
+Post-freeze additions to `durableCheckout.test.ts` (35 lines via
+https://github.com/alfredc-12/PorSca_POS/pull/108 and
+https://github.com/alfredc-12/PorSca_POS/pull/110) and
+`checkoutGuidance.test.ts` (21+/3- via
+https://github.com/alfredc-12/PorSca_POS/pull/108) are **supplemental**:
+no captain sign-off located (zero reviews/comments on either PR).
+
 ## Tier commands (PorSca_POS)
 
 | Tier | Scope | Commands |
