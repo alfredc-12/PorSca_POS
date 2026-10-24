@@ -2,17 +2,30 @@
 
 Per-repo tier command mapping for adaptive no-mistakes validation
 (Phase 2; this file is the single source of truth for the T0-T3 tier
-command table and standing restrictions. `.no-mistakes.yaml` `test:`
-block points here for tier routing and defines critical-path
-test authority).
+command table, standing restrictions, and critical-path/frozen-suite
+safeguards. `.no-mistakes.yaml` `test:` block points here for tier
+routing and these safety/proof rules).
+
+## Critical-path proof authority
+
+For checkout/payment, stock/transaction, or API-contract behavior: only tests
+already blessed by secondmate or owned by a human count as proof.
+Worker-written tests are supplemental proposals, not proof, until secondmate or
+a human blesses them.
+
+Practice payment payloads must remain non-payable; never simulate their
+payment as paid or infer a paid state from client/test-only data.
 
 ## Frozen checkout golden matrix
 
 The frozen matrix for `checkoutMachine`, `durableCheckout`,
 `checkoutGuidance`, and `moneyBounds`, including coverage, test-file mapping,
 and frozen commit SHAs, is recorded in [merged PR 107](https://github.com/alfredc-12/PorSca_POS/pull/107).
-Its authority and no-edit rules live in `.no-mistakes.yaml` under
-`test.instructions`.
+Do not edit, weaken, remove, rename, relocate, or duplicate these suites
+or their assertions without explicit captain sign-off. If required work
+would touch one, stop and escalate; do not work around it.
+Their authority and no-edit rules are defined here; `.no-mistakes.yaml`
+`test.instructions` points to this section.
 
 ## Blessed supplemental proof (test-blessing authority, 2026-10-24)
 
@@ -37,10 +50,10 @@ no captain sign-off located (zero reviews/comments on either PR).
 
 | Tier | Scope | Commands |
 |------|-------|----------|
-| T0 | Docs/markdown only, no product code | Review-only: check consistency with the authoritative doc owners in `.no-mistakes.yaml` (`document:`). No automated doc-check command exists in this repo; do not invent tooling. |
+| T0 | Docs/markdown only, no product code | Review-only: check consistency with the documentation map in `AGENTS.md`. No automated doc-check command exists in this repo; do not invent tooling. |
 | T1 | Small scoped code change (single target) | `npm run lint` + `npm run typecheck` + `npm run test:fast -- <target>` |
-| T2 | Default feature change | `npm run verify` (lint + typecheck + fast Jest/RNTL suite; the Mobile CI gate command) |
-| T3 | Checkout/payment, stock/transaction, or API-contract change | `npm run verify` plus the `src/domain` and `src/api` suites: `npm run test:fast -- src/domain src/api` |
+| T2 | Default feature change | Fixed `commands.test` baseline plus targeted checks for changed behavior; broad `npm run verify` is required in CI. |
+| T3 | Checkout/payment, stock/transaction, or API-contract change | Fixed `commands.test` baseline plus targeted, already-authoritative tests for affected invariants; broad `npm run verify` remains required in CI. |
 
 Each higher tier subsumes the lower ones.
 
