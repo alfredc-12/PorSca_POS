@@ -1,8 +1,10 @@
 # PROJECT_CHECKS.md
 
 Per-repo tier command mapping for adaptive no-mistakes validation
-(Phase 2; `.no-mistakes.yaml` `test:` block routes T0-T3 and defines
-critical-path test authority).
+(Phase 2; this file is the single source of truth for the T0-T3 tier
+command table and standing restrictions. `.no-mistakes.yaml` `test:`
+block points here for tier routing and defines critical-path
+test authority).
 
 ## Frozen checkout golden matrix
 

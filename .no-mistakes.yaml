@@ -66,53 +66,6 @@ test:
     Practice payment payloads must remain non-payable; never simulate their
     payment as paid or infer a paid state from client/test-only data.
 
-    Route validation by change tier (T0-T3). Run only the tier
-    matching the change scope; each higher tier subsumes the lower ones.
-
-    T0 - docs/markdown only, no product code:
-    No automated doc-check command exists in this repo, so validation
-    is review-only: check consistency with the authoritative owners
-    listed under `document:` above. Do not invent markdown lint tooling.
-
-    T1 - small scoped code change (single target):
-    npm run lint, plus typecheck (npm run typecheck), plus the
-    targeted fast suite: npm run test:fast -- <target>.
-
-    T2 - default feature change:
-    npm run verify (lint + typecheck + fast Jest/RNTL suite;
-    the Mobile CI gate command).
-
-    T3 - checkout/payment, stock/transaction, or API-contract change:
-    npm run verify, plus the src/domain and src/api suites:
-    npm run test:fast -- src/domain src/api.
-
-    Tier command mapping lives in PROJECT_CHECKS.md.
-
-    Use only Expo Web through chrome-devtools-axi
-    for browser-compatible live verification.
-
-    Assign a unique CHROME_DEVTOOLS_AXI_SESSION per run,
-    derived from the run or isolated worktree identity.
-    Reuse the same session for all browser commands.
-    Use AXI's default isolated Chrome launch mode.
-    Never attach to a shared browser or worker session.
-    Do not set a shared CHROME_DEVTOOLS_AXI_PORT.
-    Use an available worktree-owned application port.
-
-    Verify browser-supported cashier workflows.
-    Inspect UI behavior, errors, and network requests.
-    Use only authorized, isolated test API data.
-    Do not start the deprecated server/ scaffold
-    as the authoritative PorSca backend.
-
-    Never use agent-device, phones, emulators, ADB,
-    native builds, or device E2E.
-    Never trigger real payments or deployments.
-    Do not create persistent E2E scripts.
-
-    Browser success does not establish native correctness.
-    Report actual defects as no-go.
-    Report unsupported or unavailable verification as
-    inconclusive with reasons and manual testing steps.
-    Never mark unverified behavior as passed.
-    Clean up only resources owned by this run.
+    Route validation by change tier (T0-T3): PROJECT_CHECKS.md is the
+    single source of truth for the tier command table and standing
+    restrictions; run only the tier matching the change scope.
