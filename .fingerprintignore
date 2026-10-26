@@ -1,0 +1,3 @@
+# EAS prebuild generates these native directories; they are not source inputs.
+android/**/*
+ios/**/*
