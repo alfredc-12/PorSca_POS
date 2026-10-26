@@ -35,7 +35,7 @@ describe('signed-in route guards', () => {
     expect(screen.queryByText('route:(tabs)')).toBeNull();
     await waitFor(() => expect(screen.getByText('redirect:/login')).toBeTruthy());
     expect(screen.getByText('route:login')).toBeTruthy();
-    ['(tabs)', 'scanner', 'checkout', 'product-form', 'users'].forEach((route) => expect(screen.queryByText(`route:${route}`)).toBeNull());
+    ['(tabs)', 'scanner', 'checkout', 'checkout-conflict', 'device-storage-recovery', 'product-form', 'users'].forEach((route) => expect(screen.queryByText(`route:${route}`)).toBeNull());
     expect(screen.queryByText('protected POS session')).toBeNull();
     expect(screen.fetchImpl).not.toHaveBeenCalled();
   });
@@ -44,7 +44,7 @@ describe('signed-in route guards', () => {
     const screen = setup(role);
     expect(screen.queryByText('protected POS session')).toBeNull();
     await waitFor(() => expect(screen.getByText('redirect:/(tabs)/pos')).toBeTruthy());
-    ['(tabs)', 'scanner', 'checkout'].forEach((route) => expect(screen.getByText(`route:${route}`)).toBeTruthy());
+    ['(tabs)', 'scanner', 'checkout', 'checkout-conflict', 'device-storage-recovery'].forEach((route) => expect(screen.getByText(`route:${route}`)).toBeTruthy());
     expect(Boolean(screen.queryByText('route:product-form'))).toBe(role === 'admin');
     expect(Boolean(screen.queryByText('route:users'))).toBe(role === 'admin');
     expect(screen.queryByText('route:login')).toBeNull();

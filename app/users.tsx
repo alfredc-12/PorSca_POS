@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { apiClient, ApiClientError, CashierInput, ManagedUser } from '@/src/api/client';
@@ -130,8 +130,7 @@ export default function UsersScreen() {
   if (!isAdmin) return <Redirect href="/(tabs)/pos" />;
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title="Users" subtitle="Create and manage cashier accounts for your store." back>
+    <Screen title="Users" subtitle="Create and manage cashier accounts for your store." back>
         <View style={styles.introCard}>
           <View style={styles.introIcon}><Ionicons name="people-outline" size={26} color={colors.primary} /></View>
           <View style={styles.introCopy}>
@@ -255,8 +254,7 @@ export default function UsersScreen() {
             onReactivate={() => void reactivateUser(user)}
           />
         ))}
-      </Screen>
-    </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
@@ -388,7 +386,6 @@ function staffFailure(error: unknown, screen: 'staff-list' | 'staff-save'): Desc
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   introCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: '#D8EADA', backgroundColor: colors.primaryWash },
   introIcon: { width: 50, height: 50, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
   introCopy: { flex: 1, minWidth: 0, gap: 3 },

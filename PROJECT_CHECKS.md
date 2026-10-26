@@ -1,16 +1,59 @@
 # PROJECT_CHECKS.md
 
 Per-repo tier command mapping for adaptive no-mistakes validation
-(Phase 1; `.no-mistakes.yaml` `test:` block routes T0-T3).
+(Phase 2; this file is the single source of truth for the T0-T3 tier
+command table, standing restrictions, and critical-path/frozen-suite
+safeguards. `.no-mistakes.yaml` `test:` block points here for tier
+routing and these safety/proof rules).
+
+## Critical-path proof authority
+
+For checkout/payment, stock/transaction, or API-contract behavior: only tests
+already blessed by secondmate or owned by a human count as proof.
+Worker-written tests are supplemental proposals, not proof, until secondmate or
+a human blesses them.
+
+Practice payment payloads must remain non-payable; never simulate their
+payment as paid or infer a paid state from client/test-only data.
+
+## Frozen checkout golden matrix
+
+The frozen matrix for `checkoutMachine`, `durableCheckout`,
+`checkoutGuidance`, and `moneyBounds`, including coverage, test-file mapping,
+and frozen commit SHAs, is recorded in [merged PR 107](https://github.com/alfredc-12/PorSca_POS/pull/107).
+Do not edit, weaken, remove, rename, relocate, or duplicate these suites
+or their assertions without explicit captain sign-off. If required work
+would touch one, stop and escalate; do not work around it.
+Their authority and no-edit rules are defined here; `.no-mistakes.yaml`
+`test.instructions` points to this section.
+
+## Blessed supplemental proof (test-blessing authority, 2026-10-24)
+
+Admitted by crewmate worker `porsca-proof-adopt-20261024`; evidence in
+`data/porsca-proof-adopt-20261024/report.md`. Scoped as stated there:
+client-side orchestration and wire-shape pins only — never backend
+deduction, which remains API-track proof.
+
+| Suite | File | Mobile rev | sha256 | Tests |
+| --- | --- | --- | --- | --- |
+| `posOrchestration` | `src/context/PosContext.test.tsx` | `bf80023f8196e3af259e91b7885feaee4ece07f8` | `d9c7e644…9349a72b` | 68 |
+| `authorityWire` | `src/api/checkoutAuthority.test.ts` | `bf80023f8196e3af259e91b7885feaee4ece07f8` | `51a98172…89b678776` | 5 |
+
+Post-freeze additions to `durableCheckout.test.ts` (35 lines via
+https://github.com/alfredc-12/PorSca_POS/pull/108 and
+https://github.com/alfredc-12/PorSca_POS/pull/110) and
+`checkoutGuidance.test.ts` (21+/3- via
+https://github.com/alfredc-12/PorSca_POS/pull/108) are **supplemental**:
+no captain sign-off located (zero reviews/comments on either PR).
 
 ## Tier commands (PorSca_POS)
 
 | Tier | Scope | Commands |
 |------|-------|----------|
-| T0 | Docs/markdown only, no product code | Review-only: check consistency with the authoritative doc owners in `.no-mistakes.yaml` (`document:`). No automated doc-check command exists in this repo; do not invent tooling. |
+| T0 | Docs/markdown only, no product code | Review-only: check consistency with the documentation map in `AGENTS.md`. No automated doc-check command exists in this repo; do not invent tooling. |
 | T1 | Small scoped code change (single target) | `npm run lint` + `npm run typecheck` + `npm run test:fast -- <target>` |
-| T2 | Default feature change | `npm run verify` (lint + typecheck + fast Jest/RNTL suite; the Mobile CI gate command) |
-| T3 | Checkout/payment, stock/transaction, or API-contract change | `npm run verify` plus the `src/domain` and `src/api` suites: `npm run test:fast -- src/domain src/api` |
+| T2 | Default feature change | Fixed `commands.test` baseline plus targeted checks for changed behavior; broad `npm run verify` is required in CI. |
+| T3 | Checkout/payment, stock/transaction, or API-contract change | Fixed `commands.test` baseline plus targeted, already-authoritative tests for affected invariants; broad `npm run verify` remains required in CI. |
 
 Each higher tier subsumes the lower ones.
 

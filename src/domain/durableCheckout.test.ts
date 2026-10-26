@@ -176,6 +176,21 @@ describe('durable authority workflow and machine integration', () => {
     await expect(authority.prepare(lines)).resolves.toEqual(open);
     expect(authority.current?.sale).toBeNull();
   });
+  it('allows corrupt identity discard when discovery contains only terminal checkouts', async () => {
+    const storage: CheckoutStorage = {
+      load: jest.fn().mockRejectedValue(new CheckoutStorageCorruptionError('invalid')),
+      save: jest.fn(),
+    };
+    const { client } = fixture();
+    client.listCheckouts.mockResolvedValue({ items: [{ ...open, state: 'abandoned' }, { ...open, id: 'completed', state: 'completed', sale: { id: 10, method: 'cash', amountCentavos: 1010, cashReceivedCentavos: 2000, changeAmountCentavos: 990, completedAt: 'now' } }], pagination: { current_page: 1, last_page: 1, total: 2 } });
+    const authority = new DurableCheckout(client as unknown as ApiClient, storage);
+    await authority.hasCorruptStorage();
+
+    await expect(authority.discardCorruptIdentity('Operator reviewed terminal records')).resolves.toBe('Operator reviewed terminal records');
+    expect(storage.save).toHaveBeenCalledWith(null);
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+  });
+
   it('keeps a corrupt stored identity unresolved until a discovered checkout is explicitly reattached', async () => {
     let saved: CheckoutHandle | null = null;
     const storage: CheckoutStorage = {
@@ -231,6 +246,33 @@ describe('durable authority workflow and machine integration', () => {
     const { authority, client } = fixture();
     await expect(authority.tender(lines, 'cash', input)).rejects.toThrow();
     expect(client.checkoutCash).not.toHaveBeenCalled();
+  });
+  it('enforces the unsigned 32-bit cash boundary at the Laravel payload', async () => {
+    const maximum = fixture();
+    await maximum.authority.tender(lines, 'cash', '42949672.95');
+    expect(maximum.client.checkoutCash).toHaveBeenCalledWith('server-uuid', {
+      revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 4_294_967_295,
+    }, expect.any(String));
+    expect(maximum.saved()?.tender?.signature).toBe(JSON.stringify(['cash', {
+      revision: 1, acceptedAmountCentavos: 1010, cashReceivedCentavos: 4_294_967_295,
+    }]));
+
+    const overflow = fixture();
+    await expect(overflow.authority.tender(lines, 'cash', '42949672.96')).rejects.toThrow('Enter valid, sufficient cash.');
+    expect(overflow.client.checkoutCash).not.toHaveBeenCalled();
+    expect(overflow.saved()?.tender).toBeUndefined();
+  });
+  it('rounds a fractional peso quote to integer centavos before tender matching', async () => {
+    const fractionalCentavoLine = [{ ...lines[0], product: { ...lines[0].product, price: 10.105 } }];
+    const { authority, client } = fixture();
+    client.createCheckout.mockResolvedValue({
+      ...open, amountCentavos: 1011,
+      items: [{ ...open.items[0], unitPriceCentavos: 1011 }],
+    });
+    await authority.tender(fractionalCentavoLine, 'cash', '20.00');
+    expect(client.checkoutCash).toHaveBeenCalledWith('server-uuid', {
+      revision: 1, acceptedAmountCentavos: 1011, cashReceivedCentavos: 2000,
+    }, expect.any(String));
   });
   it('recovers an ambiguous QR create by stored checkout id, without a duplicate attempt', async () => {
     const { authority, client, saved } = fixture();
@@ -395,8 +437,9 @@ describe('durable authority workflow and machine integration', () => {
     expect(canAcceptCheckoutTender(authority.machine)).toBe(false);
   });
   it('refuses a basket changed after checkout opened with its own code instead of payment uncertainty', async () => {
-    const { authority, client } = fixture();
+    const { authority, client, saved } = fixture();
     await authority.prepare(lines);
+    const retainedHandle = JSON.parse(JSON.stringify(saved()));
     expect(client.checkoutCash).not.toHaveBeenCalled();
     // The cashier edits the cart after the durable checkout was opened, before
     // any tender exists. The refusal must not read as "money may be recorded".
@@ -406,13 +449,34 @@ describe('durable authority workflow and machine integration', () => {
     expect(authority.basketDivergedFrom(lines)).toBe(false);
     expect(authority.progress.recoveryFailure).toBeUndefined();
     expect(authority.progress.uncertainTender).toBeUndefined();
+    expect(saved()).toEqual(retainedHandle);
     expect(client.checkoutCash).not.toHaveBeenCalled();
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
     // The retained basket is still the one the purchase was opened for, and it
     // stays recoverable: going back to the original basket clears the refusal.
     await authority.prepare(lines);
     expect(authority.basketDivergedFrom(lines)).toBe(false);
+    expect(saved()).toEqual(retainedHandle);
     expect(client.createCheckout).toHaveBeenCalledTimes(1);
+  });
+  it('keeps non-financial preparation and quote failures out of the interrupted state', async () => {
+    const preparing = fixture();
+    preparing.client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(preparing.authority.exclusive(() => preparing.authority.prepare(lines), { financial: false })).rejects.toThrow(/Unable to reach/);
+    expect(preparing.authority.progress.recoveryFailure).toBeUndefined();
+    expect(preparing.authority.progress.uncertainTender).toBeUndefined();
+
+    const quoting = fixture();
+    await quoting.authority.prepare(lines);
+    quoting.client.revalidateCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(quoting.authority.exclusive(() => quoting.authority.revalidate(), { financial: false })).rejects.toThrow(/Unable to reach/);
+    expect(quoting.authority.progress.recoveryFailure).toBeUndefined();
+    expect(quoting.authority.progress.uncertainTender).toBeUndefined();
+
+    const tendering = fixture();
+    tendering.client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await expect(tendering.authority.exclusive(() => tendering.authority.prepare(lines))).rejects.toThrow(/Unable to reach/);
+    expect(tendering.authority.progress.recoveryFailure).toBe('interrupted');
   });
   it('reports a changed basket for a live cart that cannot be validated', async () => {
     const { authority } = fixture();
@@ -614,6 +678,7 @@ describe('durable authority workflow and machine integration', () => {
     const { authority, client, saved } = fixture();
     await authority.prepare(lines);
     const oldKey = saved()?.key;
+    client.recoverCheckout.mockResolvedValue(open);
     await authority.abandon('Customer declined purchase');
     expect(client.abandonCheckout).toHaveBeenCalledWith('server-uuid', 'Customer declined purchase');
     expect(saved()).toBeNull();

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { ApiClientError } from '@/src/api/client';
 import { Screen } from '@/src/components/Screen';
 import { ProductThumbnail } from '@/src/components/ProductThumbnail';
 import { usePos } from '@/src/context/PosContext';
@@ -39,10 +40,15 @@ export default function PosScreen() {
     apiConfigured,
     recoverableCheckouts = [],
     checkoutRecoveryError,
+    checkoutListState,
+    activeCheckoutCount,
+    retainedCheckoutId,
+    authorityCheckout,
+    checkoutProgress,
     canDiscardCorruptCheckout,
+    hasUnreadableCheckoutIdentity,
     openPosCheckouts,
-    recoverCheckout,
-    discardCorruptCheckout,
+    parkSale,
   } = usePos();
   const [query, setQuery] = useState('');
   const [visibleResultCount, setVisibleResultCount] = useState(5);
@@ -52,8 +58,8 @@ export default function PosScreen() {
   };
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cartNotice, setCartNotice] = useState<string>();
-  const [discardReason, setDiscardReason] = useState('');
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [showParkPrompt, setShowParkPrompt] = useState(false);
+  const [parkingSale, setParkingSale] = useState(false);
   const [review, setReview] = useState<CartRevalidation>();
   const [checkingPrices, setCheckingPrices] = useState(false);
   const responsive = useResponsive();
@@ -89,12 +95,52 @@ export default function PosScreen() {
     router.push({ pathname: '/checkout', params: { method } });
   }, [beginCheckout, method]);
 
+  const openConflictResolver = useCallback(() => {
+    const id = retainedCheckoutId ?? authorityCheckout?.id ?? recoverableCheckouts[0]?.id;
+    if (id) router.push({ pathname: '/checkout-conflict', params: { checkoutId: id } });
+    else router.push('/sales-holds');
+  }, [retainedCheckoutId, authorityCheckout?.id, recoverableCheckouts]);
+
+  const confirmParkSale = useCallback(async () => {
+    if (!cart.length || parkingSale) return;
+    if (checkoutProgress?.basketDiverged) {
+      setShowParkPrompt(false);
+      openConflictResolver();
+      return;
+    }
+    setParkingSale(true);
+    setCartNotice(undefined);
+    try {
+      await parkSale();
+      setShowParkPrompt(false);
+      setCartNotice('Sale parked with the shop server. The POS cart is ready for the next customer.');
+    } catch (error) {
+      if (error instanceof ApiClientError && error.code === 'checkout_parked_basket_diverged') {
+        setShowParkPrompt(false);
+        setCartNotice('The sale was parked with the shop server. The edited cart was kept; review Sales/Holds before taking payment.');
+      } else if (error instanceof ApiClientError && error.code === 'checkout_basket_diverged') {
+        setShowParkPrompt(false);
+        if (retainedCheckoutId) openConflictResolver();
+        else setCartNotice('The cart changed while the sale was being saved. Review Sales/Holds before taking payment.');
+      } else setCartNotice('The sale could not be parked with the shop server. The cart was kept; check Sales/Holds before taking payment.');
+    } finally {
+      setParkingSale(false);
+    }
+  }, [cart.length, parkingSale, checkoutProgress?.basketDiverged, openConflictResolver, parkSale, retainedCheckoutId]);
+
   /**
-   * Proceed re-reads the cart against the catalog first. A clean cart goes
-   * straight to checkout; anything that changed is shown in the review sheet so
-   * the cashier sees the delta before Laravel recomputes the charge.
+   * Proceed refuses a cart that diverged from the device's saved purchase and
+   * routes the cashier to the conflict screen, so a second payable checkout
+   * cannot be started for the same goods. Otherwise it re-reads the cart
+   * against the catalog: a clean cart goes straight to checkout, and anything
+   * that changed is shown in the review sheet so the cashier sees the delta
+   * before Laravel recomputes the charge.
    */
   const proceed = useCallback(async () => {
+    if (checkoutProgress?.basketDiverged) {
+      openConflictResolver();
+      return;
+    }
     if (!cart.length || checkingPrices) return;
     // Strict online: a sale is only ever recorded by Laravel.
     if (!apiConfigured) {
@@ -117,7 +163,7 @@ export default function PosScreen() {
     } finally {
       setCheckingPrices(false);
     }
-  }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart]);
+  }, [apiConfigured, cart.length, checkingPrices, openCheckout, revalidateCart, checkoutProgress?.basketDiverged, openConflictResolver]);
 
   const applyReview = useCallback(() => {
     if (!review) return;
@@ -135,27 +181,30 @@ export default function PosScreen() {
   }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
+  const needsStorageRecovery = hasUnreadableCheckoutIdentity || checkoutProgress?.recoveryFailure === 'identity' || canDiscardCorruptCheckout;
 
   return (
     <Screen>
-      {checkoutRecoveryError ? <Text accessibilityRole="alert">{checkoutRecoveryError}</Text> : null}
-      {checkoutRecoveryError ? <Pressable accessibilityRole="button" onPress={() => void openPosCheckouts()}><Text>Retry checkout recovery</Text></Pressable> : null}
-      {canDiscardCorruptCheckout && recoverableCheckouts.length === 0 ? <View>
-        <Text accessibilityRole="alert">Server discovery found no checkout. The unreadable local identity cannot establish a payment outcome. Discarding it does not confirm whether money was collected.</Text>
-        <TextInput testID="corrupt-checkout-discard-reason" accessibilityLabel="Reason for discarding unreadable checkout identity" placeholder="Reason for discarding (8–500 characters)" value={discardReason} onChangeText={value => { setDiscardReason(value); setConfirmDiscard(false); }} maxLength={500} />
-        {confirmDiscard ? <>
-          <Text>Confirm local identity discard. Reason: {discardReason.trim()}</Text>
-          <Pressable testID="confirm-corrupt-checkout-discard" accessibilityRole="button" onPress={() => void discardCorruptCheckout(discardReason).then(reason => {
-            setCartNotice(`Local checkout identity discarded after empty server discovery. Reason: ${reason}. Payment was not confirmed.`);
-            setDiscardReason('');
-            setConfirmDiscard(false);
-          }).catch(() => setCartNotice('The identity was not discarded. Retry server discovery before trying again.'))}><Text>Confirm discard</Text></Pressable>
-          <Pressable accessibilityRole="button" onPress={() => setConfirmDiscard(false)}><Text>Cancel discard</Text></Pressable>
-        </> : <Pressable testID="review-corrupt-checkout-discard" accessibilityRole="button" disabled={discardReason.trim().length < 8} onPress={() => setConfirmDiscard(true)}><Text>Review local identity discard</Text></Pressable>}
-      </View> : null}
-      {recoverableCheckouts.map(checkout => <Pressable key={checkout.id} accessibilityRole="button" onPress={() => {
-        void recoverCheckout(checkout.id).then(() => router.push('/checkout')).catch(() => setCartNotice('Resolve the device purchase before recovering another checkout.'));
-      }}><Text>Resume sale • {checkout.items.map(item => `${item.name} × ${item.quantity}`).join(', ')} • ₱{(checkout.amountCentavos / 100).toFixed(2)}</Text></Pressable>)}
+      {needsStorageRecovery ? (
+        <Pressable testID="pos-storage-recovery-card" accessibilityRole="button" accessibilityLabel="Open device storage recovery" onPress={() => router.push('/device-storage-recovery')} style={styles.recoveryAlertCard}>
+          <Ionicons name="warning-outline" size={responsive.s(22)} color={colors.warning} />
+          <View style={styles.recoveryCardCopy}>
+            <Text style={styles.recoveryCardTitle}>Device storage needs recovery</Text>
+            <Text style={styles.recoveryCardBody}>Review server discovery before clearing unreadable local data. Payment is not confirmed here.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={responsive.s(20)} color={colors.textMuted} />
+        </Pressable>
+      ) : null}
+      <Pressable testID="pos-sales-holds-card" accessibilityRole="button" accessibilityLabel="Open Sales and Holds" onPress={() => router.push('/sales-holds')} style={styles.salesHoldsCard}>
+        <View style={styles.salesHoldsCardIcon}><Ionicons name="archive-outline" size={responsive.s(22)} color={colors.primary} /></View>
+        <View style={styles.recoveryCardCopy}>
+          <Text style={styles.recoveryCardTitle}>Sales/Holds</Text>
+          <Text style={styles.recoveryCardBody}>
+            {checkoutListState === 'loading' ? 'Checking saved purchases…' : checkoutRecoveryError ? activeCheckoutCount ? `${activeCheckoutCount} active ${activeCheckoutCount === 1 ? 'purchase' : 'purchases'} need attention before another payment.` : 'A saved purchase needs attention.' : activeCheckoutCount ? `${activeCheckoutCount} active ${activeCheckoutCount === 1 ? 'purchase' : 'purchases'} • review before taking another payment.` : checkoutListState === 'unavailable' ? 'Saved purchases are unavailable. Retry in Sales/Holds before taking another payment.' : 'No active purchases. Open Sales/Holds to review saved purchase status.'}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={responsive.s(20)} color={colors.textMuted} />
+      </Pressable>
       <View style={styles.searchRow}>
         <View style={[styles.searchBox, { minHeight: responsive.controlHeight }]}>
           <Ionicons name="search-outline" size={responsive.s(23)} color={colors.textMuted} />
@@ -276,19 +325,39 @@ export default function PosScreen() {
             <Ionicons name="cart" size={responsive.s(26)} color={colors.primary} />
             <Text style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
           </View>
-          <Pressable
-            disabled={!cart.length}
-            accessibilityRole="button"
-            accessibilityLabel="Clear cart"
-            onPress={() => {
-              clearCart();
-              setCartNotice(undefined);
-            }}
-            style={styles.clearAction}
-          >
-            <Ionicons name="trash-outline" size={responsive.s(20)} color={cart.length ? colors.danger : colors.textMuted} />
-            {!responsive.veryNarrow ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
-          </Pressable>
+          <View style={styles.cartActions}>
+            <Pressable
+              testID="pos-park-sale"
+              disabled={!cart.length || !apiConfigured || parkingSale}
+              accessibilityRole="button"
+              accessibilityLabel="Park sale"
+              onPress={() => {
+                if (checkoutProgress?.basketDiverged) {
+                  openConflictResolver();
+                  return;
+                }
+                setShowParkPrompt(true);
+              }}
+              style={[styles.parkAction, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}
+            >
+              <Ionicons name="archive-outline" size={responsive.s(19)} color={cart.length && apiConfigured ? colors.primary : colors.textMuted} />
+              {!responsive.veryNarrow ? <Text style={[styles.parkText, (!cart.length || !apiConfigured) && styles.actionTextDisabled]}>Park Sale</Text> : null}
+            </Pressable>
+            <Pressable
+              testID="pos-clear-cart"
+              disabled={!cart.length}
+              accessibilityRole="button"
+              accessibilityLabel="Clear cart"
+              onPress={() => {
+                clearCart();
+                setCartNotice(undefined);
+              }}
+              style={[styles.clearAction, !cart.length && styles.actionDisabled]}
+            >
+              <Ionicons name="trash-outline" size={responsive.s(20)} color={cart.length ? colors.danger : colors.textMuted} />
+              {!responsive.veryNarrow ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
+            </Pressable>
+          </View>
         </View>
 
         {cartUndo ? (
@@ -418,6 +487,18 @@ export default function PosScreen() {
         onApply={applyReview}
         onDismiss={() => setReview(undefined)}
       />
+      <Modal visible={showParkPrompt} transparent animationType="fade" onRequestClose={() => setShowParkPrompt(false)}>
+        <KeyboardAvoidingView style={styles.parkBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.parkPrompt}>
+            <Text style={styles.parkPromptTitle}>Park this sale?</Text>
+            <Text style={styles.parkPromptBody}>The shop server will retain this checkout. The current cart will reset only after the save succeeds.</Text>
+            <View style={styles.parkPromptActions}>
+              <Pressable accessibilityRole="button" disabled={parkingSale} onPress={() => setShowParkPrompt(false)} style={styles.parkCancelButton}><Text style={styles.parkCancelText}>Keep editing</Text></Pressable>
+              <Pressable testID="confirm-park-sale" accessibilityRole="button" disabled={!cart.length || !apiConfigured || parkingSale} onPress={() => void confirmParkSale()} style={[styles.parkConfirmButton, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}><Text style={styles.parkConfirmText}>{parkingSale ? 'Saving…' : 'Park sale'}</Text></Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </Screen>
   );
 }
@@ -471,6 +552,26 @@ const styles = StyleSheet.create({
   addCircleDisabled: { backgroundColor: colors.surfaceMuted },
   cartCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, shadowColor: colors.shadow, shadowOpacity: 0.06, shadowRadius: 15, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, paddingHorizontal: 3 },
+  cartActions: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  parkAction: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  parkText: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+  actionDisabled: { opacity: 0.48 },
+  actionTextDisabled: { color: colors.textMuted },
+  salesHoldsCard: { minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderWidth: 1, borderColor: colors.outline, borderRadius: radius.lg, backgroundColor: colors.surface, shadowColor: colors.shadow, shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
+  recoveryAlertCard: { minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderWidth: 1, borderColor: '#EBD28B', borderRadius: radius.lg, backgroundColor: colors.warningSoft },
+  salesHoldsCardIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, backgroundColor: colors.primarySoft },
+  recoveryCardCopy: { flex: 1, minWidth: 0, gap: 3 },
+  recoveryCardTitle: { color: colors.text, fontWeight: '900' },
+  recoveryCardBody: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
+  parkBackdrop: { flex: 1, justifyContent: 'center', padding: spacing.lg, backgroundColor: '#10182788' },
+  parkPrompt: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: spacing.md, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.surface },
+  parkPromptTitle: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  parkPromptBody: { color: colors.textMuted, lineHeight: 21 },
+  parkPromptActions: { flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: spacing.sm },
+  parkCancelButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
+  parkCancelText: { color: colors.text, fontWeight: '800' },
+  parkConfirmButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary },
+  parkConfirmText: { color: colors.white, fontWeight: '900' },
   headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
   sectionTitle: { color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
   titleMuted: { color: colors.textMuted, fontWeight: '600' },

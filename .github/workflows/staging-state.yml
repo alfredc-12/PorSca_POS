@@ -12,9 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Permanent Lightsail staging API base. Live health assertions run against this
-  # origin on every push to staging.
-  STAGING_API_BASE: "https://staging-api.lumbangan.online/api/v1"
+  # Permanent Lightsail staging API base. Replace <domain> with the staging domain
+  # when it is live; while the placeholder remains, this workflow records the run
+  # but skips the live health assertions.
+  STAGING_API_BASE: "https://staging-api.<domain>/api/v1"
   # Must match DatabaseSeeder::BASELINE_VERSION in PorSca_POS_API at cycle start.
   STAGING_SEED_VERSION: qa-baseline-2026-10
 
@@ -27,7 +28,18 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Check staging origin configuration
+        id: origin
+        run: |
+          if [[ "$STAGING_API_BASE" == *"<domain>"* ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::STAGING_API_BASE is still the placeholder ($STAGING_API_BASE); live staging assertions are skipped until the staging host exists."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Read staging health
+        if: steps.origin.outputs.configured == 'true'
         id: health
         run: |
           set -euo pipefail
@@ -60,6 +72,7 @@ jobs:
       - name: Pair staging state into the run summary
         if: always()
         env:
+          ORIGIN_CONFIGURED: ${{ steps.origin.outputs.configured }}
           HEALTH_ENVIRONMENT: ${{ steps.health.outputs.environment }}
           HEALTH_DATABASE: ${{ steps.health.outputs.database }}
           HEALTH_PAYMONGO_MODE: ${{ steps.health.outputs.paymongo_mode }}
@@ -88,6 +101,14 @@ jobs:
             echo "| Staging branch | \`$GITHUB_REF_NAME\` |"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$ORIGIN_CONFIGURED" != "true" ]]; then
+            {
+              echo "**Live verification skipped:** \`STAGING_API_BASE\` is still the \`<domain>\` placeholder, so no health"
+              echo "request was made. Replace the placeholder with the real Lightsail staging domain to enable the assertions."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           {
             echo "Health: \`environment=$HEALTH_ENVIRONMENT\`, \`database=$HEALTH_DATABASE\`, \`paymongo_mode=$HEALTH_PAYMONGO_MODE\`, \`status=$HEALTH_STATUS\`."

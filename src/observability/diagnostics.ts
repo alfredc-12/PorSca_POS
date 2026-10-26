@@ -12,7 +12,7 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { DescribedFailure, describeFailure, Failure, FailureScreen } from '@/src/domain/userFacingError';
+import { DescribedFailure, describeFailure, Failure, FailureContext } from '@/src/domain/userFacingError';
 
 export type FailureRecord = {
   reference: string;
@@ -86,7 +86,7 @@ export type Diagnostics = {
   list: () => FailureRecord[];
   find: (reference: string) => FailureRecord | undefined;
   /** Describe a wire failure, record its raw detail, and return the copy. */
-  describeAndRecord: (failure: Failure, context: { screen: FailureScreen }) => DescribedFailure;
+  describeAndRecord: (failure: Failure, context: FailureContext) => DescribedFailure;
   /** Resolves once pending persistence work has settled (tests and shutdown). */
   flush: () => Promise<void>;
 };
@@ -135,7 +135,7 @@ export function createDiagnostics(options: { store?: FailureStore; now?: () => D
     }
   }
 
-  function describeAndRecord(failure: Failure, context: { screen: FailureScreen }): DescribedFailure {
+  function describeAndRecord(failure: Failure, context: FailureContext): DescribedFailure {
     const described = describeFailure(failure, context);
     if (described.reference) {
       record({
@@ -162,6 +162,6 @@ export function createDiagnostics(options: { store?: FailureStore; now?: () => D
 export const diagnostics = createDiagnostics();
 
 /** Shorthand for the one call a screen makes instead of reading `error.message`. */
-export function describeAndRecordFailure(failure: Failure, context: { screen: FailureScreen }): DescribedFailure {
+export function describeAndRecordFailure(failure: Failure, context: FailureContext): DescribedFailure {
   return diagnostics.describeAndRecord(failure, context);
 }

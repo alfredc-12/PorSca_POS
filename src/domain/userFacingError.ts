@@ -12,7 +12,7 @@
  * Plan: data/porsca-mobile-feedback-plain-20261004/report.md, §6.1.
  */
 
-import { cancelledPurchaseCopy, changedBasketCopy } from './checkoutDivergenceCopy';
+import { BasketDivergenceState, basketDivergenceCopy, cancelledPurchaseCopy } from './checkoutDivergenceCopy';
 
 export type Failure = {
   status?: number;
@@ -32,6 +32,8 @@ export type FailureScreen =
   | 'staff-list'
   | 'staff-save'
   | 'shop-server';
+
+export type FailureContext = { screen: FailureScreen; basketDivergence?: BasketDivergenceState };
 
 export type FailureAction =
   | 'retry'
@@ -90,7 +92,8 @@ function normalize(failure: Failure): Failure {
   };
 }
 
-function describeFailureBody(failure: Failure, screen: FailureScreen): Omit<DescribedFailure, 'internal' | 'reference'> {
+function describeFailureBody(failure: Failure, context: FailureContext): Omit<DescribedFailure, 'internal' | 'reference'> {
+  const { screen } = context;
   // A phone that has not been set up yet is an administrator task, not a
   // server failure: no code and no retry advice the cashier cannot use.
   if (failure.code === 'server_not_configured') {
@@ -119,7 +122,7 @@ function describeFailureBody(failure: Failure, screen: FailureScreen): Omit<Desc
       return { title: 'You have been signed out', body: 'Your session ended. Sign in again to keep selling.', actionLabel: 'Sign in again', action: 'sign-in' };
 
     case 'cash-sale':
-      return cashSaleCopy(failure);
+      return cashSaleCopy(failure, context.basketDivergence);
 
     case 'qr-verification':
       return { title: 'We cannot check this payment yet', body: 'Do not hand over the goods. Check the connection and check again.', actionLabel: 'Check again', action: 'check-payment' };
@@ -150,7 +153,7 @@ function describeFailureBody(failure: Failure, screen: FailureScreen): Omit<Desc
   }
 }
 
-function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 'reference'> {
+function cashSaleCopy(failure: Failure, basketDivergence?: BasketDivergenceState): Omit<DescribedFailure, 'internal' | 'reference'> {
   if (failure.code === 'revalidation_required') {
     return { title: 'Review the price before payment', body: 'The shop price changed. No payment was submitted. Check the current price in sale help before confirming again.', actionLabel: 'Check the current price', action: 'fix-fields' };
   }
@@ -170,7 +173,8 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
     return { title: 'Check the earlier attempt first', body: 'An earlier cash sale may already have been saved. Check Transactions before taking payment again. Your cart is still here.', actionLabel: 'Check transactions first', action: 'check-transactions' };
   }
   if (failure.code === 'checkout_basket_diverged') {
-    return { title: changedBasketCopy.failureTitle, body: changedBasketCopy.failureBody, actionLabel: changedBasketCopy.failureActionLabel, action: 'retry' };
+    const copy = basketDivergenceCopy(basketDivergence ?? 'unobserved');
+    return { title: copy.failureTitle, body: copy.failureBody, actionLabel: copy.failureActionLabel, action: 'retry' };
   }
   if (failure.code === 'product_missing') {
     return { title: 'Product no longer available', body: 'A product in this cart is no longer in the catalog. Remove that item from the cart and try again. Your cart is still here.', actionLabel: 'Remove the item', action: 'fix-fields' };
@@ -186,9 +190,9 @@ function cashSaleCopy(failure: Failure): Omit<DescribedFailure, 'internal' | 're
  * never placed in the visible copy; they travel through `internal` to the
  * diagnostics record only.
  */
-export function describeFailure(failure: Failure, context: { screen: FailureScreen }): DescribedFailure {
+export function describeFailure(failure: Failure, context: FailureContext): DescribedFailure {
   const internal = normalize(failure);
-  const described = describeFailureBody(internal, context.screen);
+  const described = describeFailureBody(internal, context);
   return shouldIssueReference(internal, context.screen)
     ? { ...described, reference: newReference(), internal }
     : { ...described, internal };

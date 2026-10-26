@@ -3,7 +3,7 @@ ignore_patterns:
   - "graphify-out/**"
 
 pr:
-  base_branch: staging
+  base_branch: development
 
 protected_paths:
   - ".no-mistakes.yaml"
@@ -11,94 +11,24 @@ protected_paths:
   - "app.json"
   - ".github/workflows/**"
 
-document:
-  instructions: |
-    README.md owns installation and onboarding.
-    docs/WORKFLOW.md owns delivery and QA procedures.
-    docs/API-CONTRACT.md owns mobile/API integration.
-    docs/ARCHITECTURE.md owns application architecture.
-    docs/DEPLOYMENT.md owns deployment guidance.
-    Keep documentation consistent with the Laravel API.
-    Update authoritative documents instead of duplicating them.
-
 review:
+  conversation: false
   path_instructions:
     - path: "src/domain/**"
-      instructions: |
-        Preserve monetary correctness, checkout state,
-        stock invariants, and transaction consistency.
-        Check rounding, duplicate submissions, and failures.
-
+      instructions: "Check centavo math, checkout transitions, retry safety, and stock invariants."
     - path: "src/api/**"
-      instructions: |
-        Check API contract compatibility, authentication,
-        retries, idempotency, and error handling.
-        Never infer payment success from a client-only state.
-
+      instructions: "Preserve docs/API-CONTRACT.md; only Laravel may confirm payment or sale completion."
     - path: "src/auth/**"
-      instructions: |
-        Check secure token storage, session expiration,
-        logout behavior, and access boundaries.
-
+      instructions: "Check secure token storage, current-session 401 handling, and logout isolation."
     - path: "app/checkout.tsx"
-      instructions: |
-        Check cashier workflow, payment state visibility,
-        confirmation safety, and duplicate-sale prevention.
-
-    - path: "app/scanner.tsx"
-      instructions: |
-        Check barcode interpretation, error handling,
-        product selection, and permission fallbacks.
+      instructions: "Keep tender locks, uncertain-payment recovery, and duplicate-submit protection clear to the cashier."
+commands:
+  test: "npm run test:fast -- --runTestsByPath src/domain/checkoutMachine.test.ts --passWithNoTests=false"
 
 test:
   instructions: |
-    Route validation by change tier (T0-T3). Run only the tier
-    matching the change scope; each higher tier subsumes the lower ones.
-
-    T0 - docs/markdown only, no product code:
-    No automated doc-check command exists in this repo, so validation
-    is review-only: check consistency with the authoritative owners
-    listed under `document:` above. Do not invent markdown lint tooling.
-
-    T1 - small scoped code change (single target):
-    npm run lint, plus typecheck (npm run typecheck), plus the
-    targeted fast suite: npm run test:fast -- <target>.
-
-    T2 - default feature change:
-    npm run verify (lint + typecheck + fast Jest/RNTL suite;
-    the Mobile CI gate command).
-
-    T3 - checkout/payment, stock/transaction, or API-contract change:
-    npm run verify, plus the src/domain and src/api suites:
-    npm run test:fast -- src/domain src/api.
-
-    Tier command mapping lives in PROJECT_CHECKS.md.
-
-    Use only Expo Web through chrome-devtools-axi
-    for browser-compatible live verification.
-
-    Assign a unique CHROME_DEVTOOLS_AXI_SESSION per run,
-    derived from the run or isolated worktree identity.
-    Reuse the same session for all browser commands.
-    Use AXI's default isolated Chrome launch mode.
-    Never attach to a shared browser or worker session.
-    Do not set a shared CHROME_DEVTOOLS_AXI_PORT.
-    Use an available worktree-owned application port.
-
-    Verify browser-supported cashier workflows.
-    Inspect UI behavior, errors, and network requests.
-    Use only authorized, isolated test API data.
-    Do not start the deprecated server/ scaffold
-    as the authoritative PorSca backend.
-
-    Never use agent-device, phones, emulators, ADB,
-    native builds, or device E2E.
-    Never trigger real payments or deployments.
-    Do not create persistent E2E scripts.
-
-    Browser success does not establish native correctness.
-    Report actual defects as no-go.
-    Report unsupported or unavailable verification as
-    inconclusive with reasons and manual testing steps.
-    Never mark unverified behavior as passed.
-    Clean up only resources owned by this run.
+    Read AGENTS.md and PROJECT_CHECKS.md; check the selected docs/API-CONTRACT.md header before any API probe.
+    Follow docs/SETUP.md; start Expo Web on a free localhost port and pair only an isolated local API with disposable data.
+    Use chrome-devtools-axi, a unique CHROME_DEVTOOLS_AXI_SESSION, and default isolated Chrome to drive changed cashier flows.
+    Inspect UI and HTTP outcomes; keep practice QR non-payable and follow PROJECT_CHECKS.md safety and proof rules.
+    Report defects as no-go and unsupported/native-only checks as inconclusive with manual steps; stop only run-owned resources.

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { DataState } from '@/src/components/DataState';
@@ -35,8 +35,7 @@ export default function DiagnosticsScreen() {
   const selected = trimmed ? matches[0] : undefined;
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title="Diagnostics" subtitle="Look up a support code a cashier read from a message." back>
+    <Screen title="Diagnostics" subtitle="Look up a support code a cashier read from a message." back>
         <View style={styles.card}>
           <Text style={styles.label}>Support code</Text>
           <TextInput
@@ -98,8 +97,7 @@ export default function DiagnosticsScreen() {
             ))}
           </View>
         ) : null}
-      </Screen>
-    </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
@@ -113,7 +111,6 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
   card: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.outline, backgroundColor: colors.surface },
   label: { color: colors.text, fontSize: typography.label, fontWeight: '800' },
   input: { minHeight: 56, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.outline, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: typography.body, letterSpacing: 1 },
