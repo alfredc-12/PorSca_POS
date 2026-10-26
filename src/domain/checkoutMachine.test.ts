@@ -94,6 +94,19 @@ describe('checkout section 7 transition machine', () => {
     if (method === 'cash') expect(checkout.attempts[0].cashReceivedCentavos).toBe(200);
   });
 
+  it('ignores client-supplied paid and sale fields on a tender-start event', () => {
+    const forged = {
+      ...begin, attemptId: 'forged-attempt', payment: 'paid',
+      finalEvidence: { outcome: 'paid', reference: 'client-claim' }, saleId: 'forged-sale',
+    } as unknown as CheckoutEvent;
+    const started = step(openCheckout('c', 100), forged);
+    expect(started.state).toBe('payment-in-progress');
+    expect(started.saleId).toBeUndefined();
+    expect(started.attempts[0]).toMatchObject({ id: 'forged-attempt', payment: 'pending', amountCentavos: 100 });
+    expect(started.attempts[0].finalEvidence).toBeUndefined();
+    rejected(started, { type: 'sale-recorded', attemptId: 'forged-attempt', saleId: 'forged-sale' });
+  });
+
   it.each(['transport', 'timeout', '5xx', 'malformed'] as const)('first %s failure means unknown, never terminal', (reason) => {
     const progress = fixtures()['payment-in-progress'];
     const unknown = step(progress, { type: 'verification-failed', attemptId: 'a1', reason });

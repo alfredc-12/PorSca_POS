@@ -247,10 +247,11 @@ describe('checkout remount with durable machine state', () => {
     expect(view.queryByTestId('qr-payment-code-symbol')).toBeNull(); expect(client.refreshCheckoutAttempt).toHaveBeenCalledTimes(1);
   });
   it.each([false, true])('retains a paid status returned in the background when receipt reads fail: %s', async failReads => {
-    let changeState!: (state: AppStateStatus) => void;
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const changeState = (state: AppStateStatus) => { listeners.forEach(listener => listener(state)); };
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
-      changeState = listener;
-      return { remove: jest.fn() };
+      listeners.push(listener);
+      return { remove: () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); } };
     });
     const { tree, client, setCheckout, handle } = fixture();
     const view = render(tree); await start(view);
@@ -260,11 +261,17 @@ describe('checkout remount with durable machine state', () => {
     if (failReads) client.listSales.mockRejectedValueOnce(new Error('offline'));
     fireEvent.press(view.getByTestId('refresh-qr-payment'));
     await waitFor(() => expect(finishCheck).toBeDefined());
-    act(() => changeState('background'));
+    act(() => {
+      Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background' });
+      changeState('background');
+    });
     setCheckout(completed);
     await act(async () => { finishCheck(completed); });
     expect(Alert.alert).not.toHaveBeenCalled();
-    act(() => changeState('active'));
+    act(() => {
+      Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'active' });
+      changeState('active');
+    });
     if (failReads) {
       expect(handle()?.id).toBe(open.id);
       expect(view.getByTestId('checkout-payment-cash')).toBeDisabled();
@@ -279,10 +286,11 @@ describe('checkout remount with durable machine state', () => {
     expect(client.checkoutCash).not.toHaveBeenCalled();
   });
   it('keeps receipt failures that arrive after backgrounding available for retry', async () => {
-    let changeState!: (state: AppStateStatus) => void;
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const changeState = (state: AppStateStatus) => { listeners.forEach(listener => listener(state)); };
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
-      changeState = listener;
-      return { remove: jest.fn() };
+      listeners.push(listener);
+      return { remove: () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); } };
     });
     const { tree, client, setCheckout } = fixture();
     const view = render(tree); await start(view);

@@ -10,6 +10,7 @@
 
 ## Start here
 
+- Before API health/smoke probes or contract-specific tests, complete the contract-header check under Mobile/API handshake.
 - Canonical check: `npm run verify`.
 - Setup and local running, including localhost browser camera development: [docs/SETUP.md](docs/SETUP.md).
 

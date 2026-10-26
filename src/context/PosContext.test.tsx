@@ -3,9 +3,10 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { ApiClient, ApiClientError } from '@/src/api/client';
 import { AuthorityCheckout } from '@/src/api/checkoutAuthority';
 import { PosProvider, usePos, useCheckout } from './PosContext';
-import { CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
+import { CancellationMarkerUnclearedError, CheckoutHandle, CheckoutStorage, CheckoutStorageCorruptionError } from '@/src/domain/durableCheckout';
 import { changedBasketCopy } from '@/src/domain/checkoutDivergenceCopy';
 import { canAcceptCheckoutTender } from '@/src/domain/checkoutMachine';
+import { checkoutGuidance } from '@/src/domain/checkoutGuidance';
 
 const product = { id: '1', name: 'Coffee', barcode: '12345678', price: 25, stock: 20 };
 const open: AuthorityCheckout = { id: 'durable-uuid', storeId: 'shop', state: 'open', revision: 1, amountCentavos: 2500, currency: 'PHP', items: [{ productId: 1, name: 'Coffee', quantity: 1, unitPriceCentavos: 2500 }], attempts: [], sale: null, exceptions: [], history: [] };
@@ -34,6 +35,78 @@ function fixture() {
 async function add(result: { current: ReturnType<typeof usePos> }) { await act(async () => { result.current.addProductChecked(product); }); }
 
 describe('POS durable checkout integration', () => {
+  it('prepares a server-backed open checkout without starting a tender and preserves the cart', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await expect(result.current.prepareCheckout()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(client.checkoutCash).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.authorityCheckout).toEqual(open);
+    expect(result.current.checkoutMachine?.state).toBe('open');
+    expect(result.current.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('prepares the cancellation option lazily on the checkout screen without starting a tender', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).resolves.toEqual(open); });
+
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+    expect(client.createCheckoutAttempt).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ id: open.id, signature: '[[1,1]]' });
+    expect(result.current.checkout.authorityCheckout).toEqual(open);
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('surfaces the authoritative abandoned result of a cancellation', async () => {
+    const { wrapper, client } = fixture();
+    const pos = renderHook(() => usePos(), { wrapper });
+    await add(pos.result);
+    await act(async () => { await pos.result.current.prepareCheckout(); });
+    client.recoverCheckout.mockResolvedValue(open);
+
+    let abandoned: AuthorityCheckout | undefined;
+    await act(async () => { abandoned = await pos.result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(client.abandonCheckout).toHaveBeenCalledWith(open.id, 'Customer changed their mind');
+    expect(abandoned?.state).toBe('abandoned');
+    expect(pos.result.current.authorityCheckout).toBeUndefined();
+  });
+
+  it('keeps a failed cancellation preparation from claiming payment uncertainty', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => ({ pos: usePos(), checkout: useCheckout() }), { wrapper });
+    await act(async () => { result.current.pos.addProductChecked(product); });
+    client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.checkout.prepareCancellation()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.pos.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.pos.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.pos.checkoutMachine).toBeUndefined();
+    expect(result.current.pos.cart.map(line => [line.product.id, line.quantity])).toEqual([['1', 1]]);
+  });
+
+  it('keeps a failed quote revalidation from claiming payment uncertainty', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    client.recoverCheckout.mockResolvedValue(open);
+    client.revalidateCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+
+    await act(async () => { await expect(result.current.revalidateCheckout()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.authorityCheckout?.state).toBe('open');
+  });
+
   it('keeps a replacement purchase recoverable when an unmounted provider receives an old cash response', async () => {
     const { wrapper, client, handle } = fixture();
     const cashReceipt: AuthorityCheckout = { ...open, state: 'completed', sale: { ...paid.sale!, method: 'cash', cashReceivedCentavos: 10000, changeAmountCentavos: 7500 } };
@@ -69,6 +142,248 @@ describe('POS durable checkout integration', () => {
     await act(async () => { await expect(restarted.result.current.completeCashSale('100')).rejects.toThrow(/unresolved or checkout is locked/); });
     expect(client.checkoutCash).toHaveBeenCalledTimes(1);
   });
+  it('surfaces unreadable local identity while the server is offline without allowing discard', async () => {
+    const { wrapper, client, store } = fixture();
+    client.isConfigured = false;
+    store.load = async () => { throw new CheckoutStorageCorruptionError('legacy checkout identity'); };
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.openPosCheckouts(); });
+
+    expect(result.current.hasUnreadableCheckoutIdentity).toBe(true);
+    expect(result.current.checkoutListState).toBe('unavailable');
+    expect(result.current.canDiscardCorruptCheckout).toBe(false);
+  });
+
+  it('clears a stale recovery error once the saved purchase list refreshes', async () => {
+    const { wrapper, client } = fixture();
+    client.listCheckouts.mockRejectedValueOnce(new ApiClientError('network down', 500));
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.openPosCheckouts(); });
+    expect(result.current.checkoutRecoveryError).toBeDefined();
+
+    await act(async () => { await result.current.refreshCheckouts(); });
+
+    expect(result.current.checkoutListState).toBe('ready');
+    expect(result.current.checkoutRecoveryError).toBeUndefined();
+  });
+
+  it('keeps a failed park from claiming payment uncertainty', async () => {
+    const { wrapper, client } = fixture();
+    client.createCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await expect(result.current.parkSale()).rejects.toThrow(/Unable to reach/); });
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(result.current.checkoutProgress?.uncertainTender).toBeUndefined();
+    expect(result.current.cart).toHaveLength(1);
+  });
+
+  it('keeps a failed Sales/Holds status check from locking a fresh untendered cart', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await expect(result.current.checkCheckoutStatus('other-checkout')).rejects.toThrow(/Unable to reach/); });
+    await add(result);
+
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(checkoutGuidance({ progress: result.current.checkoutProgress })).toBeUndefined();
+  });
+
+  it('keeps failed Sales/Holds cancellations from locking a fresh untendered cart', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    client.getCheckout.mockResolvedValueOnce(open);
+    client.abandonCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('other-checkout', 'Customer changed their mind')).rejects.toThrow(/Unable to reach/); });
+
+    client.getCheckout.mockRejectedValueOnce(new ApiClientError('Unable to reach PorSca API: timeout'));
+    await act(async () => { await expect(result.current.clearCancelledCheckout('other-checkout')).rejects.toThrow(/Unable to reach/); });
+
+    await add(result);
+    expect(result.current.checkoutProgress?.recoveryFailure).toBeUndefined();
+    expect(checkoutGuidance({ progress: result.current.checkoutProgress })).toBeUndefined();
+  });
+
+  it('keeps the retained checkout identity when the parked marker cannot be stored', async () => {
+    const { wrapper, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    const prepared = handle();
+    store.save = jest.fn().mockRejectedValueOnce(new Error('keychain unavailable'));
+
+    await act(async () => { await expect(result.current.parkSale()).rejects.toThrow(/keychain unavailable/); });
+
+    expect(handle()).toEqual(prepared);
+    expect(result.current.parkedCheckoutId).toBeUndefined();
+    expect(result.current.retainedCheckoutId).toBe('durable-uuid');
+    expect(result.current.cart).toHaveLength(1);
+
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    await act(async () => { await expect(result.current.prepareCheckout()).rejects.toMatchObject({ code: 'checkout_basket_diverged' }); });
+  });
+
+  it('does not block a new basket on an identity whose first save failed', async () => {
+    const { wrapper, store, client } = fixture();
+    store.save = jest.fn().mockRejectedValueOnce(new Error('storage full'));
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await expect(result.current.prepareCheckout()).rejects.toThrow(/storage full/); });
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+
+    await act(async () => { await expect(result.current.prepareCheckout()).resolves.toMatchObject({ id: 'durable-uuid' }); });
+    expect(client.createCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('parks a sale on the Laravel authority and resets the POS cart only after creation succeeds', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await result.current.parkSale(); });
+
+    expect(client.createCheckout).toHaveBeenCalledWith([{ productId: 1, quantity: 1 }], expect.any(String));
+    expect(handle()).toMatchObject({ parkedId: 'durable-uuid' });
+    expect(result.current.cart).toHaveLength(0);
+    expect(result.current.parkedCheckoutId).toBe('durable-uuid');
+    expect(result.current.activeCheckoutCount).toBe(1);
+  });
+
+  it('releases the device checkout identity when parking so the next cart is a separate purchase', async () => {
+    const { wrapper, client, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+
+    await act(async () => { await result.current.parkSale(); });
+
+    expect(result.current.retainedCheckoutId).toBeUndefined();
+    client.createCheckout.mockResolvedValueOnce({ ...open, id: 'second-uuid' });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+
+    expect(client.createCheckout).toHaveBeenCalledTimes(2);
+    expect(client.createCheckout.mock.calls[0][1]).not.toBe(client.createCheckout.mock.calls[1][1]);
+    expect(handle()).toMatchObject({ id: 'second-uuid', parkedId: 'durable-uuid' });
+  });
+
+  it('keeps cart edits made while a parked marker is being persisted', async () => {
+    const { wrapper, store, handle } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    const save = store.save.bind(store);
+    let finishParkedWrite!: () => void;
+    store.save = async value => {
+      if (value?.parkedId) await new Promise<void>(resolve => { finishParkedWrite = resolve; });
+      await save(value);
+    };
+
+    let parking!: Promise<unknown>;
+    act(() => { parking = result.current.parkSale(); });
+    await waitFor(() => expect(finishParkedWrite).toBeDefined());
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    await act(async () => {
+      finishParkedWrite();
+      await expect(parking).rejects.toMatchObject({ code: 'checkout_parked_basket_diverged' });
+    });
+
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2']);
+    expect(handle()).toMatchObject({ parkedId: 'durable-uuid' });
+    expect(result.current.parkedCheckoutId).toBe('durable-uuid');
+    expect(result.current.activeCheckoutCount).toBe(1);
+  });
+
+  it('does not automatically restore a parked purchase over the next customer cart after restart', async () => {
+    const { wrapper, client, handle } = fixture();
+    const first = renderHook(() => usePos(), { wrapper });
+    await add(first.result);
+    await act(async () => { await first.result.current.parkSale(); });
+    first.unmount();
+    client.recoverCheckout.mockClear();
+
+    const restarted = renderHook(() => usePos(), { wrapper });
+    await act(async () => { await restarted.result.current.openPosCheckouts(); });
+
+    expect(restarted.result.current.cart).toHaveLength(0);
+    expect(restarted.result.current.parkedCheckoutId).toBe('durable-uuid');
+    expect(restarted.result.current.recoverableCheckouts.map(checkout => checkout.id)).toContain('durable-uuid');
+    expect(client.recoverCheckout).not.toHaveBeenCalled();
+    expect(handle()).toMatchObject({ parkedId: 'durable-uuid' });
+  });
+
+  it('drops a device-settled cash checkout from the live active count', async () => {
+    const { wrapper } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+
+    await act(async () => { await result.current.completeCashSale('100'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
+  });
+
+  it('drops a device-cancelled checkout from the live active count', async () => {
+    const { wrapper, client } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    client.recoverCheckout.mockResolvedValue(open);
+    expect(result.current.activeCheckoutCount).toBe(1);
+
+    await act(async () => { await result.current.abandonCheckout('Customer changed their mind'); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+
+  it('checks a waiting payment through the authoritative provider-verification endpoint', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockResolvedValue(pending);
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.checkCheckoutStatus('durable-uuid'); });
+
+    expect(client.refreshCheckoutAttempt).toHaveBeenCalledWith('durable-uuid', 7);
+    expect(result.current.recoverableCheckouts[0].state).toBe('payment_unresolved');
+  });
+
+  it('cancels a diverged earlier checkout through the server while keeping the current cart', async () => {
+    const { wrapper, client, store, handle } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'durable-uuid' });
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { result.current.addProductChecked({ id: '2', name: 'Tea', barcode: '22222222', price: 8, stock: 20 }); });
+    client.recoverCheckout.mockResolvedValue(open);
+    client.abandonCheckout.mockResolvedValue({ ...open, state: 'abandoned' });
+
+    await act(async () => { await result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer chose the new basket'); });
+
+    expect(client.abandonCheckout).toHaveBeenCalledWith('durable-uuid', 'Customer chose the new basket');
+    expect(handle()).toBeNull();
+    expect(result.current.cart.map(line => line.product.id)).toEqual(['1', '2']);
+    expect(result.current.activeCheckoutCount).toBe(0);
+  });
+
+  it('keeps server-discovered unresolved payments locked against cancellation', async () => {
+    const { wrapper, client } = fixture();
+    client.getCheckout.mockResolvedValue(pending);
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer no longer wants this sale')).rejects.toThrow(/locked or unresolved/); });
+
+    expect(client.abandonCheckout).not.toHaveBeenCalled();
+  });
+
   it('keeps a cash-unresolved refusal recovery-only even when a stale open read has no attempt', async () => {
     const { wrapper, client } = fixture(); const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
     client.createCheckoutAttempt.mockRejectedValueOnce(new ApiClientError('cash still pending', 409, 'cash_attempt_unresolved'));
@@ -326,6 +641,97 @@ describe('POS durable checkout integration', () => {
     client.recoverCheckout.mockResolvedValue(cashReceipt); store.save = original;
     await act(async () => { await result.current.recoverCheckout(); });
     expect(handle()).toBeNull(); expect(client.checkoutCash).toHaveBeenCalledTimes(1);
+  });
+  it('drops a settled checkout from the live count even when retirement storage fails', async () => {
+    const { wrapper, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { expect(await result.current.completeCashSale('100')).toMatchObject({ id: '9' }); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
+  });
+  it('drops a cancelled checkout from the live count even when the identity write fails', async () => {
+    const { wrapper, client, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    client.recoverCheckout.mockResolvedValue(open);
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { await expect(result.current.abandonCheckout('Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+  it('drops a cancelled parked checkout from the live count even when clearing its marker fails', async () => {
+    const { wrapper, store } = fixture();
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.parkSale(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
+    const original = store.save;
+    store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await original(value, expectedKey); };
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout(open.id, 'Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
+
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('abandoned');
+  });
+  it('keeps the current purchase observation when clearing a cancelled parked marker fails', async () => {
+    const { wrapper, client, store } = fixture();
+    const second: AuthorityCheckout = { ...open, id: 'second-uuid' };
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'second-uuid', parkedId: 'durable-uuid' });
+    client.getCheckout.mockResolvedValue(second);
+    const { result } = renderHook(() => usePos(), { wrapper });
+    await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    expect(result.current.authorityCheckout?.id).toBe('second-uuid');
+    store.save = async () => { throw new Error('storage unavailable'); };
+
+    await act(async () => { await expect(result.current.cancelDiscoveredCheckout('durable-uuid', 'Customer changed their mind')).rejects.toBeInstanceOf(CancellationMarkerUnclearedError); });
+
+    expect(result.current.authorityCheckout?.id).toBe('second-uuid');
+    expect(result.current.checkoutMachine?.id).toBe('second-uuid');
+    expect(result.current.recoverableCheckouts.find(item => item.id === 'durable-uuid')?.state).toBe('abandoned');
+    expect(result.current.activeCheckoutCount).toBe(1);
+  });
+  it('publishes discovered purchases even when the retained checkout cannot be read', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'retained-missing' });
+    client.getCheckout.mockImplementation(async (id: string) => {
+      if (id === 'retained-missing') throw new ApiClientError('not found', 404);
+      return open;
+    });
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { expect(await result.current.refreshCheckouts()).toBe(true); });
+
+    expect(result.current.checkoutListState).toBe('ready');
+    expect(result.current.recoverableCheckouts.map(item => item.id)).toEqual([open.id]);
+  });
+  it('keeps the discovered list when automatic recovery cannot read the retained checkout', async () => {
+    const { wrapper, client, store } = fixture();
+    await store.save({ key: 'creation-key', signature: '[[1,1]]', id: 'retained-missing' });
+    client.getCheckout.mockImplementation(async (id: string) => {
+      if (id === 'retained-missing') throw new ApiClientError('not found', 404);
+      return open;
+    });
+    const { result } = renderHook(() => usePos(), { wrapper });
+
+    await act(async () => { await result.current.openPosCheckouts(); });
+
+    expect(result.current.checkoutListState).toBe('ready');
+    expect(result.current.recoverableCheckouts.map(item => item.id)).toContain(open.id);
   });
   it('does not publish the history handoff when recovered cash retirement fails', async () => {
     const { wrapper, client, store, handle } = fixture();
@@ -698,6 +1104,9 @@ describe('POS durable checkout integration', () => {
   it('does not publish the history handoff when QR retirement fails', async () => {
     const { wrapper, client, store, handle } = fixture();
     const { result } = renderHook(() => usePos(), { wrapper }); await add(result);
+    await act(async () => { await result.current.prepareCheckout(); });
+    await act(async () => { await result.current.refreshCheckouts(); });
+    expect(result.current.activeCheckoutCount).toBe(1);
     await act(async () => { await result.current.startQrPhPayment(); });
     const save = store.save.bind(store);
     store.save = async (value, expectedKey) => { if (value === null) throw new Error('storage unavailable'); await save(value, expectedKey); };
@@ -708,6 +1117,8 @@ describe('POS durable checkout integration', () => {
     expect(handle()?.id).toBe('durable-uuid');
     expect(result.current.checkoutCompletion).toBeUndefined();
     expect(result.current.consumeSalesHandoff()).toBe(false);
+    expect(result.current.activeCheckoutCount).toBe(0);
+    expect(result.current.recoverableCheckouts.find(item => item.id === open.id)?.state).toBe('completed');
   });
   it('ignores a caller-supplied paid status unless Laravel records a completed sale', async () => {
     const { wrapper } = fixture(); const { result } = renderHook(() => usePos(), { wrapper });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -49,15 +49,26 @@ export function Screen({ title, subtitle, children, scroll = true, back = false,
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <DecorativeBackground />
-      {scroll ? (
-        <ScrollView
-          contentContainerStyle={[styles.scroll, { paddingBottom: responsive.short ? spacing.xl : spacing.xxl }]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {body}
-        </ScrollView>
-      ) : body}
+      {/* iOS scrollable screens lift content with native scroll insets; everywhere else the avoiding view does it. */}
+      <KeyboardAvoidingView
+        testID="screen-keyboard-avoiding"
+        style={styles.keyboardAvoiding}
+        enabled={Platform.OS === 'android' || !scroll}
+        behavior="padding"
+      >
+        {scroll ? (
+          <ScrollView
+            testID="screen-scroll"
+            contentContainerStyle={[styles.scroll, { paddingBottom: responsive.short ? spacing.xl : spacing.xxl }]}
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+          >
+            {body}
+          </ScrollView>
+        ) : body}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -130,6 +141,7 @@ function DecorativeBackground() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
+  keyboardAvoiding: { flex: 1 },
   scroll: { flexGrow: 1 },
   content: { flex: 1, width: '100%', alignSelf: 'center' },
   brandRow: { flexDirection: 'row', alignItems: 'center' },

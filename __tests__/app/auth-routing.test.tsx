@@ -9,7 +9,10 @@ import LoginScreen from '@/app/login';
 import TabsLayout from '@/app/(tabs)/_layout';
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock('@/src/context/PosContext', () => ({ PosProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+jest.mock('@/src/context/PosContext', () => ({
+  PosProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useOptionalPos: () => null,
+}));
 
 const cashier = { id: 2, name: 'Cashier', email: 'cashier@example.test', role: 'cashier', is_active: true };
 function response(body: unknown, status = 200) {
@@ -29,9 +32,14 @@ async function setup(initialUrl = '/', savedToken: string | null = null, role: '
     '(tabs)/pos': () => <Text>Signed-in POS</Text>,
     '(tabs)/inventory': () => <Text>Read-only inventory</Text>,
     '(tabs)/transactions': () => <Text>All sales</Text>,
+    '(tabs)/sales-holds': () => <Text>Saved purchases</Text>,
     scanner: () => <Text>Protected scanner</Text>,
     checkout: () => <Text>Protected checkout</Text>,
+    'checkout-conflict': () => <Text>Protected basket conflict</Text>,
+    'device-storage-recovery': () => <Text>Protected storage recovery</Text>,
     'product-form': () => <Text>Admin product form</Text>,
+    'transaction-detail': () => <Text>Transaction details</Text>,
+    diagnostics: () => <Text>Admin diagnostics</Text>,
     users: () => <Text>Admin user management</Text>,
   }, { initialUrl });
   // Flush Expo Router's post-render navigation updates within React's act scope.
@@ -42,7 +50,7 @@ async function setup(initialUrl = '/', savedToken: string | null = null, role: '
 describe('real Expo Router authentication flow', () => {
   afterEach(() => jest.useRealTimers());
 
-  it.each(['/checkout', '/scanner', '/inventory', '/product-form', '/users'])('redirects a signed-out deep link %s to login', async (initialUrl) => {
+  it.each(['/checkout', '/checkout-conflict', '/device-storage-recovery', '/sales-holds', '/scanner', '/inventory', '/product-form', '/users'])('redirects a signed-out deep link %s to login', async (initialUrl) => {
     const screen = await setup(initialUrl);
     await waitFor(() => expect(screen.getPathname()).toBe('/login'));
     expect(screen.getByLabelText('Password')).toBeTruthy();
@@ -86,7 +94,7 @@ describe('real Expo Router authentication flow', () => {
     fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(screen.getPathname()).toBe('/pos'));
 
-    for (const [label, pathname] of [['Inventory', '/inventory'], ['Transactions', '/transactions'], ['POS', '/pos']]) {
+    for (const [label, pathname] of [['Inventory', '/inventory'], ['Transactions', '/transactions'], ['Sales/Holds', '/sales-holds'], ['POS', '/pos']]) {
       const press = { button: 0, currentTarget: { target: '' }, preventDefault: jest.fn() };
       const platform = jest.replaceProperty(Platform, 'OS', 'web');
       try {

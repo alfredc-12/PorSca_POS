@@ -35,6 +35,7 @@ The cashier uses one phone during normal in-person retail transactions. Product 
 - Support a PayMongo sandbox QR Ph integration through a backend.
 - Deduct inventory only after successful payment confirmation.
 - Record completed transactions.
+- Park an unfinished cart as an open shop-server hold and resume or cancel it later from Sales/Holds; parking never simulates a payment result and a parked sale is not auto-restored over the next cart.
 - Avoid duplicate inventory deduction for the same paid transaction.
 - Keep PayMongo secret keys out of the mobile application.
 - After sign-in, offline in-memory data can support a catalog/cash UI demonstration, but only behind an off-by-default flag (`EXPO_PUBLIC_ALLOW_DEMO_CATALOG=1`). While that flag is off, an unreachable API produces an explicit offline state, no substituted products, and no locally recorded sale. QR Ph completion always requires Laravel confirmation.

@@ -21,6 +21,10 @@ export const qrStatusMessages = {
 if (!Object.hasOwn(qrStatusMessages, qrExpectedStatus)) {
   throw new Error(`Unsupported APPIUM_QR_EXPECTED_STATUS: ${qrExpectedStatus}`);
 }
+export const qrExpiryExpectation = process.env.APPIUM_QR_EXPIRY_EXPECTED ?? 'countdown';
+if (qrExpiryExpectation !== 'countdown' && qrExpiryExpectation !== 'unavailable') {
+  throw new Error(`Unsupported APPIUM_QR_EXPIRY_EXPECTED: ${qrExpiryExpectation}`);
+}
 
 // Metro LAN origin for a development (dev-client) build. Unset for a
 // standalone/preview artifact, where no development launcher appears.
