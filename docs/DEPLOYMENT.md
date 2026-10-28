@@ -18,7 +18,7 @@ The section numbers here are traceability targets supplied for the project repor
 
 ## Staging and deployment: section 7
 
-The approved permanent staging target is **AWS Lightsail**, serving Laravel over HTTPS at `https://staging-api.<domain>/api/v1`. The literal `<domain>` in [`eas.json`](../eas.json) is still a placeholder, not a reachable host or deployment evidence. The mobile preview artifact is distributed through EAS; EAS does not host Laravel or the database.
+The approved permanent staging target is **AWS Lightsail**, serving Laravel over HTTPS at `https://staging-api.porsca.online/api/v1`. The preview profile in [`eas.json`](../eas.json) bundles that origin. The mobile preview artifact is distributed through EAS; EAS does not host Laravel or the database.
 
 The API track owns the [Lightsail staging runbook](https://github.com/niks0501/PorSca_POS_API/blob/development/docs/STAGING.md) and its [manual deployment workflow](https://github.com/niks0501/PorSca_POS_API/blob/development/.github/workflows/deploy-staging.yml). At candidate selection, read those files at the exact API SHA rather than assuming the development branch is what is deployed.
 
