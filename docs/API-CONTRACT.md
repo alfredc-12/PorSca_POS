@@ -4,7 +4,7 @@
 
 ## Configuration
 
-`EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the permanent staging API base configured in [`eas.json`](../eas.json), `https://staging-api.<domain>/api/v1`; it stays a placeholder until the staging host exists. Changing that base later requires a new preview build.
+`EXPO_PUBLIC_API_URL` is the Laravel API base, including `/api/v1` and without a trailing slash. It is public configuration and is bundled into the app. It must never contain an API token or PayMongo key. Use a computer LAN IP for a physical phone (`http://192.168.1.100:8000/api/v1`) and never `localhost` on a phone. The preview profile uses the permanent staging API base configured in [`eas.json`](../eas.json), `https://staging-api.porsca.online/api/v1`. Changing that base later requires a new preview build.
 
 Users sign in with their own email and password. `AuthProvider` obtains a Sanctum token from `POST /auth/login`, saves only the token in native `expo-secure-store` under `porsca.session.v1`, and supplies it at runtime through `ApiClient.setToken()`. No shared token or password is bundled or stored in public Expo configuration. Use HTTPS for staging/release login; LAN HTTP is for isolated development only. Web development keeps the token in memory only and requires login after a page reload.
 
