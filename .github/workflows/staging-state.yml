@@ -12,10 +12,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Permanent Lightsail staging API base. Replace <domain> with the staging domain
-  # when it is live; while the placeholder remains, this workflow records the run
-  # but skips the live health assertions.
-  STAGING_API_BASE: "https://staging-api.<domain>/api/v1"
+  # Permanent Lightsail staging API base. The workflow still records the run when
+  # this value is the <domain> placeholder, but skips live health assertions.
+  STAGING_API_BASE: "https://staging-api.porsca.online/api/v1"
   # Must match DatabaseSeeder::BASELINE_VERSION in PorSca_POS_API at cycle start.
   STAGING_SEED_VERSION: qa-baseline-2026-10
 
