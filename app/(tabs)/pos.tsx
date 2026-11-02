@@ -181,6 +181,7 @@ export default function PosScreen() {
   }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
+  const showCartActionLabels = responsive.width >= 381;
   const needsStorageRecovery = hasUnreadableCheckoutIdentity || checkoutProgress?.recoveryFailure === 'identity' || canDiscardCorruptCheckout;
 
   return (
@@ -341,7 +342,7 @@ export default function PosScreen() {
               style={[styles.parkAction, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}
             >
               <Ionicons name="archive-outline" size={responsive.s(19)} color={cart.length && apiConfigured ? colors.primary : colors.textMuted} />
-              {!responsive.narrow ? <Text style={[styles.parkText, (!cart.length || !apiConfigured) && styles.actionTextDisabled]}>Park Sale</Text> : null}
+              {showCartActionLabels ? <Text style={[styles.parkText, (!cart.length || !apiConfigured) && styles.actionTextDisabled]}>Park Sale</Text> : null}
             </Pressable>
             <Pressable
               testID="pos-clear-cart"
@@ -355,7 +356,7 @@ export default function PosScreen() {
               style={[styles.clearAction, !cart.length && styles.actionDisabled]}
             >
               <Ionicons name="trash-outline" size={responsive.s(20)} color={cart.length ? colors.danger : colors.textMuted} />
-              {!responsive.narrow ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
+              {showCartActionLabels ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
             </Pressable>
           </View>
         </View>
