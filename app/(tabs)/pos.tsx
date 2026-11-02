@@ -323,7 +323,7 @@ export default function PosScreen() {
         <View style={[styles.cardHeader, { minHeight: responsive.s(44) }]}>
           <View style={styles.headingRow}>
             <Ionicons name="cart" size={responsive.s(26)} color={colors.primary} />
-            <Text style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
+            <Text numberOfLines={1} style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
           </View>
           <View style={styles.cartActions}>
             <Pressable
@@ -572,8 +572,8 @@ const styles = StyleSheet.create({
   parkCancelText: { color: colors.text, fontWeight: '800' },
   parkConfirmButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary },
   parkConfirmText: { color: colors.white, fontWeight: '900' },
-  headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
-  sectionTitle: { color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
+  headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0, flexShrink: 1 },
+  sectionTitle: { flexShrink: 1, color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
   titleMuted: { color: colors.textMuted, fontWeight: '600' },
   clearAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, minHeight: 48, minWidth: 48 },
   clearText: { color: colors.danger, fontWeight: '800' },
