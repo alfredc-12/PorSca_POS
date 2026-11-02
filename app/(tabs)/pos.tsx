@@ -181,6 +181,7 @@ export default function PosScreen() {
   }, [cart, openCheckout, proceed, replaceCartLines, review]);
 
   const productThumbSize = responsive.s(responsive.narrow ? 52 : 62);
+  const showCartActionLabels = responsive.width >= 381;
   const needsStorageRecovery = hasUnreadableCheckoutIdentity || checkoutProgress?.recoveryFailure === 'identity' || canDiscardCorruptCheckout;
 
   return (
@@ -323,7 +324,7 @@ export default function PosScreen() {
         <View style={[styles.cardHeader, { minHeight: responsive.s(44) }]}>
           <View style={styles.headingRow}>
             <Ionicons name="cart" size={responsive.s(26)} color={colors.primary} />
-            <Text style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
+            <Text numberOfLines={1} style={[styles.sectionTitle, { fontSize: responsive.font(responsive.narrow ? 19 : 21) }]}>Cart <Text style={styles.titleMuted}>({totalItems} {totalItems === 1 ? 'item' : 'items'})</Text></Text>
           </View>
           <View style={styles.cartActions}>
             <Pressable
@@ -341,7 +342,7 @@ export default function PosScreen() {
               style={[styles.parkAction, (!cart.length || !apiConfigured || parkingSale) && styles.actionDisabled]}
             >
               <Ionicons name="archive-outline" size={responsive.s(19)} color={cart.length && apiConfigured ? colors.primary : colors.textMuted} />
-              {!responsive.veryNarrow ? <Text style={[styles.parkText, (!cart.length || !apiConfigured) && styles.actionTextDisabled]}>Park Sale</Text> : null}
+              {showCartActionLabels ? <Text style={[styles.parkText, (!cart.length || !apiConfigured) && styles.actionTextDisabled]}>Park Sale</Text> : null}
             </Pressable>
             <Pressable
               testID="pos-clear-cart"
@@ -355,7 +356,7 @@ export default function PosScreen() {
               style={[styles.clearAction, !cart.length && styles.actionDisabled]}
             >
               <Ionicons name="trash-outline" size={responsive.s(20)} color={cart.length ? colors.danger : colors.textMuted} />
-              {!responsive.veryNarrow ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
+              {showCartActionLabels ? <Text style={[styles.clearText, { fontSize: responsive.font(14) }, !cart.length && { color: colors.textMuted }]}>Clear All</Text> : null}
             </Pressable>
           </View>
         </View>
@@ -572,8 +573,8 @@ const styles = StyleSheet.create({
   parkCancelText: { color: colors.text, fontWeight: '800' },
   parkConfirmButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary },
   parkConfirmText: { color: colors.white, fontWeight: '900' },
-  headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0 },
-  sectionTitle: { color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
+  headingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, minWidth: 0, flexShrink: 1 },
+  sectionTitle: { flexShrink: 1, color: colors.text, fontWeight: '900', letterSpacing: -0.4 },
   titleMuted: { color: colors.textMuted, fontWeight: '600' },
   clearAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8, minHeight: 48, minWidth: 48 },
   clearText: { color: colors.danger, fontWeight: '800' },
