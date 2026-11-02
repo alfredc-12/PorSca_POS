@@ -112,3 +112,21 @@ jobs:
           {
             echo "Health: \`environment=$HEALTH_ENVIRONMENT\`, \`database=$HEALTH_DATABASE\`, \`paymongo_mode=$HEALTH_PAYMONGO_MODE\`, \`status=$HEALTH_STATUS\`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save staging state record
+        if: always()
+        env:
+          HEALTH_API_COMMIT: ${{ steps.health.outputs.api_commit }}
+          HEALTH_SEED_VERSION: ${{ steps.health.outputs.seed_version }}
+        run: |
+          set -euo pipefail
+          jq -n --arg mobile "$GITHUB_SHA" --arg api "${HEALTH_API_COMMIT:-}" --arg seed "${HEALTH_SEED_VERSION:-$STAGING_SEED_VERSION}" \
+            '{mobile_commit: $mobile, api_commit: $api, seed_version: $seed}' > "$RUNNER_TEMP/staging-state.json"
+
+      - name: Upload staging state record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-state
+          path: ${{ runner.temp }}/staging-state.json
+          retention-days: 30
