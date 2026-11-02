@@ -1,0 +1,212 @@
+name: Build staging APK (manual)
+
+# Hand-run only. No push, pull_request, schedule, workflow_run, or caller triggers.
+# Spends one EAS build on the existing `preview` profile. See docs/WORKFLOW.md.
+on:
+  workflow_dispatch:
+    inputs:
+      gate_mobile_sha:
+        description: Full 40-character mobile SHA from the completed pre-build gate (must equal the current staging tip)
+        required: true
+        type: string
+      paired_api_sha:
+        description: Full 40-character deployed Laravel API SHA from the gate evidence
+        required: true
+        type: string
+      gate_evidence_url:
+        description: HTTPS URL of the approved gate evidence (five checks plus release-owner build authorization)
+        required: true
+        type: string
+      prebuild_gate_confirmed:
+        description: Confirm all five preview gate checks are green and the release owner authorized this build
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: porsca-staging-apk
+  cancel-in-progress: false
+
+env:
+  EAS_CLI_VERSION: 27.2.0
+
+jobs:
+  build:
+    name: Build preview APK from staging
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Validate gate inputs
+        env:
+          GATE_MOBILE_SHA: ${{ inputs.gate_mobile_sha }}
+          PAIRED_API_SHA: ${{ inputs.paired_api_sha }}
+          GATE_EVIDENCE_URL: ${{ inputs.gate_evidence_url }}
+          GATE_CONFIRMED: ${{ inputs.prebuild_gate_confirmed }}
+        run: |
+          set -euo pipefail
+          [ "$GATE_CONFIRMED" = "true" ] || { echo "::error::prebuild_gate_confirmed must be true"; exit 1; }
+          [[ "$GATE_MOBILE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::gate_mobile_sha must be a full lowercase 40-char SHA"; exit 1; }
+          [[ "$PAIRED_API_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::paired_api_sha must be a full lowercase 40-char SHA"; exit 1; }
+          [[ "$GATE_EVIDENCE_URL" =~ ^https://[^[:space:]]+$ ]] || { echo "::error::gate_evidence_url must be an https URL"; exit 1; }
+
+      - name: Check out latest staging
+        uses: actions/checkout@v5
+        with:
+          ref: staging
+          persist-credentials: false
+          submodules: false
+
+      - name: Capture and compare staging SHA
+        id: source
+        env:
+          GATE_MOBILE_SHA: ${{ inputs.gate_mobile_sha }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "resolved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "$GATE_MOBILE_SHA" ]; then
+            echo "::error::staging tip $sha does not match gate_mobile_sha $GATE_MOBILE_SHA; refresh the gate and dispatch again"
+            exit 1
+          fi
+
+      - name: Require green Mobile CI for exact SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ok="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/mobile-ci.yml/runs?head_sha=${SOURCE_SHA}&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+          [ "$ok" -ge 1 ] || { echo "::error::no successful Mobile CI run for $SOURCE_SHA"; exit 1; }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run canonical mobile verification
+        run: npm run verify
+
+      - name: Validate preview configuration
+        run: |
+          set -euo pipefail
+          node -e '
+            const eas = require("./eas.json").build.preview;
+            const app = require("./app.json").expo;
+            const fail = (m) => { console.error("::error::" + m); process.exit(1); };
+            if (eas.channel !== "preview") fail("preview channel changed");
+            if (eas.distribution !== "internal") fail("preview distribution changed");
+            if (eas.env.EXPO_PUBLIC_APP_ENV !== "staging") fail("preview app env changed");
+            if (eas.env.EXPO_PUBLIC_API_URL !== "https://staging-api.porsca.online/api/v1") fail("preview API origin changed");
+            if (app.android.package !== "com.porsca.pos") fail("android package changed");
+            if (app.extra.eas.projectId !== "27ef9713-4c08-4815-bf6c-48368dd2b260") fail("EAS project changed");
+          '
+
+      - name: Set up EAS CLI
+        run: npm install --global "eas-cli@${EAS_CLI_VERSION}"
+
+      - name: Re-check staging tip before spending quota
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$EXPO_TOKEN" ] || { echo "::error::EXPO_TOKEN secret is not available"; exit 1; }
+          tip="$(gh api "repos/${GITHUB_REPOSITORY}/branches/staging" --jq .commit.sha)"
+          [ "$tip" = "$SOURCE_SHA" ] || { echo "::error::staging advanced to $tip during preflight; dispatch again with refreshed gate evidence"; exit 1; }
+          eas whoami
+
+      - name: Submit one EAS preview build
+        id: eas
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          eas build --platform android --profile preview --non-interactive --wait --json \
+            > "$RUNNER_TEMP/eas-build.json" 2> "$RUNNER_TEMP/eas-build.err" || {
+              cat "$RUNNER_TEMP/eas-build.err" >&2
+              cat "$RUNNER_TEMP/eas-build.json" >&2 || true
+              echo "::error::EAS build did not finish; look up the build by ID in the output above before dispatching again. Do not auto-retry."
+              exit 1
+            }
+          node -e '
+            const b = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/eas-build.json", "utf8"));
+            const build = Array.isArray(b) ? b[0] : b;
+            if (!build || build.status !== "FINISHED" || build.platform !== "ANDROID") { console.error("::error::build not a finished Android build"); process.exit(1); }
+            const out = [
+              "build_id=" + build.id,
+              "build_url=https://expo.dev/accounts/porscapos/projects/porsca-app/builds/" + build.id,
+              "apk_url=" + build.artifacts.buildUrl,
+              "version=" + (build.appVersion || ""),
+              "version_code=" + (build.appBuildVersion || ""),
+              "profile=" + (build.buildProfile || ""),
+              "channel=" + (build.channel || ""),
+            ];
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, out.join("\n") + "\n");
+          '
+
+      - name: Download APK and write provenance
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          RESOLVED_AT: ${{ steps.source.outputs.resolved_at }}
+          BUILD_ID: ${{ steps.eas.outputs.build_id }}
+          BUILD_URL: ${{ steps.eas.outputs.build_url }}
+          APK_URL: ${{ steps.eas.outputs.apk_url }}
+          APP_VERSION: ${{ steps.eas.outputs.version }}
+          VERSION_CODE: ${{ steps.eas.outputs.version_code }}
+          PROFILE: ${{ steps.eas.outputs.profile }}
+          CHANNEL: ${{ steps.eas.outputs.channel }}
+          PAIRED_API_SHA: ${{ inputs.paired_api_sha }}
+          GATE_EVIDENCE_URL: ${{ inputs.gate_evidence_url }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          short="${SOURCE_SHA:0:7}"
+          dir="$RUNNER_TEMP/apk-out"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --proto '=https' --max-time 900 "$APK_URL" -o "$dir/porsca-staging-$short.apk"
+          unzip -l "$dir/porsca-staging-$short.apk" | grep -q AndroidManifest.xml || { echo "::error::downloaded file is not an APK"; exit 1; }
+          sum="$(sha256sum "$dir/porsca-staging-$short.apk" | cut -d' ' -f1)"
+          node -e '
+            const e = process.env;
+            const p = {
+              mobile_sha: e.SOURCE_SHA, source_resolved_at: e.RESOLVED_AT,
+              paired_api_sha: e.PAIRED_API_SHA, gate_evidence_url: e.GATE_EVIDENCE_URL,
+              eas_build_id: e.BUILD_ID, eas_build_url: e.BUILD_URL,
+              profile: e.PROFILE, channel: e.CHANNEL,
+              api_origin: "https://staging-api.porsca.online/api/v1",
+              app_version: e.APP_VERSION, version_code: e.VERSION_CODE,
+              apk_sha256: process.argv[1],
+              dispatch_ref: e.GITHUB_REF, dispatch_sha: e.GITHUB_SHA, actor: e.ACTOR,
+              run_url: e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID,
+            };
+            require("fs").writeFileSync(e.RUNNER_TEMP + "/apk-out/provenance.json", JSON.stringify(p, null, 2) + "\n");
+          ' "$sum"
+          echo "artifact_name=porsca-staging-apk-$short-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          {
+            echo "### Staging APK"
+            echo "- Mobile SHA: \`$SOURCE_SHA\`"
+            echo "- Paired API SHA: \`$PAIRED_API_SHA\`"
+            echo "- EAS build: $BUILD_URL"
+            echo "- APK SHA-256: \`$sum\`"
+            echo "- Artifact retention: 30 days. Artifact creation is not QA approval."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: ${{ runner.temp }}/apk-out/
+          if-no-files-found: error
+          retention-days: 30
