@@ -84,6 +84,36 @@ eas build --profile preview --platform android
 
 A failed gate blocks the build; do not spend an EAS build to discover a staging/configuration failure. Builds stay manual because the Expo build quota is limited.
 
+### Hand-run staging APK workflow
+
+[`build-staging-apk.yml`](../.github/workflows/build-staging-apk.yml) (**Build staging APK (manual)**) builds the preview APK from the latest `staging` tip. It triggers only on `workflow_dispatch`; no push, pull request, schedule, or other workflow starts it, and it refuses any ref other than `staging`. It uses the existing `preview` profile, channel, and API origin from `eas.json`; it creates no EAS project, profile, or channel.
+
+What the operator supplies on each run:
+
+- `prebuild_gate_confirmed`: required, must be `true`. It states that all five gate checks are green and the release owner authorized this build.
+- `gate_evidence_url`: optional HTTPS URL of the recorded gate evidence; it is copied into `provenance.json`.
+- `gate_mobile_sha` (optional override): if given, it must equal the staging tip the job freezes, or the run fails before any EAS spend. It asserts the tip; it never selects source.
+- `paired_api_sha` (optional override): if given, it replaces the paired API commit the job would otherwise read.
+
+The job fills in the rest itself: it freezes the current `staging` tip, finds a successful Mobile CI run for that exact commit, and reads the paired API commit from the `staging-state` record uploaded by the latest successful Staging state run. `provenance.json` links the Mobile CI run, the staging-state record run (or marks the API SHA as an override), and the evidence URL. It fails closed, with no build submitted, if the tip moved, no green Mobile CI run exists for it, or there is no usable API commit in the record and no override. The staging-state record only carries a full API commit once the API `/health` payload reports one.
+
+What must already exist:
+
+- A protected `EXPO_TOKEN` Actions secret (repository or environment) for a principal with access to the `porscapos` project and its established remote Android signing credentials. The workflow never creates a keystore.
+- Repository write access for the operator, and release-owner authorization recorded in the gate evidence.
+- The workflow file on `main` (the default branch) so the Run workflow button appears. Get it there through the normal promotion path for workflow-only changes; do not move app code to `main` for this. The same file must also be on `staging`, since the run is pinned to `staging`.
+
+The run executes `npm ci` and `npm run verify` on the captured SHA, re-checks that `staging` has not advanced, then submits one `eas build --platform android --profile preview` and never retries it. If a run fails after submission, find the recorded EAS build before dispatching again. The APK, its SHA-256, and `provenance.json` (SHAs, build ID/link, evidence URL, profile, channel, API origin) upload as an Actions artifact kept 30 days; the run summary links the EAS build. Concurrent dispatches queue under one fixed group and do not cancel an active build. Artifact creation is not QA approval, and promoting matching mobile and API revisions to `main` stays a separate human-approved step.
+
+CLI form:
+
+```bash
+gh-axi workflow run build-staging-apk.yml --repo alfredc-12/PorSca_POS --ref staging \
+  --field prebuild_gate_confirmed=true --field gate_evidence_url=<evidence-url>
+```
+
+The EAS GitHub App or dashboard may have separate push automation; this file cannot disable it.
+
 ### Deferred follow-up (before formal SQA, non-blocking for the preview build)
 
 The following do not block a connectivity preview build, but must be complete before formal SQA:
