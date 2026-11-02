@@ -5,23 +5,23 @@ name: Build staging APK (manual)
 on:
   workflow_dispatch:
     inputs:
-      gate_mobile_sha:
-        description: Full 40-character mobile SHA from the completed pre-build gate (must equal the current staging tip)
-        required: true
-        type: string
-      paired_api_sha:
-        description: Full 40-character deployed Laravel API SHA from the gate evidence
-        required: true
-        type: string
-      gate_evidence_url:
-        description: HTTPS URL of the approved gate evidence (five checks plus release-owner build authorization)
-        required: true
-        type: string
       prebuild_gate_confirmed:
         description: Confirm all five preview gate checks are green and the release owner authorized this build
         required: true
         type: boolean
         default: false
+      gate_evidence_url:
+        description: Optional HTTPS URL of the approved gate evidence, recorded in provenance
+        required: false
+        type: string
+      gate_mobile_sha:
+        description: Optional override - full SHA asserted to be the current staging tip (the run fails if it is not)
+        required: false
+        type: string
+      paired_api_sha:
+        description: Optional override - full deployed Laravel API SHA (replaces the latest staging-state record)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -50,9 +50,15 @@ jobs:
         run: |
           set -euo pipefail
           [ "$GATE_CONFIRMED" = "true" ] || { echo "::error::prebuild_gate_confirmed must be true"; exit 1; }
-          [[ "$GATE_MOBILE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::gate_mobile_sha must be a full lowercase 40-char SHA"; exit 1; }
-          [[ "$PAIRED_API_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::paired_api_sha must be a full lowercase 40-char SHA"; exit 1; }
-          [[ "$GATE_EVIDENCE_URL" =~ ^https://[^[:space:]]+$ ]] || { echo "::error::gate_evidence_url must be an https URL"; exit 1; }
+          if [ -n "$GATE_MOBILE_SHA" ]; then
+            [[ "$GATE_MOBILE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::gate_mobile_sha must be a full lowercase 40-char SHA"; exit 1; }
+          fi
+          if [ -n "$PAIRED_API_SHA" ]; then
+            [[ "$PAIRED_API_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::paired_api_sha must be a full lowercase 40-char SHA"; exit 1; }
+          fi
+          if [ -n "$GATE_EVIDENCE_URL" ]; then
+            [[ "$GATE_EVIDENCE_URL" =~ ^https://[^[:space:]]+$ ]] || { echo "::error::gate_evidence_url must be an https URL"; exit 1; }
+          fi
 
       - name: Check out latest staging
         uses: actions/checkout@v5
@@ -61,7 +67,7 @@ jobs:
           persist-credentials: false
           submodules: false
 
-      - name: Capture and compare staging SHA
+      - name: Freeze staging tip
         id: source
         env:
           GATE_MOBILE_SHA: ${{ inputs.gate_mobile_sha }}
@@ -70,20 +76,50 @@ jobs:
           sha="$(git rev-parse HEAD)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "resolved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          if [ "$sha" != "$GATE_MOBILE_SHA" ]; then
-            echo "::error::staging tip $sha does not match gate_mobile_sha $GATE_MOBILE_SHA; refresh the gate and dispatch again"
+          if [ -n "$GATE_MOBILE_SHA" ] && [ "$sha" != "$GATE_MOBILE_SHA" ]; then
+            echo "::error::staging tip $sha does not match gate_mobile_sha $GATE_MOBILE_SHA; dispatch again"
             exit 1
           fi
 
-      - name: Require green Mobile CI for exact SHA
+      - name: Find green Mobile CI run for exact SHA
+        id: ci
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
-          ok="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/mobile-ci.yml/runs?head_sha=${SOURCE_SHA}&status=completed&per_page=100" \
-            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
-          [ "$ok" -ge 1 ] || { echo "::error::no successful Mobile CI run for $SOURCE_SHA"; exit 1; }
+          url="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/mobile-ci.yml/runs?head_sha=${SOURCE_SHA}&status=completed&per_page=100" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | sort_by(.updated_at) | last | .html_url // empty')"
+          [ -n "$url" ] || { echo "::error::no successful Mobile CI run for $SOURCE_SHA; no build submitted"; exit 1; }
+          echo "run_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve paired API commit
+        id: api
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAIRED_API_SHA: ${{ inputs.paired_api_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PAIRED_API_SHA" ]; then
+            echo "sha=$PAIRED_API_SHA" >> "$GITHUB_OUTPUT"
+            echo "source=override" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/staging-state.yml/runs?branch=staging&status=success&per_page=1" \
+            --jq '.workflow_runs[0] | select(. != null) | "\(.id) \(.html_url)"')"
+          [ -n "$run" ] || { echo "::error::no successful Staging state run and no paired_api_sha override; no build submitted"; exit 1; }
+          run_id="${run%% *}"
+          art="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+            --jq '[.artifacts[] | select(.name == "staging-state" and (.expired | not))][0].id // empty')"
+          [ -n "$art" ] || { echo "::error::latest Staging state run $run_id has no staging-state record and no paired_api_sha override; no build submitted"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/staging-state"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${art}/zip" > "$RUNNER_TEMP/staging-state.zip"
+          unzip -o -q "$RUNNER_TEMP/staging-state.zip" -d "$RUNNER_TEMP/staging-state"
+          sha="$(jq -r '.api_commit // empty' "$RUNNER_TEMP/staging-state/staging-state.json")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::staging-state record has no full API commit ('$sha') and no paired_api_sha override; no build submitted"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "source=staging-state" >> "$GITHUB_OUTPUT"
+          echo "record_url=${run#* }" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -167,7 +203,10 @@ jobs:
           VERSION_CODE: ${{ steps.eas.outputs.version_code }}
           PROFILE: ${{ steps.eas.outputs.profile }}
           CHANNEL: ${{ steps.eas.outputs.channel }}
-          PAIRED_API_SHA: ${{ inputs.paired_api_sha }}
+          PAIRED_API_SHA: ${{ steps.api.outputs.sha }}
+          API_SOURCE: ${{ steps.api.outputs.source }}
+          STATE_RECORD_URL: ${{ steps.api.outputs.record_url }}
+          CI_RUN_URL: ${{ steps.ci.outputs.run_url }}
           GATE_EVIDENCE_URL: ${{ inputs.gate_evidence_url }}
           ACTOR: ${{ github.actor }}
         run: |
@@ -182,7 +221,9 @@ jobs:
             const e = process.env;
             const p = {
               mobile_sha: e.SOURCE_SHA, source_resolved_at: e.RESOLVED_AT,
-              paired_api_sha: e.PAIRED_API_SHA, gate_evidence_url: e.GATE_EVIDENCE_URL,
+              paired_api_sha: e.PAIRED_API_SHA, paired_api_source: e.API_SOURCE,
+              mobile_ci_run_url: e.CI_RUN_URL, staging_state_record_url: e.STATE_RECORD_URL || null,
+              gate_evidence_url: e.GATE_EVIDENCE_URL || null,
               eas_build_id: e.BUILD_ID, eas_build_url: e.BUILD_URL,
               profile: e.PROFILE, channel: e.CHANNEL,
               api_origin: "https://staging-api.porsca.online/api/v1",
@@ -197,7 +238,8 @@ jobs:
           {
             echo "### Staging APK"
             echo "- Mobile SHA: \`$SOURCE_SHA\`"
-            echo "- Paired API SHA: \`$PAIRED_API_SHA\`"
+            echo "- Paired API SHA: \`$PAIRED_API_SHA\` ($API_SOURCE)"
+            echo "- Mobile CI run: $CI_RUN_URL"
             echo "- EAS build: $BUILD_URL"
             echo "- APK SHA-256: \`$sum\`"
             echo "- Artifact retention: 30 days. Artifact creation is not QA approval."
